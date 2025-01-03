@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "pyautocausal"
+version = "0.1.0"
+description = "An automatic causal inference package for python"
+authors = ["Nicholas Topousis"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+networkx = "^3.4.2"
+pandas = "^2.2.1"
+matplotlib = "^3.8.3"
+pyarrow = "^18.1.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
