@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from io import BytesIO
 from pathlib import Path
-from pyautocausal.orchestration.nodes import ActionNode
+from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.base import OutputConfig
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.output_types import OutputType
@@ -51,7 +51,7 @@ def pipeline_graph(output_config, tmp_path):
     )
     
     # Data node
-    data_node = ActionNode(
+    data_node = Node(
         "create_data", 
         graph,
         create_sample_data,
@@ -63,7 +63,7 @@ def pipeline_graph(output_config, tmp_path):
     )
     
     # Average computation node
-    average_node = ActionNode(
+    average_node = Node(
         "compute_average",
         graph,
         compute_average,
@@ -76,7 +76,7 @@ def pipeline_graph(output_config, tmp_path):
     average_node.add_predecessor(data_node, argument_name="df")
     
     # Plot creation node
-    plot_node = ActionNode(
+    plot_node = Node(
         "create_plot",
         graph,
         create_plot,
