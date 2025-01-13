@@ -84,6 +84,14 @@ class OutputHandler(ABC):
         elif output_type in (OutputType.PNG, OutputType.BYTES):
             if not isinstance(data, bytes):
                 raise TypeError("Data must be in bytes format")
+        elif output_type == OutputType.JSON:
+            if not isinstance(data, dict):
+                raise TypeError("Data must be dict for JSON output")
+    
+    @abstractmethod
+    def save_json(self, name: str, data: Any):
+        """Save data as JSON"""
+        pass
     
     @abstractmethod
     def save_csv(self, name: str, data: Any):
