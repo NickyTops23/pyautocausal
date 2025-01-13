@@ -166,3 +166,44 @@ def test_output_files_content(executed_pipeline, tmp_path, sample_data):
         plot_data = f.read()
     assert len(plot_data) > 0
 
+def test_node_failure(tmp_path):
+    """
+    Ensure that if a node fails, the pipeline stops or raises an error for incomplete nodes.
+    """
+    # Create an ExecutableGraph with a failing node
+    class FailingNode(ActionNode):
+        def _execute(self):
+            # Force an exception
+            raise ValueError("Simulated failure")
+
+    graph = ExecutableGraph(output_handler=LocalOutputHandler(tmp_path / 'outputs'))
+
+    # Create a node that will fail
+    fail_node = FailingNode(
+        "fail_node",
+        graph,
+        lambda: None,  # The function that would normally produce output
+        output_config=OutputConfig(save_output=True, output_filename="fail_node", output_type=OutputType.CSV)
+    )
+
+    # Create an ordinary node that depends on the failing node
+    dependent_node = ActionNode(
+        "dependent_node",
+        graph,
+        compute_average,  # Some function
+        output_config=OutputConfig(save_output=True, output_filename="dependent_node", output_type=OutputType.CSV)
+    )
+    dependent_node.add_predecessor(fail_node)
+
+    with pytest.raises(ValueError, match="Simulated failure"):
+        # This should raise because the fail_node throws ValueError
+        graph.execute_graph()
+
+    # Ensure the fail_node is marked failed
+    assert fail_node.is_running() is False
+    assert fail_node.is_completed() is False
+    assert fail_node.state.name == "FAILED"
+
+    # Ensure the dependent node never ran
+    assert dependent_node.is_completed() is False
+
