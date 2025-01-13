@@ -1,6 +1,5 @@
 import networkx as nx
 from typing import Callable, Any, Optional
-from abc import ABC, abstractmethod
 from .node_state import NodeState
 from .base import OutputConfig
 from .graph import ExecutableGraph
@@ -17,36 +16,51 @@ class BaseNode:
     def __str__(self):
         return f"BaseNode(name={self.name})"
     
-class Node(BaseNode, ABC):
-    def __init__(self, name: str, graph: DiGraph, output_config: OutputConfig = None):
+class Node(BaseNode):
+    def __init__(
+            self, 
+            name: str, 
+            graph: DiGraph, 
+            action_function: Callable,
+            output_config: OutputConfig = None,
+            condition: Callable[..., bool] = None,
+            skip_reason: str = "",
+            action_condition_kwarg_map: dict[str, str] = {},
+        ):
         super().__init__(name, graph)
         self.state = NodeState.PENDING
-        self.condition: tuple[Callable[..., bool], list[str]] | None = None
-        self.skip_reason: str | None = None
+        self.condition = condition
+        self.skip_reason = skip_reason
         self.output = None
         self.output_config = output_config or OutputConfig()
+        self.predecessor_outputs = {}
+        self.action_condition_kwarg_map = action_condition_kwarg_map
+        self.action_function = action_function
     
-    def set_condition(self, condition: Callable[..., bool], predecessor_names: list[str], skip_reason: str = None):
-        """
-        Set a condition that must be True for this node to execute
-        Args:
-            condition: Function that returns bool, taking predecessor outputs as named arguments
-            predecessor_names: List of predecessor node names whose outputs should be passed to condition
-            skip_reason: Optional reason for skipping if condition is False
-        """
-        self.condition = (condition, predecessor_names)
-        self.skip_reason = skip_reason
+    def validate_condition(self):
+        """Verify that condition is valid given the node's predecessors"""
+        if not self.predecessor_outputs:
+            raise ValueError("No predecessor outputs found. Please call get_predecessor_outputs() before calling validate_condition()")
+        if self.condition is not None and not self.get_predecessors():
+            raise ValueError(f"Node {self.name} has a condition but no predecessors")
+        if self.condition is not None:
+            # check that the keyword arguments of the condition function map to existing predecessors
+            for arg in self.condition.__code__.co_varnames:
+                mapped_arg = self.action_condition_kwarg_map.get(arg, arg)
+                if mapped_arg not in self.predecessor_outputs:
+                    raise ValueError(f"Condition function {self.condition.__name__} has argument {arg} which is not a predecessor")
     
     def should_execute(self) -> bool:
         if self.condition is not None:
+            if not self.predecessor_outputs:
+                self.get_predecessor_outputs()
             try:
-                condition_func, predecessor_names = self.condition
-                # Get outputs from specified predecessors
-                predecessor_outputs = {
-                    name: self.graph.nodes[name]['node'].output 
-                    for name in predecessor_names
-                }
-                should_run = condition_func(**predecessor_outputs)
+                self.validate_condition()
+                # Since validate_condition() ensures all required arguments exist,
+                # we can pass predecessor_outputs directly after mapping
+                mapped_predecessor_outputs = {self.action_condition_kwarg_map.get(arg, arg): value for arg, value in self.predecessor_outputs.items()}
+                should_run = self.condition(**mapped_predecessor_outputs)
+                
                 if not should_run:
                     self.mark_completed()
                     if self.skip_reason:
@@ -82,7 +96,7 @@ class Node(BaseNode, ABC):
     def get_successors(self):
         return set(self.graph.successors(self))
     
-    def get_predecessor_outputs(self) -> dict[str, Any]:
+    def get_predecessor_outputs(self):
         """Get outputs from immediate predecessor nodes"""
 
         # key in dict is the argument name if provided, otherwise the node name
@@ -95,7 +109,7 @@ class Node(BaseNode, ABC):
                 predecessor_outputs[argument_name] = predecessor.output
             else:
                 predecessor_outputs[predecessor.name] = predecessor.output
-        return predecessor_outputs
+        self.predecessor_outputs = predecessor_outputs
         
     def mark_running(self):
         self.state = NodeState.RUNNING
@@ -120,21 +134,15 @@ class Node(BaseNode, ABC):
             return True
         return all(predecessor.is_completed() for predecessor in self.get_predecessors())
 
-    @abstractmethod
     def _execute(self):
-        """All nodes must implement an _execute method"""
-        pass
-
-class ActionNode(Node):
-    def __init__(self, 
-                 name: str, 
-                 graph: nx.Graph, 
-                 action_function: Callable,
-                 output_config: OutputConfig = None):
-        super().__init__(name, graph, output_config)
-        self.action_function = action_function
-
-    def _execute(self):
-        inputs = self.get_predecessor_outputs()
-        self.output = self.action_function(**inputs)
-        self.mark_completed()
+        """Execute the node's action function with predecessor outputs"""
+        self.get_predecessor_outputs()
+        
+        # Check if action function accepts any parameters
+        params = self.action_function.__code__.co_varnames[:self.action_function.__code__.co_argcount]
+        if params:
+            # Only pass predecessor outputs if the function expects parameters
+            self.output = self.action_function(**self.predecessor_outputs)
+        else:
+            # Execute without parameters if function takes no arguments
+            self.output = self.action_function()
