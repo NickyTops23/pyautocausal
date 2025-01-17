@@ -15,6 +15,15 @@ def ols_treatment_effect(df: pd.DataFrame) -> str:
     Returns:
         str: Formatted summary of the OLS regression results
     """
+    # Check for necessary columns
+    required_columns = ['y', 'treat']
+    if not all(col in df.columns for col in required_columns):
+        raise ValueError(f"DataFrame must contain the following columns: {required_columns}")
+    
+    # Check for mixed types in 'y' and 'treat'
+    if not pd.api.types.is_numeric_dtype(df['y']) or not pd.api.types.is_numeric_dtype(df['treat']):
+        raise TypeError("'y' and 'treat' must be numeric types.")
+    
     y = df['y']
     X = pd.concat([df['treat'], df.drop(columns=['y', 'treat'])], axis=1)
     X = sm.add_constant(X)
@@ -35,11 +44,20 @@ def doubleML_treatment_effect(df: pd.DataFrame) -> str:
         df (pd.DataFrame): DataFrame containing:
             - y: Outcome variable
             - t: Treatment indicator
-            - Additional columns used as covariates
+            - Additional numericcolumns used as covariates
 
     Returns:
         str: Formatted summary of the Double ML estimation results
     """
+    # Check for necessary columns
+    required_columns = ['y', 'treat']
+    if not all(col in df.columns for col in required_columns):
+        raise ValueError(f"DataFrame must contain the following columns: {required_columns}")
+    
+    # Check for mixed types in 'y' and 'treat'
+    if not pd.api.types.is_numeric_dtype(df['y']) or not pd.api.types.is_numeric_dtype(df['treat']):
+        raise TypeError("'y' and 'treat' must be numeric types.")
+    
     y = df['y']
     t = df['treat']
     X = df.drop(columns=['y', 'treat'])
@@ -57,3 +75,26 @@ def doubleML_treatment_effect(df: pd.DataFrame) -> str:
     buffer = io.StringIO()
     buffer.write(str(effect_model.summary()))
     return buffer.getvalue()
+
+
+
+def data_validation(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Validate the data format and distribute it.
+
+    Args:
+        df (pd.DataFrame): DataFrame to validate and distribute
+
+    Returns:
+        pd.DataFrame: Validated and distributed DataFrame
+    """
+    # Check for necessary columns
+    required_columns = ['y', 'treat']
+    if not all(col in df.columns for col in required_columns):
+        raise ValueError(f"DataFrame must contain the following columns: {required_columns}")
+
+    # Check for mixed types in 'y' and 'treat'
+    if not pd.api.types.is_numeric_dtype(df['y']) or not pd.api.types.is_numeric_dtype(df['treat']):
+        raise TypeError("'y' and 'treat' must be numeric types.")
+
+    return df
