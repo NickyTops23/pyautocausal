@@ -41,10 +41,10 @@ class ExecutableGraph(nx.DiGraph):
         if (node.output_config.save_output and 
             node.output is not None):
             if self.save_node_outputs:
-                output_name = getattr(node.output_config, 'output_name', None) or node.name
+                output_filename = getattr(node.output_config, 'output_filename', node.name)
                 if node.output_config.output_type is None:
                     raise ValueError(f"Output type is not set for node {node.name}")
-                self.output_handler.save(output_name, node.output, node.output_config.output_type)
+                self.output_handler.save(output_filename, node.output, node.output_config.output_type)
             else:
                 self.logger.warning(f"Node {node.name} output not saved because save_node_outputs is False")
             
