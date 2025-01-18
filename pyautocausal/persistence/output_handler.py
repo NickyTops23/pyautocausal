@@ -85,8 +85,8 @@ class OutputHandler(ABC):
             if not isinstance(data, bytes):
                 raise TypeError("Data must be in bytes format")
         elif output_type == OutputType.JSON:
-            if not isinstance(data, dict):
-                raise TypeError("Data must be dict for JSON output")
+            if not isinstance(data, dict) and not isinstance(data, pd.DataFrame):
+                raise TypeError("Data must be dict or DataFrame for JSON output")
     
     @abstractmethod
     def save_json(self, name: str, data: Any):
