@@ -6,6 +6,7 @@ from .graph import ExecutableGraph
 from ..persistence.output_types import OutputType
 from ..persistence.output_config import OutputConfig
 from networkx import DiGraph
+import inspect
 
 class BaseNode:
     def __init__(self, name: str, graph: ExecutableGraph):
@@ -41,23 +42,103 @@ class Node(BaseNode):
         """Verify that condition is valid given the node's predecessors"""
         if not self.predecessor_outputs:
             raise ValueError("No predecessor outputs found. Please call get_predecessor_outputs() before calling validate_condition()")
+        
         if self.condition is not None and not self.get_predecessors():
             raise ValueError(f"Node {self.name} has a condition but no predecessors")
+        
         if self.condition is not None:
-            # check that the keyword arguments of the condition function map to existing predecessors
-            for arg in self.condition.__code__.co_varnames:
-                mapped_arg = self.action_condition_kwarg_map.get(arg, arg)
-                if mapped_arg not in self.predecessor_outputs:
-                    raise ValueError(f"Condition function {self.condition.__name__} has argument {arg} which is not a predecessor")
+            # Map predecessor outputs according to the condition argument mapping
+            mapped_outputs = {
+                self.action_condition_kwarg_map.get(arg, arg): value 
+                for arg, value in self.predecessor_outputs.items()
+            }
+            
+            # Use _resolve_function_arguments to check that all required arguments are available
+            try:
+                self._resolve_function_arguments(self.condition, mapped_outputs)
+            except ValueError as e:
+                raise ValueError(f"Invalid condition for node {self.name}: {str(e)}")
     
+    def _resolve_function_arguments(self, func: Callable, available_args: dict) -> dict:
+        """
+        Resolve arguments for a function from available arguments and run context.
+        Handles functions with default argument values.
+        
+        Args:
+            func: The function that needs arguments
+            available_args: Dictionary of already available arguments
+            
+        Returns:
+            dict: Complete dictionary of resolved arguments
+        """
+        
+        
+        # Get information about function parameters
+        signature = inspect.signature(func)
+        required_params = {
+            name: param 
+            for name, param in signature.parameters.items()
+            if param.default == inspect.Parameter.empty
+        }
+        
+        # Start with available arguments
+        arguments = available_args.copy()
+        
+        # For any missing required parameters, try to get them from run context
+        missing_required = set(required_params.keys()) - set(arguments.keys())
+        if missing_required and hasattr(self.graph, 'run_context'):
+            for param in missing_required:
+                if hasattr(self.graph.run_context, param):
+                    arguments[param] = getattr(self.graph.run_context, param)
+        
+        # Check if we have all required parameters
+        still_missing = set(required_params.keys()) - set(arguments.keys())
+        if still_missing:
+            raise ValueError(
+                f"Missing required parameters for {func.__name__} in node {self.name}: "
+                f"{still_missing}. Not found in available arguments or run context."
+            )
+        
+        # For optional parameters, try to get them from available args or run context
+        # but don't raise an error if they're not found
+        optional_params = {
+            name: param.default 
+            for name, param in signature.parameters.items()
+            if param.default != inspect.Parameter.empty
+        }
+        
+        for param_name, default_value in optional_params.items():
+            if param_name not in arguments:
+                # Try run context first
+                if hasattr(self.graph, 'run_context') and hasattr(self.graph.run_context, param_name):
+                    arguments[param_name] = getattr(self.graph.run_context, param_name)
+                # Otherwise use the default value
+                else:
+                    arguments[param_name] = default_value
+        
+        return arguments
+
     def condition_satisfied(self) -> bool:
-        if self.condition is not None:
-            if not self.predecessor_outputs:
-                self.get_predecessor_outputs()
-            self.validate_condition()
-            mapped_predecessor_outputs = {self.action_condition_kwarg_map.get(arg, arg): value for arg, value in self.predecessor_outputs.items()}
-            return self.condition(**mapped_predecessor_outputs)
-        return True
+        """Check if the node's condition is satisfied using predecessors and run context"""
+        if self.condition is None:
+            return True
+        
+        if not self.predecessor_outputs:
+            self.get_predecessor_outputs()
+        
+        try:
+            # Map predecessor outputs according to the condition argument mapping
+            mapped_outputs = {
+                arg: self.predecessor_outputs[self.action_condition_kwarg_map.get(arg, arg)]
+                for arg in self.predecessor_outputs
+            }
+            
+            # Resolve arguments including run context
+            arguments = self._resolve_function_arguments(self.condition, mapped_outputs)
+            return self.condition(**arguments)
+        
+        except Exception as e:
+            raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
 
     def should_execute(self) -> bool:
         try:
@@ -141,14 +222,12 @@ class Node(BaseNode):
         return all(predecessor.is_completed() or predecessor.is_skipped() for predecessor in self.get_predecessors())
 
     def _execute(self):
-        """Execute the node's action function with predecessor outputs"""
+        """Execute the node's action function with predecessor outputs and run context"""
         self.get_predecessor_outputs()
-        
-        # Check if action function accepts any parameters
-        params = self.action_function.__code__.co_varnames[:self.action_function.__code__.co_argcount]
-        if params:
-            # Only pass predecessor outputs if the function expects parameters
-            self.output = self.action_function(**self.predecessor_outputs)
-        else:
-            # Execute without parameters if function takes no arguments
-            self.output = self.action_function()
+        arguments = self._resolve_function_arguments(self.action_function, self.predecessor_outputs)
+        self.output = (
+            self.action_function(**arguments) if arguments 
+            else self.action_function()
+        )
+
+
