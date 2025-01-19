@@ -26,15 +26,14 @@ class ExecutableGraph(nx.DiGraph):
         return {node for node in self.nodes() 
                if isinstance(node, Node) and node.is_running()}
     
-    def is_execution_complete(self) -> bool:
+    def is_execution_finished(self) -> bool:
         """Returns True if all nodes in the graph are completed"""
-        return all(node.is_completed() 
-                  for node in self.nodes() if isinstance(node, Node))
+        return self.get_incomplete_nodes() == set()
 
     def get_incomplete_nodes(self) -> Set[Node]:
-        """Returns all nodes that haven't been completed yet"""
+        """Returns all nodes that haven't reached a terminal state yet"""
         return {node for node in self.nodes() 
-               if isinstance(node, Node) and not node.is_completed()}
+                if isinstance(node, Node) and not node.state.is_terminal()}
     
     def save_node_output(self, node: Node):
         """Save node output if configured to do so"""
@@ -55,7 +54,7 @@ class ExecutableGraph(nx.DiGraph):
             running_nodes = self.get_running_nodes()
             
             if not ready_nodes and not running_nodes:
-                if self.is_execution_complete():
+                if self.is_execution_finished():
                     break
                 else:
                     incomplete = self.get_incomplete_nodes()

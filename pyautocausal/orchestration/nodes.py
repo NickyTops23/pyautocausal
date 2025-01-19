@@ -50,33 +50,30 @@ class Node(BaseNode):
                 if mapped_arg not in self.predecessor_outputs:
                     raise ValueError(f"Condition function {self.condition.__name__} has argument {arg} which is not a predecessor")
     
-    def should_execute(self) -> bool:
+    def condition_satisfied(self) -> bool:
         if self.condition is not None:
             if not self.predecessor_outputs:
                 self.get_predecessor_outputs()
-            try:
-                self.validate_condition()
-                # Since validate_condition() ensures all required arguments exist,
-                # we can pass predecessor_outputs directly after mapping
-                mapped_predecessor_outputs = {self.action_condition_kwarg_map.get(arg, arg): value for arg, value in self.predecessor_outputs.items()}
-                should_run = self.condition(**mapped_predecessor_outputs)
-                
-                if not should_run:
-                    self.mark_completed()
-                    if self.skip_reason:
-                        print(f"Skipping {self.name}: {self.skip_reason}")
-                    return False
-            except Exception as e:
-                self.mark_failed()
-                raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
+            self.validate_condition()
+            mapped_predecessor_outputs = {self.action_condition_kwarg_map.get(arg, arg): value for arg, value in self.predecessor_outputs.items()}
+            return self.condition(**mapped_predecessor_outputs)
         return True
+
+    def should_execute(self) -> bool:
+        try:
+            return self.condition_satisfied() and not self.has_skipped_predecessors()
+        except Exception as e:
+            self.mark_failed()
+            raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
 
     def execute(self):
         """Template method that handles state management and conditional execution"""
         try:
             if not self.should_execute():
+                self.mark_skipped()
+                if self.skip_reason:
+                    print(f"Skipping {self.name}: {self.skip_reason}")
                 return
-            
             self.mark_running()
             self._execute()
             self.mark_completed()
@@ -119,6 +116,9 @@ class Node(BaseNode):
         
     def mark_failed(self):
         self.state = NodeState.FAILED
+    
+    def mark_skipped(self):
+        self.state = NodeState.SKIPPED
         
     def is_completed(self):
         return self.state == NodeState.COMPLETED
@@ -126,13 +126,19 @@ class Node(BaseNode):
     def is_running(self):
         return self.state == NodeState.RUNNING
     
+    def is_skipped(self):
+        return self.state == NodeState.SKIPPED
+    
+    def has_skipped_predecessors(self):
+        return any(predecessor.is_skipped() for predecessor in self.get_predecessors())
+    
     def is_ready(self) -> bool:
         """Returns True if all ancestors are completed and this node is pending"""
         if self.state != NodeState.PENDING:
             return False
         if not self.get_predecessors():
             return True
-        return all(predecessor.is_completed() for predecessor in self.get_predecessors())
+        return all(predecessor.is_completed() or predecessor.is_skipped() for predecessor in self.get_predecessors())
 
     def _execute(self):
         """Execute the node's action function with predecessor outputs"""
