@@ -1,39 +1,99 @@
-# Example usage, this won't work
-def build_pipeline():
-    graph = ExecutableGraph()
+from pathlib import Path
+from typing import Callable, Optional
+import pandas as pd
+import statsmodels.api as sm
+from pyautocausal.orchestration.nodes import Node
+from pyautocausal.orchestration.graph import ExecutableGraph
+from pyautocausal.persistence.local_output_handler import LocalOutputHandler
+from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect, data_validation
+from pyautocausal.persistence.output_config import OutputConfig, OutputType
+
+def preprocess_lalonde_data() -> str:
+    """
+    Load and preprocess the LaLonde dataset.
     
-    # Load data
-    load_data = ActionNode("load_data", graph, 
-        lambda: pd.read_csv("data.csv"))
+    Returns:
+        str: String representation of the processed dataset
+    """
+    url = "https://raw.githubusercontent.com/robjellis/lalonde/master/lalonde_data.csv"
+    df = pd.read_csv(url)
+    y = df['re78']
+    t = df['treat']
+    X = df.drop(columns=['re78', 'treat','ID'])
+
+    df = pd.DataFrame({'y': y, 'treat': t, **X})
+    return df
+
+
+def condition_nObs_DoubleML(df: pd.DataFrame) -> bool:
+    return len(df) > 100
+
+def condition_nObs_OLS(df: pd.DataFrame) -> bool:
+    return len(df) <= 100
+
+# -------------------------------------------------------------------------
+# New CausalGraph class to hold our DoubleML and OLS nodes
+# -------------------------------------------------------------------------
+class CausalGraph(ExecutableGraph):
+    def __init__(self, output_path: Path):
+        super().__init__(output_handler=LocalOutputHandler(output_path))
+
+        # Define the data distribution node
+        self.data_distribution_node = Node(
+            name="data_distribution",
+            graph=self,
+            action_function=data_validation,    
+        )
+
+        # Define the DoubleML node
+        self.doubleML_node = Node(
+            name="doubleML_treatment_effect",
+            graph=self,
+            action_function=doubleML_treatment_effect,
+            condition=condition_nObs_DoubleML,
+            skip_reason="Sample size too small for Double ML",
+            output_config=OutputConfig(
+                save_output=True,
+                output_filename="doubleml_results",
+                output_type=OutputType.TEXT
+            )
+        )
+        self.doubleML_node.add_predecessor(self.data_distribution_node, argument_name="df")
+
+        # Define the OLS node
+        self.ols_node = Node(
+            name="ols_treatment_effect",
+            graph=self,
+            action_function=ols_treatment_effect,
+            condition=condition_nObs_OLS,
+            skip_reason="Sample size too large for OLS",
+            output_config=OutputConfig(
+                save_output=True,
+                output_filename="ols_results",
+                output_type=OutputType.TEXT
+            )
+        )
+        self.ols_node.add_predecessor(self.data_distribution_node, argument_name="df")
+
+    def add_data_node(self, load_data_node: Node):
+        # Create a data distribution node
+        self.data_distribution_node.add_predecessor(load_data_node, argument_name="df")
+
+# For convenience, if someone runs this module directly,
+# we create 'output' folder and run the pipeline
+if __name__ == "__main__":
+    path = Path("output")
+    path.mkdir(parents=True, exist_ok=True)
     
-    # Validate data size
-    validate = ActionNode("validate", graph,
-        lambda data: validate_data(data))
-    validate.add_ancestor(load_data)
+    graph = CausalGraph(output_path= path)
     
-    # Analysis node with condition based on validation
-    analysis = ActionNode("analysis", graph,
-        lambda data: analyze_data(data))
-    analysis.add_ancestor(load_data)
-    analysis.add_ancestor(validate)
-    
-    # Condition that depends on validation output
-    analysis.set_condition(
-        lambda validate: validate['quality_score'] > 0.9,  # condition function
-        ['validate'],  # ancestor node names to pass to condition
-        "Data quality too low for analysis"  # skip reason
+    # Add the Lalonde data node (preprocessing)
+    load_data_node = Node(
+            name="load_data",
+            graph=graph,
+            action_function=preprocess_lalonde_data,
     )
-    
-    # More complex condition using multiple ancestors
-    summary = ActionNode("summary", graph, 
-        lambda data, validate: summarize_data(data, validate))
-    summary.add_ancestor(load_data)
-    summary.add_ancestor(validate)
-    summary.set_condition(
-        lambda load_data, validate: (
-            len(load_data) > 1000 and 
-            validate['quality_score'] > 0.8
-        ),
-        ['load_data', 'validate'],
-        "Dataset too small or quality too low"
-    )
+
+    graph.add_data_node(load_data_node)
+    # Execute all nodes
+    graph.execute_graph()
