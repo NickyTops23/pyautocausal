@@ -37,6 +37,7 @@ class Node(BaseNode):
         self.predecessor_outputs = {}
         self.action_condition_kwarg_map = action_condition_kwarg_map
         self.action_function = action_function
+        self.execution_count = 0
     
     def validate_condition(self):
         """Verify that condition is valid given the node's predecessors"""
@@ -76,47 +77,65 @@ class Node(BaseNode):
         # Get information about function parameters
         signature = inspect.signature(func)
         required_params = {
-            name: param 
+            name: None
             for name, param in signature.parameters.items()
             if param.default == inspect.Parameter.empty
         }
+        missing_required = set(required_params.keys())
+
+        optional_params = {
+            name: None
+            for name, param in signature.parameters.items()
+            if param.default != inspect.Parameter.empty
+        }
+        missing_optional = set(optional_params.keys())
         
         # Start with available arguments
         arguments = available_args.copy()
+        for argument in arguments.keys():
+            if argument in required_params:
+                required_params[argument] = arguments[argument]
+                missing_required.remove(argument)
+            elif argument in optional_params:
+                optional_params[argument] = arguments[argument]
+                missing_optional.remove(argument)
         
         # For any missing required parameters, try to get them from run context
-        missing_required = set(required_params.keys()) - set(arguments.keys())
+        
         if missing_required and hasattr(self.graph, 'run_context'):
             for param in missing_required:
                 if hasattr(self.graph.run_context, param):
-                    arguments[param] = getattr(self.graph.run_context, param)
+                    required_params[param] = getattr(self.graph.run_context, param)
+                    missing_required.remove(param)
+
         
         # Check if we have all required parameters
-        still_missing = set(required_params.keys()) - set(arguments.keys())
-        if still_missing:
+        if missing_required:
             raise ValueError(
                 f"Missing required parameters for {func.__name__} in node {self.name}: "
-                f"{still_missing}. Not found in available arguments or run context."
+                f"{missing_required}. Not found in available arguments or run context."
             )
         
         # For optional parameters, try to get them from available args or run context
         # but don't raise an error if they're not found
-        optional_params = {
-            name: param.default 
-            for name, param in signature.parameters.items()
-            if param.default != inspect.Parameter.empty
-        }
-        
-        for param_name, default_value in optional_params.items():
-            if param_name not in arguments:
-                # Try run context first
+
+        keys_to_delete = []
+        for param_name, current_value in optional_params.items():
+            if param_name in missing_optional:
+                # Try run context
                 if hasattr(self.graph, 'run_context') and hasattr(self.graph.run_context, param_name):
-                    arguments[param_name] = getattr(self.graph.run_context, param_name)
-                # Otherwise use the default value
-                else:
-                    arguments[param_name] = default_value
+                    optional_params[param_name] = getattr(self.graph.run_context, param_name)
+                    missing_optional.remove(param_name)
+                else: 
+                    # delete key from optional_params to indicate it's not found
+                    # this helps us know which default values we're overriding
+                    keys_to_delete.append(param_name)
         
-        return arguments
+        for key in keys_to_delete:
+            if key in optional_params:
+                del optional_params[key]
+        
+        return {**required_params, **optional_params}
 
     def condition_satisfied(self) -> bool:
         """Check if the node's condition is satisfied using predecessors and run context"""
@@ -149,6 +168,7 @@ class Node(BaseNode):
 
     def execute(self):
         """Template method that handles state management and conditional execution"""
+        self.execution_count += 1
         try:
             if not self.should_execute():
                 self.mark_skipped()
@@ -225,6 +245,7 @@ class Node(BaseNode):
         """Execute the node's action function with predecessor outputs and run context"""
         self.get_predecessor_outputs()
         arguments = self._resolve_function_arguments(self.action_function, self.predecessor_outputs)
+        print(f"Executing {self.name} with arguments: {arguments}")
         self.output = (
             self.action_function(**arguments) if arguments 
             else self.action_function()
