@@ -3,19 +3,35 @@ from typing import Set, Optional
 from .base import Node
 from ..persistence.output_handler import OutputHandler
 from pyautocausal.utils.logger import get_class_logger
+from pyautocausal.orchestration.run_context import RunContext
 
 
 class ExecutableGraph(nx.DiGraph):
-    def __init__(self, output_handler: Optional[OutputHandler] = None):
+    def __init__(
+            self,
+            output_handler: Optional[OutputHandler] = None,
+            input_dict: Optional[dict] = None,
+            run_context: Optional[RunContext] = None
+        ):
         super().__init__()
         self.logger = get_class_logger(self.__class__.__name__)
+        self.run_context = run_context or RunContext()
+        
         if output_handler is None:
             self.save_node_outputs = False
             self.logger.warning("No output handler provided, node outputs will not be saved")
         else:
             self.save_node_outputs = True
             self.output_handler = output_handler
+
+        if input_dict is not None:
+            self.add_initial_nodes_from_dict(input_dict)
     
+    def add_initial_nodes_from_dict(self, initial_node_dict: dict):
+        for node_name, node_output in initial_node_dict.items():
+            node = Node(node_name, self, lambda: node_output)
+            self.add_node(node)
+
     def get_ready_nodes(self) -> Set[Node]:
         """Returns all nodes that are ready to be executed"""
         return {node for node in self.nodes() 
