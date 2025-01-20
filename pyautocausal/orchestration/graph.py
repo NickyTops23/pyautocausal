@@ -10,7 +10,6 @@ class ExecutableGraph(nx.DiGraph):
     def __init__(
             self,
             output_handler: Optional[OutputHandler] = None,
-            input_dict: Optional[dict] = None,
             run_context: Optional[RunContext] = None
         ):
         super().__init__()
@@ -23,14 +22,6 @@ class ExecutableGraph(nx.DiGraph):
         else:
             self.save_node_outputs = True
             self.output_handler = output_handler
-
-        if input_dict is not None:
-            self.add_initial_nodes_from_dict(input_dict)
-    
-    def add_initial_nodes_from_dict(self, initial_node_dict: dict):
-        for node_name, node_output in initial_node_dict.items():
-            node = Node(node_name, self, lambda: node_output)
-            self.add_node(node)
 
     def get_ready_nodes(self) -> Set[Node]:
         """Returns all nodes that are ready to be executed"""

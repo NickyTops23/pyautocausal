@@ -79,14 +79,14 @@ class Node(BaseNode):
         required_params = {
             name: None
             for name, param in signature.parameters.items()
-            if param.default == inspect.Parameter.empty
+            if param.default is inspect.Parameter.empty
         }
         missing_required = set(required_params.keys())
 
         optional_params = {
             name: None
             for name, param in signature.parameters.items()
-            if param.default != inspect.Parameter.empty
+            if param.default is not inspect.Parameter.empty
         }
         missing_optional = set(optional_params.keys())
         

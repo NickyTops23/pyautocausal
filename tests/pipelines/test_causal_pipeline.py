@@ -1,31 +1,41 @@
 import pytest
 from pathlib import Path
 import pandas as pd
-from pyautocausal.pipelines.example import CausalGraph, preprocess_lalonde_data
-from pyautocausal.orchestration.nodes import Node
+from pyautocausal.pipelines.example import ExampleCausalGraph, ExampleCausalDataInput
+
+def preprocess_lalonde_data() -> str:
+    """
+    Load and preprocess the LaLonde dataset.
+    
+    Returns:
+        str: String representation of the processed dataset
+    """
+    url = "https://raw.githubusercontent.com/robjellis/lalonde/master/lalonde_data.csv"
+    df = pd.read_csv(url)
+    y = df['re78']
+    t = df['treat']
+    X = df.drop(columns=['re78', 'treat','ID'])
+
+    df = pd.DataFrame({'y': y, 'treat': t, **X})
+    return df
 
 @pytest.fixture
 def output_dir(tmp_path):
     """Create temporary directory for test outputs"""
     return tmp_path / "test_outputs"
 
-@pytest.fixture
-def causal_graph(output_dir):
+
+def causal_graph(input_data, output_dir):
+    input_data = ExampleCausalDataInput(df=input_data)
     """Create a CausalGraph instance with configured output handler"""
     output_dir.mkdir(parents=True, exist_ok=True)
-    return CausalGraph(output_path=output_dir)
+    return ExampleCausalGraph(input_data=input_data, output_path=output_dir)
 
-def test_causal_pipeline_execution(causal_graph, output_dir):
+def test_causal_pipeline_execution(output_dir):
     """Test that the pipeline executes successfully"""
-    # Add the data loading node
-    load_data_node = Node(
-        name="load_data",
-        graph=causal_graph,
-        action_function=preprocess_lalonde_data,
-    )
     
-    causal_graph.add_data_node(load_data_node)
-    causal_graph.execute_graph()
+    causal_graph_lalonde = causal_graph(preprocess_lalonde_data(), output_dir)
+    causal_graph_lalonde.execute_graph()
     
     # Check that output files are created
     expected_files = [
@@ -36,31 +46,24 @@ def test_causal_pipeline_execution(causal_graph, output_dir):
     # At least one of these files should exist based on data size
     assert any((output_dir / file).exists() for file in expected_files)
 
-def test_causal_pipeline_small_dataset(causal_graph, output_dir):
+def test_causal_pipeline_large_dataset(output_dir):
     """Test pipeline with large dataset (should use DoubleML)"""
     # Create mock large dataset
     large_df = pd.DataFrame({
         'y': range(150),
-        'treat': [1, 0] * 20,
-        'age': range(40),
-        'educ': [12] * 40,
+        'treat': [1, 0] * 75,
+        'age': range(150),
+        'educ': [12] * 150,
     })
     
-    # Mock the preprocess function to return large dataset
-    mock_data_node = Node(
-        name="load_data",
-        graph=causal_graph,
-        action_function=lambda: large_df,
-    )
-    
-    causal_graph.add_data_node(mock_data_node)
-    causal_graph.execute_graph()
+    causal_graph_large_df = causal_graph(large_df, output_dir)
+    causal_graph_large_df.execute_graph()
     
     # Check that DoubleML results exist
     assert (output_dir / 'doubleml_results.txt').exists()
     assert not (output_dir / 'ols_results.txt').exists()
 
-def test_causal_pipeline_small_dataset(causal_graph, output_dir):
+def test_causal_pipeline_small_dataset(output_dir):
     """Test pipeline with small dataset (should use OLS)"""
     # Create mock small dataset
     small_df = pd.DataFrame({
@@ -70,15 +73,8 @@ def test_causal_pipeline_small_dataset(causal_graph, output_dir):
         'educ': [12] * 50,
     })
     
-    # Mock the preprocess function to return small dataset
-    mock_data_node = Node(
-        name="load_data",
-        graph=causal_graph,
-        action_function=lambda: small_df,
-    )
-    
-    causal_graph.add_data_node(mock_data_node)
-    causal_graph.execute_graph()
+    causal_graph_small_df = causal_graph(small_df, output_dir)
+    causal_graph_small_df.execute_graph()
     
     # Check that OLS results exist
     assert (output_dir / 'ols_results.txt').exists()
@@ -90,7 +86,7 @@ def test_causal_pipeline_invalid_path():
     invalid_path = Path('/nonexistent/directory')
     
     with pytest.raises(Exception):
-        CausalGraph(output_path=invalid_path)
+        causal_graph(preprocess_lalonde_data(), invalid_path)
 
 
 
