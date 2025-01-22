@@ -245,7 +245,7 @@ class Node(BaseNode):
         """Execute the node's action function with predecessor outputs and run context"""
         self.get_predecessor_outputs()
         arguments = self._resolve_function_arguments(self.action_function, self.predecessor_outputs)
-        print(f"Executing {self.name} with arguments: {arguments}")
+        print(f"Executing node: {self.name} (args: {list(arguments.keys())})")
         self.output = (
             self.action_function(**arguments) if arguments 
             else self.action_function()

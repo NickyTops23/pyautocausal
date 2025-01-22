@@ -43,9 +43,19 @@ class PipelineGraph(ExecutableGraph):
         """Create initial nodes from input dictionary"""
         for node_name, node_output in initial_node_dict.items():
             node = Node(
-                name=node_name, 
+                name=f"Input data {node_name}",
                 graph=self, 
                 action_function=lambda x=node_output: x
             )
             self.add_node(node)
             self.starter_nodes[node_name] = node
+
+    def add_branch(self, steps: list[Node]):
+        """Add a branch to the pipeline graph"""
+        for step in steps:
+            self.add_node(step)
+
+    def add_branch_from_list(self, steps: list[Node]):
+        """Add a branch to the pipeline graph"""
+        for step in steps:
+            self.add_node(step)
