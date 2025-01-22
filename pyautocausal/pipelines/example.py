@@ -5,18 +5,11 @@ import statsmodels.api as sm
 from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
-from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect, data_validation
-from pyautocausal.persistence.output_config import OutputConfig, OutputType
+from pyautocausal.pipelines.library import OLSNode, DoubleMLNode
 from dataclasses import dataclass
-from ..orchestration.data_input import DataInput
-from ..orchestration.pipeline_graph import PipelineGraph
+from pyautocausal.orchestration.data_input import DataInput
+from pyautocausal.orchestration.pipeline_graph import PipelineGraph
 
-
-def condition_nObs_DoubleML(df: pd.DataFrame) -> bool:
-    return len(df) > 100
-
-def condition_nObs_OLS(df: pd.DataFrame) -> bool:
-    return len(df) <= 100
 
 @dataclass
 class ExampleCausalDataInput(DataInput):
@@ -59,32 +52,18 @@ class ExampleCausalGraph(PipelineGraph):
         )
 
         # Define the DoubleML node
-        self.doubleML_node = Node(
-            name="doubleML_treatment_effect",
+        self.doubleML_node = DoubleMLNode(
             graph=self,
-            action_function=doubleML_treatment_effect,
-            condition=condition_nObs_DoubleML,
-            skip_reason="Sample size too small for Double ML",
-            output_config=OutputConfig(
-                save_output=True,
-                output_filename="doubleml_results",
-                output_type=OutputType.TEXT
-            )
+            save_output=True,
+            output_filename="doubleml_results"
         )
         self.doubleML_node.add_predecessor(self.starter_nodes["df"], argument_name="df")
 
         # Define the OLS node
-        self.ols_node = Node(
-            name="ols_treatment_effect",
+        self.ols_node = OLSNode(
             graph=self,
-            action_function=ols_treatment_effect,
-            condition=condition_nObs_OLS,
-            skip_reason="Sample size too large for OLS",
-            output_config=OutputConfig(
-                save_output=True,
-                output_filename="ols_results",
-                output_type=OutputType.TEXT
-            )
+            save_output=True,
+            output_filename="ols_results"
         )
         self.ols_node.add_predecessor(self.starter_nodes["df"], argument_name="df")
 
@@ -92,21 +71,37 @@ class ExampleCausalGraph(PipelineGraph):
         # Create a data distribution node
         self.data_distribution_node.add_predecessor(load_data_node, argument_name="df")
 
+def load_lalonde_data() -> ExampleCausalDataInput:
+    """
+    Load and preprocess the LaLonde dataset.
+    
+    Returns:
+        ExampleCausalDataInput: Preprocessed LaLonde dataset
+    """
+    url = "https://raw.githubusercontent.com/robjellis/lalonde/master/lalonde_data.csv"
+    raw_df = pd.read_csv(url)
+    
+    # Preprocess into required format
+    df = pd.DataFrame({
+        'y': raw_df['re78'],
+        'treat': raw_df['treat'],
+        **raw_df.drop(columns=['re78', 'treat', 'ID']).to_dict('series')
+    })
+    
+    return ExampleCausalDataInput(df=df)
+
 # For convenience, if someone runs this module directly,
 # we create 'output' folder and run the pipeline
 if __name__ == "__main__":
     path = Path("output")
     path.mkdir(parents=True, exist_ok=True)
     
-    graph = ExampleCausalGraph(output_path= path)
+    # Load input data
+    input_data = load_lalonde_data()
     
-    # Add the Lalonde data node (preprocessing)
-    load_data_node = Node(
-            name="load_data",
-            graph=graph,
-            action_function=preprocess_lalonde_data,
+    # Create and execute graph
+    graph = ExampleCausalGraph(
+        input_data=input_data,
+        output_path=path
     )
-
-    graph.add_data_node(load_data_node)
-    # Execute all nodes
     graph.execute_graph()
