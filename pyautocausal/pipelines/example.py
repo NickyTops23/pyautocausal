@@ -7,22 +7,9 @@ from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect, data_validation
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-
-def preprocess_lalonde_data() -> str:
-    """
-    Load and preprocess the LaLonde dataset.
-    
-    Returns:
-        str: String representation of the processed dataset
-    """
-    url = "https://raw.githubusercontent.com/robjellis/lalonde/master/lalonde_data.csv"
-    df = pd.read_csv(url)
-    y = df['re78']
-    t = df['treat']
-    X = df.drop(columns=['re78', 'treat','ID'])
-
-    df = pd.DataFrame({'y': y, 'treat': t, **X})
-    return df
+from dataclasses import dataclass
+from ..orchestration.data_input import DataInput
+from ..orchestration.pipeline_graph import PipelineGraph
 
 
 def condition_nObs_DoubleML(df: pd.DataFrame) -> bool:
@@ -31,18 +18,44 @@ def condition_nObs_DoubleML(df: pd.DataFrame) -> bool:
 def condition_nObs_OLS(df: pd.DataFrame) -> bool:
     return len(df) <= 100
 
+@dataclass
+class ExampleCausalDataInput(DataInput):
+    df: pd.DataFrame
+    
+    def to_dict(self) -> dict:
+        return {
+            "df": self.df
+        }
+    
+    @classmethod
+    def get_required_fields(cls) -> set[str]:
+        return {"df"}
+    
+    @classmethod
+    def check_presence_of_required_fields(cls) -> None:
+        """Check if all required fields are present in input dictionary"""
+        # No need to check to_dict() at class level
+        # Just verify that the required fields are defined in the class
+        required_fields = cls.get_required_fields()
+        class_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        if not required_fields.issubset(class_fields):
+            missing = required_fields - class_fields
+            raise ValueError(f"Missing required fields: {missing}")
+
 # -------------------------------------------------------------------------
 # New CausalGraph class to hold our DoubleML and OLS nodes
 # -------------------------------------------------------------------------
-class CausalGraph(ExecutableGraph):
-    def __init__(self, output_path: Path):
-        super().__init__(output_handler=LocalOutputHandler(output_path))
-
-        # Define the data distribution node
-        self.data_distribution_node = Node(
-            name="data_distribution",
-            graph=self,
-            action_function=data_validation,    
+class ExampleCausalGraph(PipelineGraph):
+    input_class = ExampleCausalDataInput
+    
+    def __init__(
+            self, 
+            input_data: ExampleCausalDataInput,
+            output_path: Path
+        ):
+        super().__init__(
+            input_data=input_data,
+            output_handler=LocalOutputHandler(output_path),
         )
 
         # Define the DoubleML node
@@ -58,7 +71,7 @@ class CausalGraph(ExecutableGraph):
                 output_type=OutputType.TEXT
             )
         )
-        self.doubleML_node.add_predecessor(self.data_distribution_node, argument_name="df")
+        self.doubleML_node.add_predecessor(self.starter_nodes["df"], argument_name="df")
 
         # Define the OLS node
         self.ols_node = Node(
@@ -73,7 +86,7 @@ class CausalGraph(ExecutableGraph):
                 output_type=OutputType.TEXT
             )
         )
-        self.ols_node.add_predecessor(self.data_distribution_node, argument_name="df")
+        self.ols_node.add_predecessor(self.starter_nodes["df"], argument_name="df")
 
     def add_data_node(self, load_data_node: Node):
         # Create a data distribution node
@@ -85,7 +98,7 @@ if __name__ == "__main__":
     path = Path("output")
     path.mkdir(parents=True, exist_ok=True)
     
-    graph = CausalGraph(output_path= path)
+    graph = ExampleCausalGraph(output_path= path)
     
     # Add the Lalonde data node (preprocessing)
     load_data_node = Node(
