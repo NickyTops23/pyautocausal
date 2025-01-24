@@ -52,9 +52,9 @@ def pipeline_graph(output_config, tmp_path):
     
     # Data node
     data_node = Node(
-        "create_data", 
-        graph,
-        create_sample_data,
+        name="create_data", 
+        graph=graph,
+        action_function=create_sample_data,
         output_config=OutputConfig(
             save_output=True,
             output_filename="create_data",
@@ -64,9 +64,9 @@ def pipeline_graph(output_config, tmp_path):
     
     # Average computation node
     average_node = Node(
-        "compute_average",
-        graph,
-        compute_average,
+        name="compute_average",
+        graph=graph,
+        action_function=compute_average,
         output_config=OutputConfig(
             save_output=True,
             output_filename="compute_average",
@@ -77,9 +77,9 @@ def pipeline_graph(output_config, tmp_path):
     
     # Plot creation node
     plot_node = Node(
-        "create_plot",
-        graph,
-        create_plot,
+        name="create_plot",
+        graph=graph,
+        action_function=create_plot,
         output_config=OutputConfig(
             save_output=True,
             output_filename="create_plot",

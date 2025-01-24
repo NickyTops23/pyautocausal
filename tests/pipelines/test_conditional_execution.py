@@ -28,18 +28,22 @@ def test_true_condition():
     """Test that when condition is True, only true branch executes"""
     graph = ExecutableGraph()
     
-    condition_node = Node("condition", graph, always_true)
+    condition_node = Node(
+        name="condition", 
+        graph = graph, 
+        action_function=always_true
+    )
     true_node = Node(
-        "true_branch", 
-        graph, 
-        true_branch,
+        name="true_branch", 
+        graph = graph, 
+        action_function=true_branch,
         condition=is_true,
         skip_reason="Condition was false"
     )
     false_node = Node(
-        "false_branch", 
-        graph, 
-        false_branch,
+        name="false_branch", 
+        graph = graph, 
+        action_function=false_branch,
         condition=is_false,
         skip_reason="Condition was true"
     )
@@ -60,18 +64,22 @@ def test_false_condition():
     """Test that when condition is False, only false branch executes"""
     graph = ExecutableGraph()
     
-    condition_node = Node("condition", graph, always_false)
+    condition_node = Node(
+        name="condition", 
+        graph = graph, 
+        action_function=always_false
+    )
     true_node = Node(
-        "true_branch", 
-        graph, 
-        true_branch,
+        name="true_branch", 
+        graph = graph, 
+        action_function=true_branch,
         condition=is_true,
         skip_reason="Condition was false"
     )
     false_node = Node(
-        "false_branch", 
-        graph, 
-        false_branch,
+        name="false_branch", 
+        graph = graph, 
+        action_function=false_branch,
         condition=is_false,
         skip_reason="Condition was true"
     )
@@ -93,22 +101,26 @@ def test_skip_propagation():
     graph = ExecutableGraph()
     
     # Initial condition node that returns False
-    condition_node = Node("condition", graph, always_false)
+    condition_node = Node(
+        name="condition", 
+        graph = graph, 
+        action_function=always_false
+    )
     
     # This node will be skipped because condition is False
     true_node = Node(
-        "true_branch", 
-        graph, 
-        true_branch,
+        name="true_branch", 
+        graph = graph, 
+        action_function=true_branch,
         condition=is_true,
         skip_reason="Condition was false"
     )
     
     # This should never execute because its predecessor was skipped
     final_node = Node(
-        "final_node",
-        graph,
-        final_node_action
+        name="final_node",
+        graph = graph,
+        action_function=final_node_action
     )
     
     # Connect the nodes

@@ -9,10 +9,11 @@ from networkx import DiGraph
 import inspect
 
 class BaseNode:
-    def __init__(self, name: str, graph: ExecutableGraph):
+    def __init__(self, name: str, graph: Optional[ExecutableGraph] = None):
         self.name = name
         self.graph = graph
-        self.graph.add_node(self)
+        if graph is not None:
+            self.graph.add_node(self)
     
     def __str__(self):
         return f"BaseNode(name={self.name})"
@@ -20,9 +21,9 @@ class BaseNode:
 class Node(BaseNode):
     def __init__(
             self, 
-            name: str, 
-            graph: DiGraph, 
+            name: str,
             action_function: Callable,
+            graph: Optional[DiGraph] = None,
             output_config: OutputConfig = None,
             condition: Callable[..., bool] = None,
             skip_reason: str = "",
@@ -245,7 +246,7 @@ class Node(BaseNode):
         """Execute the node's action function with predecessor outputs and run context"""
         self.get_predecessor_outputs()
         arguments = self._resolve_function_arguments(self.action_function, self.predecessor_outputs)
-        print(f"Executing {self.name} with arguments: {arguments}")
+        print(f"Executing node: {self.name} (args: {list(arguments.keys())})")
         self.output = (
             self.action_function(**arguments) if arguments 
             else self.action_function()
