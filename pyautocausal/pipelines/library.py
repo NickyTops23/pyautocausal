@@ -10,12 +10,12 @@ class LibraryNode(Node):
     """Base class for standardized nodes with configurable output and conditions."""
     
     def __init__(self, 
-                 graph: ExecutableGraph, 
-                 name: str, 
-                 condition: Optional[Callable[[pd.DataFrame], bool]] = None, 
-                 skip_reason: str = "", 
-                 save_output: bool = True, 
-                 output_filename: str = "", 
+                 name: str,
+                 graph: Optional[ExecutableGraph] = None,
+                 condition: Optional[Callable[[pd.DataFrame], bool]] = None,
+                 skip_reason: str = "",
+                 save_output: bool = True,
+                 output_filename: str = "",
                  output_type: OutputType = OutputType.TEXT):
         
         if condition is None:
@@ -23,8 +23,8 @@ class LibraryNode(Node):
             
         super().__init__(
             name=name,
-            graph=graph,
             action_function=self.action,
+            graph=graph,
             condition=condition,
             skip_reason=skip_reason,
             output_config=OutputConfig(
@@ -49,8 +49,8 @@ class OLSNode(LibraryNode):
     """Node for Ordinary Least Squares regression analysis."""
     
     def __init__(self, 
-                 graph: ExecutableGraph, 
-                 name: str = "OLS Treatment Effect", 
+                 graph=None, 
+                 name: str = "ols_treatment_effect", 
                  condition: Optional[Callable[[pd.DataFrame], bool]] = None,
                  skip_reason: str = "Sample size too large for OLS",
                  save_output: bool = True,
@@ -58,7 +58,7 @@ class OLSNode(LibraryNode):
         super().__init__(
             graph=graph,
             name=name,
-            condition=condition,
+            condition=condition if condition is not None else self.condition,
             skip_reason=skip_reason,
             save_output=save_output,
             output_filename=output_filename
@@ -95,8 +95,8 @@ class DoubleMLNode(LibraryNode):
     """Node for Double Machine Learning analysis."""
     
     def __init__(self, 
-                 graph: ExecutableGraph, 
-                 name: str = "DoublesML Treatment Effect", 
+                 graph=None, 
+                 name: str = "doubleml_treatment_effect", 
                  condition: Optional[Callable[[pd.DataFrame], bool]] = None,
                  skip_reason: str = "Sample size too small for Double ML", 
                  save_output: bool = True,
@@ -104,7 +104,7 @@ class DoubleMLNode(LibraryNode):
         super().__init__(
             graph=graph,
             name=name,
-            condition=condition,
+            condition=condition if condition is not None else self.condition,
             skip_reason=skip_reason,
             save_output=save_output,
             output_filename=output_filename
@@ -147,11 +147,27 @@ class DoubleMLNode(LibraryNode):
 
 class PassthroughNode(LibraryNode):
     """Node for transforming data."""
-    def __init__(self, graph: ExecutableGraph, name: str = "Passthrough Data", condition: Optional[Callable[[pd.DataFrame], bool]] = None, skip_reason: str = "Sample size too small for Transform Data", save_output: bool = True, output_filename: str = "transform_data"):
-        super().__init__(graph=graph, name=name, condition=condition, skip_reason=skip_reason, save_output=save_output, output_filename=output_filename)
+    def __init__(self, 
+                 graph=None, 
+                 name: str = "passthrough", 
+                 condition: Optional[Callable[[pd.DataFrame], bool]] = None,
+                 skip_reason: str = "Sample size too small for Transform Data",
+                 save_output: bool = False,
+                 output_filename: str = "transform_data",
+                 output_type: OutputType = OutputType.PARQUET):
+        super().__init__(
+            graph=graph,
+            name=name,
+            condition=condition if condition is not None else self.condition,
+            skip_reason=skip_reason,
+            save_output=save_output,
+            output_filename=output_filename
+        )
 
-    def action(self, df: pd.DataFrame) -> str:
+    @staticmethod
+    def action(df: pd.DataFrame) -> str:
         return df
 
-    def condition(self, df: pd.DataFrame) -> bool:
+    @staticmethod
+    def condition(df: pd.DataFrame) -> bool:
         return True
