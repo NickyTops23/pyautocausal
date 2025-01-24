@@ -9,10 +9,11 @@ from networkx import DiGraph
 import inspect
 
 class BaseNode:
-    def __init__(self, name: str, graph: ExecutableGraph):
+    def __init__(self, name: str, graph: Optional[ExecutableGraph] = None):
         self.name = name
         self.graph = graph
-        self.graph.add_node(self)
+        if graph is not None:
+            self.graph.add_node(self)
     
     def __str__(self):
         return f"BaseNode(name={self.name})"
@@ -20,9 +21,9 @@ class BaseNode:
 class Node(BaseNode):
     def __init__(
             self, 
-            name: str, 
-            graph: DiGraph, 
+            name: str,
             action_function: Callable,
+            graph: Optional[DiGraph] = None,
             output_config: OutputConfig = None,
             condition: Callable[..., bool] = None,
             skip_reason: str = "",
