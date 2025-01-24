@@ -90,6 +90,7 @@ class PipelineGraph(ExecutableGraph):
     def connect_initial_nodes(self,initial_node: Node):
         """ Connect a node to the starter nodes """
         for node_name, starter_node in self.starter_nodes.items():
+            #TODO: Make this more flexible using a result class that gets passed through the graph
             starter_node.add_predecessor(initial_node, argument_name = "df")
 
     def add_branch(self, steps: list[tuple[str, Node]], predecessor: str = None):
@@ -116,6 +117,7 @@ class PipelineGraph(ExecutableGraph):
                     f"Available nodes: {list(self.node_index.keys())}"
                 )
             pred_node = self.node_index[predecessor]
+            #TODO: Make this more flexible using a result class that gets passed through the graph
             first_node.add_predecessor(pred_node, argument_name='df')
             print(f"Added node: {first_node.name}, with predecessor: {pred_node.name}")
         else:
@@ -128,6 +130,7 @@ class PipelineGraph(ExecutableGraph):
             node.name = node_name
             node.graph = self
             self.add_node(node)
+            #TODO: Make this more flexible using a result class that gets passed through the graph
             node.add_predecessor(current_node, argument_name='df')
             print(f"Added node: {node.name}, with predecessor: {current_node.name}")
             current_node = node
