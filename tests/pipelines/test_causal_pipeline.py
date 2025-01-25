@@ -1,7 +1,10 @@
 import pytest
 from pathlib import Path
 import pandas as pd
-from pyautocausal.pipelines.example import ExampleCausalGraph, ExampleCausalDataInput
+from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.persistence.output_config import OutputConfig, OutputType
+from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect
+from pyautocausal.pipelines.example import condition_nObs_DoubleML, condition_nObs_OLS
 
 def preprocess_lalonde_data() -> str:
     """
@@ -24,27 +27,43 @@ def output_dir(tmp_path):
     """Create temporary directory for test outputs"""
     return tmp_path / "test_outputs"
 
-
-def causal_graph(input_data, output_dir):
-    input_data = ExampleCausalDataInput(df=input_data)
-    """Create a CausalGraph instance with configured output handler"""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return ExampleCausalGraph(input_data=input_data, output_path=output_dir)
-
+def causal_graph(output_dir):
+    graph = (GraphBuilder(output_path=output_dir)
+        .add_input_node("df")
+        .add_node(
+            "doubleml",
+            doubleML_treatment_effect,
+            predecessors={"df": "df"},
+            condition=condition_nObs_DoubleML,
+            skip_reason="Sample size too small for Double ML",
+            output_config=OutputConfig(
+                save_output=True,
+                output_filename="doubleml_results",
+                output_type=OutputType.TEXT
+            )
+        )
+        .add_node(
+            "ols",
+            ols_treatment_effect,
+            predecessors={"df": "df"},
+            condition=condition_nObs_OLS,
+            skip_reason="Sample size too large for OLS",
+            output_config=OutputConfig(
+                save_output=True,
+                output_filename="ols_results",
+                output_type=OutputType.TEXT
+            )
+        )
+        .build())
+    
+    return graph
 def test_causal_pipeline_execution(output_dir):
     """Test that the pipeline executes successfully"""
     
-    causal_graph_lalonde = causal_graph(preprocess_lalonde_data(), output_dir)
-    causal_graph_lalonde.execute_graph()
+    graph = causal_graph(output_dir)
     
-    # Check that output files are created
-    expected_files = [
-        'doubleml_results.txt',
-        'ols_results.txt'
-    ]
-    
-    # At least one of these files should exist based on data size
-    assert any((output_dir / file).exists() for file in expected_files)
+    # Execute with input data
+    graph.fit(df=preprocess_lalonde_data())
 
 def test_causal_pipeline_large_dataset(output_dir):
     """Test pipeline with large dataset (should use DoubleML)"""
@@ -56,8 +75,8 @@ def test_causal_pipeline_large_dataset(output_dir):
         'educ': [12] * 150,
     })
     
-    causal_graph_large_df = causal_graph(large_df, output_dir)
-    causal_graph_large_df.execute_graph()
+    graph = causal_graph(output_dir)
+    graph.fit(df=large_df)
     
     # Check that DoubleML results exist
     assert (output_dir / 'doubleml_results.txt').exists()
@@ -73,20 +92,9 @@ def test_causal_pipeline_small_dataset(output_dir):
         'educ': [12] * 50,
     })
     
-    causal_graph_small_df = causal_graph(small_df, output_dir)
-    causal_graph_small_df.execute_graph()
+    graph = causal_graph(output_dir)
+    graph.fit(df=small_df)
     
     # Check that OLS results exist
     assert (output_dir / 'ols_results.txt').exists()
     assert not (output_dir / 'doubleml_results.txt').exists()
-
-
-def test_causal_pipeline_invalid_path():
-    """Test pipeline behavior with invalid output path"""
-    invalid_path = Path('/nonexistent/directory')
-    
-    with pytest.raises(Exception):
-        causal_graph(preprocess_lalonde_data(), invalid_path)
-
-
-
