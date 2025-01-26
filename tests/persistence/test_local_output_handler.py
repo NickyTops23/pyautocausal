@@ -101,7 +101,7 @@ def test_save_png(handler, sample_plot_bytes, output_dir):
 
 def test_save_bytes(handler, output_dir):
     test_bytes = b"Hello, world!"
-    handler.save("test_data", test_bytes, OutputType.BYTES)
+    handler.save("test_data", test_bytes, OutputType.BINARY)
     output_file = output_dir / "test_data.bytes"
     
     assert output_file.exists()

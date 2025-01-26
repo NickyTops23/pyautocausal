@@ -44,15 +44,18 @@ class ExecutableGraph(nx.DiGraph):
     
     def save_node_output(self, node: Node):
         """Save node output if configured to do so"""
-        if (node.output_config.save_output and 
-            node.output is not None):
-            if self.save_node_outputs:
+        from pyautocausal.orchestration.nodes import InputNode # Circular import
+        if self.save_node_outputs & ~isinstance(node, InputNode): # Input nodes are not saved
+            if (
+                getattr(node, 'output_config', None) is not None
+                and node.output is not None
+            ):
                 output_filename = getattr(node.output_config, 'output_filename', node.name)
                 if node.output_config.output_type is None:
                     raise ValueError(f"Output type is not set for node {node.name}")
                 self.output_handler.save(output_filename, node.output, node.output_config.output_type)
             else:
-                self.logger.warning(f"Node {node.name} output not saved because save_node_outputs is False")
+                self.logger.warning(f"Node {node.name} output not saved because no output config was provided")
             
     def execute_graph(self):
         """Execute all nodes in the graph in dependency order"""

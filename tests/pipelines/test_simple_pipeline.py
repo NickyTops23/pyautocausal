@@ -2,15 +2,12 @@ import pytest
 import pandas as pd
 import matplotlib.pyplot as plt
 from io import BytesIO
-from pathlib import Path
 from pyautocausal.orchestration.nodes import Node
-from pyautocausal.orchestration.base import OutputConfig
 from pyautocausal.orchestration.graph import ExecutableGraph
-from pyautocausal.persistence.output_types import OutputType
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 
 
-def create_sample_data():
+def create_sample_data() -> pd.DataFrame:
     """Create sample DataFrame for testing"""
     return pd.DataFrame({
         'category': ['A', 'B', 'A', 'B', 'A', 'B'],
@@ -39,12 +36,7 @@ def sample_data():
     return create_sample_data()
 
 @pytest.fixture
-def output_config():
-    """Create basic output configuration"""
-    return OutputConfig(save_output=True)
-
-@pytest.fixture
-def pipeline_graph(output_config, tmp_path):
+def pipeline_graph(tmp_path):
     """Create a configured pipeline graph with all nodes"""
     graph = ExecutableGraph(
         output_handler=LocalOutputHandler(tmp_path / 'outputs')
@@ -55,11 +47,7 @@ def pipeline_graph(output_config, tmp_path):
         "create_data", 
         graph,
         create_sample_data,
-        output_config=OutputConfig(
-            save_output=True,
-            output_filename="create_data",
-            output_type=OutputType.PARQUET
-        )
+        save_node=True
     )
     
     # Average computation node
@@ -67,11 +55,7 @@ def pipeline_graph(output_config, tmp_path):
         "compute_average",
         graph,
         compute_average,
-        output_config=OutputConfig(
-            save_output=True,
-            output_filename="compute_average",
-            output_type=OutputType.CSV
-        )
+        save_node=True
     )
     average_node.add_predecessor(data_node, argument_name="df")
     
@@ -80,11 +64,7 @@ def pipeline_graph(output_config, tmp_path):
         "create_plot",
         graph,
         create_plot,
-        output_config=OutputConfig(
-            save_output=True,
-            output_filename="create_plot",
-            output_type=OutputType.PNG
-        )
+        save_node=True
     )
     plot_node.add_predecessor(average_node, argument_name="avg_data")
     
@@ -139,7 +119,7 @@ def test_output_files_creation(executed_pipeline, tmp_path):
     
     expected_files = [
         'create_data.parquet',
-        'compute_average.csv',
+        'compute_average.parquet',
         'create_plot.png'
     ]
     

@@ -19,7 +19,7 @@ class OutputHandler(ABC):
         OutputType.PICKLE: 'save_pickle',
         OutputType.TEXT: 'save_text',
         OutputType.PNG: 'save_png',
-        OutputType.BYTES: 'save_bytes'
+        OutputType.BINARY: 'save_bytes'
     }
     
     def __init__(self):
@@ -81,7 +81,7 @@ class OutputHandler(ABC):
         elif output_type == OutputType.TEXT:
             if not isinstance(data, str):
                 raise TypeError("Data must be string for text output")
-        elif output_type in (OutputType.PNG, OutputType.BYTES):
+        elif output_type in (OutputType.PNG, OutputType.BINARY):
             if not isinstance(data, bytes):
                 raise TypeError("Data must be in bytes format")
         elif output_type == OutputType.JSON:
