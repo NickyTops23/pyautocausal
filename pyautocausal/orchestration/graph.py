@@ -73,3 +73,30 @@ class ExecutableGraph(nx.DiGraph):
             for node in ready_nodes:
                 node.execute()
                 self.save_node_output(node)  # Save output immediately after execution 
+
+    def fit(self, **kwargs):
+        """
+        Set input values and execute the graph.
+        
+        Args:
+            **kwargs: Dictionary mapping input node names to their values
+        """
+        if not hasattr(self, 'input_nodes'):
+            raise ValueError("Graph has no input nodes. Add input nodes using GraphBuilder.add_input_node()")
+        
+        # Validate inputs
+        missing_inputs = set(self.input_nodes.keys()) - set(kwargs.keys())
+        if missing_inputs:
+            raise ValueError(f"Missing values for input nodes: {missing_inputs}")
+        
+        extra_inputs = set(kwargs.keys()) - set(self.input_nodes.keys())
+        if extra_inputs:
+            raise ValueError(f"Received values for non-existent input nodes: {extra_inputs}")
+        
+        # Set input values
+        for name, value in kwargs.items():
+            self.input_nodes[name].set_input(value)
+        
+        # Execute the graph
+        self.execute_graph()
+        return self 

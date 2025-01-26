@@ -251,4 +251,33 @@ class Node(BaseNode):
             else self.action_function()
         )
 
+class InputNode(BaseNode):
+    """A node that accepts external input and passes it to its successors."""
+    
+    def __init__(self, name: str, graph: ExecutableGraph):
+        super().__init__(name, graph)
+        self.state = NodeState.PENDING
+        self.output = None
+        self.output_config = OutputConfig()
+    
+    def set_input(self, value: Any):
+        """Set the input value that will be passed to successor nodes"""
+        self.output = value
+        self.state = NodeState.COMPLETED
+
+    def is_skipped(self) -> bool:
+        return False # Input nodes are never skipped
+    
+    def is_ready(self) -> bool:
+        return False  # Input nodes are never ready for execution
+    
+    def is_running(self) -> bool:
+        return False
+    
+    def is_completed(self) -> bool:
+        return self.state == NodeState.COMPLETED
+    
+    def execute(self) -> None:
+        pass  # Input nodes don't execute; they just pass through their input
+
 
