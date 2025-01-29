@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from io import BytesIO
 from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph import ExecutableGraph
@@ -18,17 +19,14 @@ def compute_average(df: pd.DataFrame) -> pd.Series:
     """Compute average values by category"""
     return df.groupby('category')['value'].mean()
 
-def create_plot(avg_data: pd.Series) -> bytes:
+def create_plot(avg_data: pd.Series) -> Figure:
     """Create a plot visualization of the averages"""
+    fig, ax = plt.subplots(figsize=(8, 6))
     plt.figure(figsize=(8, 6))
-    avg_data.plot(kind='bar')
+    avg_data.plot(kind='bar', ax=ax)
     plt.xlabel('Category')
     plt.ylabel('Average Value')
-    
-    buffer = BytesIO()
-    plt.savefig(buffer, format='png')
-    plt.close()
-    return buffer.getvalue()
+    return fig
 
 @pytest.fixture
 def sample_data():
@@ -109,8 +107,7 @@ def test_plot_node_output(executed_pipeline):
     _, _, _, plot_node = executed_pipeline
     
     plot = plot_node.output
-    assert isinstance(plot, bytes)
-    assert len(plot) > 0
+    assert isinstance(plot, Figure)
 
 def test_output_files_creation(executed_pipeline, tmp_path):
     """Test that all output files are created correctly"""
@@ -119,7 +116,7 @@ def test_output_files_creation(executed_pipeline, tmp_path):
     
     expected_files = [
         'create_data.parquet',
-        'compute_average.parquet',
+        'compute_average.csv',
         'create_plot.png'
     ]
     

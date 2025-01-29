@@ -30,12 +30,9 @@ def sample_dataframe():
 @pytest.fixture
 def sample_plot_bytes():
     """Create a sample plot and return its bytes"""
-    plt.figure(figsize=(8, 6))
-    plt.plot([1, 2, 3], [4, 5, 6])
-    buffer = BytesIO()
-    plt.savefig(buffer, format='png')
-    plt.close()
-    return buffer.getvalue()
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.plot([1, 2, 3], [4, 5, 6])
+    return fig
 
 def test_save_csv(handler, sample_dataframe, output_dir):
     handler.save("test_data", sample_dataframe, OutputType.CSV)
@@ -95,9 +92,6 @@ def test_save_png(handler, sample_plot_bytes, output_dir):
     
     assert output_file.exists()
     assert output_file.stat().st_size > 0
-    with open(output_file, 'rb') as f:
-        loaded_bytes = f.read()
-    assert loaded_bytes == sample_plot_bytes
 
 def test_save_bytes(handler, output_dir):
     test_bytes = b"Hello, world!"

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Set
 import pandas as pd
 from .output_types import OutputType
+from matplotlib.figure import Figure
 
 class UnsupportedOutputTypeError(Exception):
     """Raised when attempting to save an unsupported output type"""
@@ -29,7 +30,7 @@ class OutputHandler(ABC):
     def _verify_save_methods(self):
         """Verify that all required save methods are implemented"""
         missing_methods = []
-        for output_type, method_name in self.SAVE_METHOD_MAP.items():
+        for method_name in self.SAVE_METHOD_MAP.values():
             if not hasattr(self, method_name) or not callable(getattr(self, method_name)):
                 missing_methods.append(method_name)
         
@@ -81,9 +82,12 @@ class OutputHandler(ABC):
         elif output_type == OutputType.TEXT:
             if not isinstance(data, str):
                 raise TypeError("Data must be string for text output")
-        elif output_type in (OutputType.PNG, OutputType.BINARY):
+        elif output_type == OutputType.BINARY:
             if not isinstance(data, bytes):
                 raise TypeError("Data must be in bytes format")
+        elif output_type == OutputType.PNG:
+            if not isinstance(data, Figure):
+                raise TypeError("Data must be a matplotlib Figure for PNG output")
         elif output_type == OutputType.JSON:
             if not isinstance(data, dict) and not isinstance(data, pd.DataFrame):
                 raise TypeError("Data must be dict or DataFrame for JSON output")

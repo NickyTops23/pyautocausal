@@ -21,7 +21,7 @@ def infer_output_type(return_type: Any, strict: bool = True) -> OutputType:
         
     type_mapping = {
         pd.DataFrame: OutputType.PARQUET,
-        pd.Series: OutputType.PARQUET,
+        pd.Series: OutputType.CSV,
         str: OutputType.TEXT,
         int: OutputType.JSON,
         float: OutputType.JSON,
