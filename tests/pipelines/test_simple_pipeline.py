@@ -2,6 +2,7 @@ import pytest
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
+from matplotlib.figure import Figure
 from io import BytesIO
 from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph import ExecutableGraph
@@ -23,10 +24,13 @@ def compute_average(df: pd.DataFrame) -> pd.Series:
 def create_plot(avg_data: pd.Series) -> Figure:
     """Create a plot visualization of the averages"""
     fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(8, 6))
     plt.figure(figsize=(8, 6))
+    avg_data.plot(kind='bar', ax=ax)
     avg_data.plot(kind='bar', ax=ax)
     plt.xlabel('Category')
     plt.ylabel('Average Value')
+    return fig
     return fig
 
 @pytest.fixture
@@ -126,6 +130,7 @@ def test_plot_node_output(executed_pipeline):
     plot_node = [n for n in graph.nodes() if n.name == "create_plot"][0]
     
     plot = plot_node.output
+    assert isinstance(plot, Figure)
     assert isinstance(plot, Figure)
 
 def test_output_files_creation(executed_pipeline, tmp_path):
