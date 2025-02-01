@@ -4,7 +4,7 @@ import pandas as pd
 import json
 import pickle
 from .output_handler import OutputHandler
-
+import matplotlib.pyplot as plt
 class LocalOutputHandler(OutputHandler):
     """Handles saving outputs to local filesystem"""
     
@@ -47,8 +47,7 @@ class LocalOutputHandler(OutputHandler):
     
     def save_png(self, name: str, data: Any):
         output_path = self._get_output_path(name, ".png")
-        with open(output_path, 'wb') as f:
-            f.write(data)
+        plt.savefig(output_path, format='png')
     
     def save_bytes(self, name: str, data: Any):
         output_path = self._get_output_path(name, ".bytes")

@@ -1,5 +1,5 @@
 import networkx as nx
-from typing import Callable, Any, Optional
+from typing import Callable, Any, Optional, Union
 from .node_state import NodeState
 from .base import OutputConfig
 from .graph import ExecutableGraph
@@ -7,6 +7,11 @@ from ..persistence.output_types import OutputType
 from ..persistence.output_config import OutputConfig
 from networkx import DiGraph
 import inspect
+from .condition import Condition
+import pandas as pd
+import matplotlib.pyplot as plt
+from ..persistence.type_inference import infer_output_type
+from ..persistence.serialization import prepare_output_for_saving
 
 class BaseNode:
     def __init__(self, name: str, graph: ExecutableGraph):
@@ -23,21 +28,69 @@ class Node(BaseNode):
             name: str, 
             graph: DiGraph, 
             action_function: Callable,
-            output_config: OutputConfig = None,
-            condition: Callable[..., bool] = None,
-            skip_reason: str = "",
+            output_config: Optional[OutputConfig] = None,
+            condition: Optional[Condition] = None,
             action_condition_kwarg_map: dict[str, str] = {},
+            save_node: bool = False,
         ):
         super().__init__(name, graph)
+        
+        # Validate and setup output configuration
+        return_annotation = self._get_return_annotation(action_function)
+        self._validate_save_configuration(save_node, return_annotation, output_config)
+        self.output_config = self._setup_output_config(save_node, return_annotation, output_config)
+        
+        # Initialize node state and attributes
         self.state = NodeState.PENDING
         self.condition = condition
-        self.skip_reason = skip_reason
         self.output = None
-        self.output_config = output_config or OutputConfig()
         self.predecessor_outputs = {}
         self.action_condition_kwarg_map = action_condition_kwarg_map
         self.action_function = action_function
         self.execution_count = 0
+    
+    def _get_return_annotation(self, action_function: Callable) -> Any:
+        """Get the return type annotation from the action function"""
+        signature = inspect.signature(action_function)
+        return signature.return_annotation
+
+    def _validate_save_configuration(
+            self, 
+            save_node: bool, 
+            return_annotation: Any, 
+            output_config: Optional[OutputConfig]
+        ) -> None:
+        """Validate the saving configuration and type annotations"""
+        if save_node and return_annotation == inspect.Parameter.empty:
+            raise ValueError(
+                f"Node {self.name}: When save_node=True, the action function must have a return type annotation. "
+                "Either:\n"
+                "1. Add a return type hint to your function:\n"
+                "   def my_function() -> pd.DataFrame:\n"
+                "       return pd.DataFrame(...)\n\n"
+                "2. Or specify an output_config with an output_type:\n"
+                "   output_config=OutputConfig(output_type=OutputType.PARQUET)"
+            )
+        
+        if output_config is not None and not save_node:
+            raise ValueError(
+                f"Node {self.name}: Cannot specify output_config when save_node is False"
+            )
+
+    def _setup_output_config(
+            self, 
+            save_node: bool, 
+            return_annotation: Any, 
+            output_config: Optional[OutputConfig]
+        ) -> Optional[OutputConfig]:
+        """Setup the output configuration based on save settings and type annotation"""
+        if output_config is None and save_node:
+            output_type = infer_output_type(return_annotation)
+            return OutputConfig(
+                output_type=output_type,
+                output_filename=self.name
+            )
+        return output_config
     
     def validate_condition(self):
         """Verify that condition is valid given the node's predecessors"""
@@ -56,7 +109,7 @@ class Node(BaseNode):
             
             # Use _resolve_function_arguments to check that all required arguments are available
             try:
-                self._resolve_function_arguments(self.condition, mapped_outputs)
+                self._resolve_function_arguments(self.condition.condition_func, mapped_outputs)
             except ValueError as e:
                 raise ValueError(f"Invalid condition for node {self.name}: {str(e)}")
     
@@ -153,8 +206,8 @@ class Node(BaseNode):
             }
             
             # Resolve arguments including run context
-            arguments = self._resolve_function_arguments(self.condition, mapped_outputs)
-            return self.condition(**arguments)
+            arguments = self._resolve_function_arguments(self.condition.condition_func, mapped_outputs)
+            return self.condition.evaluate(**arguments)
         
         except Exception as e:
             raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
@@ -170,12 +223,30 @@ class Node(BaseNode):
         """Template method that handles state management and conditional execution"""
         self.execution_count += 1
         try:
-            if not self.should_execute():
+            # Check condition satisfaction before executing
+            condition_satisfied = self.condition_satisfied()
+            has_skipped_predecessors = self.has_skipped_predecessors()
+            
+            if has_skipped_predecessors:
                 self.mark_skipped()
-                if self.skip_reason:
-                    print(f"Skipping {self.name}: {self.skip_reason}")
+                self.graph.logger.info(
+                    f"Skipping {self.name}: predecessor nodes were skipped"
+                )
                 return
+            
+            if not condition_satisfied:
+                self.mark_skipped()
+                if self.condition:
+                    self.graph.logger.info(
+                        f"Skipping {self.name}: condition '{self.condition.description}' was not satisfied"
+                    )
+                return
+            
             self.mark_running()
+            if self.condition:
+                self.graph.logger.info(
+                    f"Executing {self.name}: condition '{self.condition.description}' was satisfied"
+                )
             self._execute()
             self.mark_completed()
         except Exception as e:
@@ -242,14 +313,19 @@ class Node(BaseNode):
         return all(predecessor.is_completed() or predecessor.is_skipped() for predecessor in self.get_predecessors())
 
     def _execute(self):
-        """Execute the node's action function with predecessor outputs and run context"""
+        """Execute the node's action function with predecessor outputs"""
         self.get_predecessor_outputs()
         arguments = self._resolve_function_arguments(self.action_function, self.predecessor_outputs)
         print(f"Executing {self.name} with arguments: {arguments}")
-        self.output = (
+        output = (
             self.action_function(**arguments) if arguments 
             else self.action_function()
         )
+        
+        if self.output_config:
+            self.output = prepare_output_for_saving(output, self.output_config.output_type)
+        else:
+            self.output = output
 
 class InputNode(BaseNode):
     """A node that accepts external input and passes it to its successors."""
@@ -258,7 +334,6 @@ class InputNode(BaseNode):
         super().__init__(name, graph)
         self.state = NodeState.PENDING
         self.output = None
-        self.output_config = OutputConfig()
     
     def set_input(self, value: Any):
         """Set the input value that will be passed to successor nodes"""

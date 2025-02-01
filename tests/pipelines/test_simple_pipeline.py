@@ -1,16 +1,14 @@
 import pytest
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from io import BytesIO
-from pathlib import Path
 from pyautocausal.orchestration.nodes import Node
-from pyautocausal.orchestration.base import OutputConfig
 from pyautocausal.orchestration.graph import ExecutableGraph
-from pyautocausal.persistence.output_types import OutputType
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 
 
-def create_sample_data():
+def create_sample_data() -> pd.DataFrame:
     """Create sample DataFrame for testing"""
     return pd.DataFrame({
         'category': ['A', 'B', 'A', 'B', 'A', 'B'],
@@ -21,17 +19,14 @@ def compute_average(df: pd.DataFrame) -> pd.Series:
     """Compute average values by category"""
     return df.groupby('category')['value'].mean()
 
-def create_plot(avg_data: pd.Series) -> bytes:
+def create_plot(avg_data: pd.Series) -> Figure:
     """Create a plot visualization of the averages"""
+    fig, ax = plt.subplots(figsize=(8, 6))
     plt.figure(figsize=(8, 6))
-    avg_data.plot(kind='bar')
+    avg_data.plot(kind='bar', ax=ax)
     plt.xlabel('Category')
     plt.ylabel('Average Value')
-    
-    buffer = BytesIO()
-    plt.savefig(buffer, format='png')
-    plt.close()
-    return buffer.getvalue()
+    return fig
 
 @pytest.fixture
 def sample_data():
@@ -39,12 +34,7 @@ def sample_data():
     return create_sample_data()
 
 @pytest.fixture
-def output_config():
-    """Create basic output configuration"""
-    return OutputConfig(save_output=True)
-
-@pytest.fixture
-def pipeline_graph(output_config, tmp_path):
+def pipeline_graph(tmp_path):
     """Create a configured pipeline graph with all nodes"""
     graph = ExecutableGraph(
         output_handler=LocalOutputHandler(tmp_path / 'outputs')
@@ -55,11 +45,7 @@ def pipeline_graph(output_config, tmp_path):
         "create_data", 
         graph,
         create_sample_data,
-        output_config=OutputConfig(
-            save_output=True,
-            output_filename="create_data",
-            output_type=OutputType.PARQUET
-        )
+        save_node=True
     )
     
     # Average computation node
@@ -67,11 +53,7 @@ def pipeline_graph(output_config, tmp_path):
         "compute_average",
         graph,
         compute_average,
-        output_config=OutputConfig(
-            save_output=True,
-            output_filename="compute_average",
-            output_type=OutputType.CSV
-        )
+        save_node=True
     )
     average_node.add_predecessor(data_node, argument_name="df")
     
@@ -80,11 +62,7 @@ def pipeline_graph(output_config, tmp_path):
         "create_plot",
         graph,
         create_plot,
-        output_config=OutputConfig(
-            save_output=True,
-            output_filename="create_plot",
-            output_type=OutputType.PNG
-        )
+        save_node=True
     )
     plot_node.add_predecessor(average_node, argument_name="avg_data")
     
@@ -129,8 +107,7 @@ def test_plot_node_output(executed_pipeline):
     _, _, _, plot_node = executed_pipeline
     
     plot = plot_node.output
-    assert isinstance(plot, bytes)
-    assert len(plot) > 0
+    assert isinstance(plot, Figure)
 
 def test_output_files_creation(executed_pipeline, tmp_path):
     """Test that all output files are created correctly"""

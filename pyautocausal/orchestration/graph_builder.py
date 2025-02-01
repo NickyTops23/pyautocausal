@@ -5,6 +5,7 @@ from .nodes import Node, InputNode
 from ..persistence.output_config import OutputConfig
 from ..persistence.output_types import OutputType
 from ..persistence.local_output_handler import LocalOutputHandler
+from .condition import Condition
 
 class GraphBuilder:
     """Builder class for creating execution graphs with a fluent interface."""
@@ -20,9 +21,9 @@ class GraphBuilder:
         name: str,
         action_function: Callable,
         predecessors: Optional[Dict[str, str]] = None,
-        condition: Optional[Callable[..., bool]] = None,
-        skip_reason: str = "",
+        condition: Optional[Condition] = None,
         output_config: Optional[OutputConfig] = None,
+        save_node: bool = False,
     ) -> "GraphBuilder":
         """
         Add a node to the graph.
@@ -31,9 +32,9 @@ class GraphBuilder:
             name: Name of the node
             action_function: Function to execute
             predecessors: Dict mapping argument names to predecessor node names
-            condition: Optional function that determines if node should execute
-            skip_reason: Message explaining why node was skipped if condition is False
+            condition: Optional Condition object that determines if node should execute
             output_config: Configuration for node output
+            save_node: Whether to save the node's output
             
         Returns:
             self for method chaining
@@ -44,8 +45,8 @@ class GraphBuilder:
             graph=self.graph,
             action_function=action_function,
             condition=condition,
-            skip_reason=skip_reason,
-            output_config=output_config
+            output_config=output_config,
+            save_node=save_node
         )
         
         # Store node reference
