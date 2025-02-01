@@ -15,7 +15,7 @@ class GraphBuilder:
         )
         self.nodes = {}
     
-    def add_node(
+    def create_node(
         self,
         name: str,
         action_function: Callable,
@@ -41,12 +41,13 @@ class GraphBuilder:
         # Create the node
         node = Node(
             name=name,
-            graph=self.graph,
             action_function=action_function,
             condition=condition,
             skip_reason=skip_reason,
             output_config=output_config
         )
+
+        node.set_graph(self.graph)
         
         # Store node reference
         self.nodes[name] = node
@@ -65,6 +66,36 @@ class GraphBuilder:
         
         return self
     
+    def add_node(self, name: str, node: Node, predecessors: Optional[Dict[str, str]] = None) -> "GraphBuilder":
+        """
+        Add an existing node to the graph.
+        
+        Args:
+            name: Name of the node
+            node: Node to add
+            
+        Returns:
+            self for method chaining
+        """
+        # Set graph to the builder's graph
+        node.set_graph(self.graph)
+        
+
+        self.nodes[name] = node
+        
+        # Add predecessors if specified
+        if predecessors:
+            for arg_name, pred_name in predecessors.items():
+                if pred_name not in self.nodes:
+                    raise ValueError(
+                        f"Predecessor node '{pred_name}' not found for argument '{arg_name}'"
+                    )
+                node.add_predecessor(
+                    self.nodes[pred_name],
+                    argument_name=arg_name
+                )
+        return self
+
     def add_input_node(self, name: str) -> "GraphBuilder":
         """
         Add an input node to the graph.
@@ -82,6 +113,8 @@ class GraphBuilder:
         self.graph.input_nodes[name] = node
         return self
     
+
+
     def build(self) -> ExecutableGraph:
         """Build and return the configured graph."""
         return self.graph
