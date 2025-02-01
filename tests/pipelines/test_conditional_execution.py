@@ -28,10 +28,6 @@ def final_node_action() -> str:
 true_condition = Condition(is_true, "Condition is true")
 false_condition = Condition(is_false, "Condition is false")
 
-# Create reusable conditions
-true_condition = Condition(is_true, "Condition is true")
-false_condition = Condition(is_false, "Condition is false")
-
 def test_true_condition():
     """Test that when condition is True, only true branch executes"""
     graph = ExecutableGraph()
@@ -65,7 +61,6 @@ def test_true_condition():
     assert condition_node.output is True
     assert true_node.is_completed()
     assert true_node.output == "true_branch_executed"
-    assert false_node.is_skipped()
     assert false_node.is_skipped()
     assert false_node.output is None
 

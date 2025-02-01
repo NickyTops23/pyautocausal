@@ -24,13 +24,10 @@ def compute_average(df: pd.DataFrame) -> pd.Series:
 def create_plot(avg_data: pd.Series) -> Figure:
     """Create a plot visualization of the averages"""
     fig, ax = plt.subplots(figsize=(8, 6))
-    fig, ax = plt.subplots(figsize=(8, 6))
     plt.figure(figsize=(8, 6))
-    avg_data.plot(kind='bar', ax=ax)
     avg_data.plot(kind='bar', ax=ax)
     plt.xlabel('Category')
     plt.ylabel('Average Value')
-    return fig
     return fig
 
 @pytest.fixture
