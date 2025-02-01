@@ -2,8 +2,9 @@ import pytest
 from pathlib import Path
 import pandas as pd
 from pyautocausal.orchestration.graph_builder import GraphBuilder
-from pyautocausal.persistence.output_config import OutputConfig, OutputType
-from pyautocausal.pipelines.library import OLSNode, DoubleMLNode
+from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect
+from pyautocausal.pipelines.example import condition_nObs_DoubleML, condition_nObs_OLS
+from pyautocausal.orchestration.condition import Condition
 
 def preprocess_lalonde_data() -> str:
     """
@@ -26,6 +27,17 @@ def output_dir(tmp_path):
     """Create temporary directory for test outputs"""
     return tmp_path / "test_outputs"
 
+# Create reusable conditions
+doubleml_condition = Condition(
+    condition_nObs_DoubleML,
+    "Sample size is greater than 100 observations"
+)
+
+ols_condition = Condition(
+    condition_nObs_OLS,
+    "Sample size is less than or equal to 100 observations"
+)
+
 def causal_graph(output_dir):
     graph = (GraphBuilder(output_path=output_dir)
         .add_input_node("df")
@@ -33,25 +45,15 @@ def causal_graph(output_dir):
             "doubleml",
             DoubleMLNode.action,
             predecessors={"df": "df"},
-            condition=DoubleMLNode.condition,
-            skip_reason="Sample size too small for Double ML",
-            output_config=OutputConfig(
-                save_output=True,
-                output_filename="doubleml_results",
-                output_type=OutputType.TEXT
-            )
+            condition=doubleml_condition,
+            save_node=True,
         )
         .create_node(
             "ols",
             OLSNode.action,
             predecessors={"df": "df"},
-            condition=OLSNode.condition,
-            skip_reason="Sample size too large for OLS",
-            output_config=OutputConfig(
-                save_output=True,
-                output_filename="ols_results",
-                output_type=OutputType.TEXT
-            )
+            condition=ols_condition,
+            save_node=True,
         )
         .build())
     
@@ -79,8 +81,8 @@ def test_causal_pipeline_large_dataset(output_dir):
     graph.fit(df=large_df)
     
     # Check that DoubleML results exist
-    assert (output_dir / 'doubleml_results.txt').exists()
-    assert not (output_dir / 'ols_results.txt').exists()
+    assert (output_dir / 'doubleml.txt').exists()
+    assert not (output_dir / 'ols.txt').exists()
 
 def test_causal_pipeline_small_dataset(output_dir):
     """Test pipeline with small dataset (should use OLS)"""
@@ -96,5 +98,5 @@ def test_causal_pipeline_small_dataset(output_dir):
     graph.fit(df=small_df)
     
     # Check that OLS results exist
-    assert (output_dir / 'ols_results.txt').exists()
-    assert not (output_dir / 'doubleml_results.txt').exists()
+    assert (output_dir / 'ols.txt').exists()
+    assert not (output_dir / 'doubleml.txt').exists()

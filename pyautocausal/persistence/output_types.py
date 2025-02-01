@@ -1,15 +1,15 @@
-from enum import Enum, auto
-from typing import Set
+from enum import Enum
 
 class OutputType(Enum):
-    CSV = ".csv"
-    PARQUET = ".parquet"
-    JSON = ".json"
-    PICKLE = ".pkl"
-    TEXT = ".txt"
-    PNG = ".png"
-    BYTES = ".bytes"
-    
+    """Supported output types for node results"""
+    TEXT = "txt"
+    CSV = "csv"
+    PARQUET = "parquet"
+    PNG = "png"
+    BINARY = "bin"
+    JSON = "json"
+    PICKLE = "pkl"
+
     @classmethod
-    def get_supported_extensions(cls) -> Set[str]:
+    def get_supported_extensions(cls):
         return {member.value for member in cls} 

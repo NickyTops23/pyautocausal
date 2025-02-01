@@ -1,6 +1,8 @@
 import pytest
 from pyautocausal.orchestration.nodes import Node, NodeState
 from pyautocausal.orchestration.graph import ExecutableGraph
+from pyautocausal.orchestration.nodes import NodeState
+from pyautocausal.orchestration.condition import Condition
 
 def always_true() -> bool:
     return True
@@ -23,6 +25,10 @@ def is_false(x: bool) -> bool:
 def final_node_action() -> str:
     return "final_node_executed"
 
+# Create reusable conditions
+true_condition = Condition(is_true, "Condition is true")
+false_condition = Condition(is_false, "Condition is false")
+
 def test_true_condition():
     """Test that when condition is True, only true branch executes"""
     graph = ExecutableGraph()
@@ -35,20 +41,18 @@ def test_true_condition():
     )
     
     true_node = Node(
-        name="true_branch",
-        action_function=true_branch,
-        condition=is_true,
-        skip_reason="Condition was false",
-        graph=graph
+        "true_branch", 
+        graph, 
+        true_branch,
+        condition=true_condition
     )
     true_node.add_predecessor(condition_node, argument_name="x")
     
     false_node = Node(
-        name="false_branch",
-        action_function=false_branch,
-        condition=is_false,
-        skip_reason="Condition was true",
-        graph=graph
+        "false_branch", 
+        graph, 
+        false_branch,
+        condition=false_condition
     )
     false_node.add_predecessor(condition_node, argument_name="x")
     
@@ -72,20 +76,18 @@ def test_false_condition():
     )
     
     true_node = Node(
-        name="true_branch",
-        action_function=true_branch,
-        condition=is_true,
-        skip_reason="Condition was false",
-        graph=graph
+        "true_branch", 
+        graph, 
+        true_branch,
+        condition=true_condition
     )
     true_node.add_predecessor(condition_node, argument_name="x")
     
     false_node = Node(
-        name="false_branch",
-        action_function=false_branch,
-        condition=is_false,
-        skip_reason="Condition was true",
-        graph=graph
+        "false_branch", 
+        graph, 
+        false_branch,
+        condition=false_condition
     )
     false_node.add_predecessor(condition_node, argument_name="x")
     
@@ -102,35 +104,27 @@ def test_skip_propagation():
     """Test that descendants of skipped nodes are not executed"""
     graph = ExecutableGraph()
     
-    condition_node = Node(
-        name="condition",
-        action_function=always_false,
-        graph=graph
-    )
-    
+    condition_node = Node("condition", graph, always_false)
     true_node = Node(
-        name="true_branch",
-        action_function=true_branch,
-        condition=is_true,
-        skip_reason="Condition was false",
-        graph=graph
+        "true_branch", 
+        graph, 
+        true_branch,
+        condition=true_condition
     )
-    true_node.add_predecessor(condition_node, argument_name="x")
-    
     final_node = Node(
-        name="final_node",
-        action_function=final_node_action,
-        graph=graph
+        "final_node",
+        graph,
+        final_node_action
     )
+    
+    true_node.add_predecessor(condition_node, argument_name="x")
     final_node.add_predecessor(true_node)
     
     graph.execute_graph()
     
     assert condition_node.is_completed()
     assert condition_node.output is False
-    
     assert true_node.state == NodeState.SKIPPED
     assert true_node.output is None
-    
     assert final_node.state == NodeState.SKIPPED
     assert final_node.output is None
