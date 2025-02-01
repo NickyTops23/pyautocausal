@@ -43,7 +43,6 @@ class Node(BaseNode):
             self, 
             name: str, 
             action_function: Callable,
-            graph: Optional[DiGraph] = None,
             output_config: Optional[OutputConfig] = None,
             condition: Optional[Condition] = None,
             action_condition_kwarg_map: dict[str, str] = {},
