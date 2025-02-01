@@ -4,14 +4,16 @@ from pathlib import Path
 from pyautocausal.orchestration.graph_builder import GraphBuilder
 from pyautocausal.pipelines.library import OLSNode, DoubleMLNode, PassthroughNode
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
+from pyautocausal.orchestration.condition import create_condition
+from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 @pytest.fixture
 def sample_df():
+    """Create a sample DataFrame with 20 rows"""
     return pd.DataFrame({
         'y': range(20),
-        'treat': [0, 1] * 10,
-        'x1': range(20),
-        'x2': range(20, 40)
+        'treat': [1, 0] * 10,
+        'x': range(20)
     })
 
 @pytest.fixture
@@ -19,52 +21,64 @@ def output_path(tmp_path):
     return tmp_path / "test_outputs"
 
 def test_create_simple_pipeline(sample_df, output_path):
-    # Create builder with output handler
-    builder = GraphBuilder(output_path=output_path)
+    """Test basic node execution with default settings"""
+    # Build graph using builder pattern
+    graph = (GraphBuilder(output_path=output_path)
+        .add_input_node("data")
+        .create_node(
+            "ols",
+            OLSNode.action,
+            predecessors={"df": "data"},
+            save_node=True,
+            output_config=OutputConfig(
+                output_filename="ols_treatment_effect",
+                output_type=OutputType.TEXT
+            )
+        )
+        .build())
     
-    # Create input node
-    builder.add_input_node("data")
-    
-    # Create processing nodes
-    ols_node = OLSNode()
-    # Build graph
-    builder.add_node("ols", ols_node, predecessors={"df": "data"})
-    
-    # Build and execute graph
-    graph = builder.build()
+    # Execute graph
     graph.fit(data=sample_df)
     
-    # Get nodes from graph to check outputs
-    ols_node = [n for n in graph.nodes() if isinstance(n, OLSNode)][0]    
+    # Get node from graph
+    ols_node = [n for n in graph.nodes() if n.name == "ols"][0]
+    
     # Verify outputs exist
     assert ols_node.output is not None
     assert (output_path / "ols_treatment_effect.txt").exists()
 
-
 def test_custom_conditions(sample_df, output_path):
-    # Create builder with output handler
-    builder = GraphBuilder(output_path=output_path)
-    
-    # Create input node
-    builder.add_input_node("data")
-    
-    # Create processing nodes
-    ols_node = OLSNode(
-        condition=lambda df: len(df) > 25,  # Should skip since sample_df has 20 rows
-        skip_reason="Sample size is too small"
+    """Test that nodes respect custom conditions"""
+    # Create condition that skips when df has less than 25 rows
+    small_data_condition = create_condition(
+        lambda df: len(df) > 25,
+        "Sample size is too small"
     )
     
-    # Build graph
-    builder.add_node("ols", ols_node, predecessors={"df": "data"})
+    # Build graph using builder pattern
+    graph = (GraphBuilder(output_path=output_path)
+        .add_input_node("data")
+        .create_node(
+            "ols",
+            OLSNode.action,
+            predecessors={"df": "data"},
+            condition=small_data_condition,
+            save_node=True,
+            output_config=OutputConfig(
+                output_filename="ols_treatment_effect",
+                output_type=OutputType.TEXT
+            )
+        )
+        .build())
     
-    # Build and execute graph
-    graph = builder.build()
+    # Execute graph
     graph.fit(data=sample_df)
     
-    # Get nodes from graph to check outputs
-    ols_node = [n for n in graph.nodes() if isinstance(n, OLSNode)][0]    
+    # Get node from graph
+    ols_node = [n for n in graph.nodes() if n.name == "ols"][0]
     
-    # Verify node was skipped
+    # Verify node was skipped due to condition
     assert ols_node.is_skipped()
+    
     # Verify output file was not created since node was skipped
     assert not (output_path / "ols_treatment_effect.txt").exists()

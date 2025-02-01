@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 import pandas as pd
 from pyautocausal.orchestration.graph_builder import GraphBuilder
-from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect
+from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.pipelines.example import condition_nObs_DoubleML, condition_nObs_OLS
 from pyautocausal.orchestration.condition import Condition
 

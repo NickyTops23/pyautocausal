@@ -1,7 +1,6 @@
 import pytest
 from pyautocausal.orchestration.nodes import Node, NodeState
 from pyautocausal.orchestration.graph import ExecutableGraph
-from pyautocausal.orchestration.nodes import NodeState
 from pyautocausal.orchestration.condition import Condition
 
 def always_true() -> bool:
@@ -41,18 +40,18 @@ def test_true_condition():
     )
     
     true_node = Node(
-        "true_branch", 
-        graph, 
-        true_branch,
-        condition=true_condition
+        name="true_branch",
+        action_function=true_branch,
+        condition=true_condition,
+        graph=graph
     )
     true_node.add_predecessor(condition_node, argument_name="x")
     
     false_node = Node(
-        "false_branch", 
-        graph, 
-        false_branch,
-        condition=false_condition
+        name="false_branch",
+        action_function=false_branch,
+        condition=false_condition,
+        graph=graph
     )
     false_node.add_predecessor(condition_node, argument_name="x")
     
@@ -76,18 +75,18 @@ def test_false_condition():
     )
     
     true_node = Node(
-        "true_branch", 
-        graph, 
-        true_branch,
-        condition=true_condition
+        name="true_branch",
+        action_function=true_branch,
+        condition=true_condition,
+        graph=graph
     )
     true_node.add_predecessor(condition_node, argument_name="x")
     
     false_node = Node(
-        "false_branch", 
-        graph, 
-        false_branch,
-        condition=false_condition
+        name="false_branch",
+        action_function=false_branch,
+        condition=false_condition,
+        graph=graph
     )
     false_node.add_predecessor(condition_node, argument_name="x")
     
@@ -104,17 +103,23 @@ def test_skip_propagation():
     """Test that descendants of skipped nodes are not executed"""
     graph = ExecutableGraph()
     
-    condition_node = Node("condition", graph, always_false)
-    true_node = Node(
-        "true_branch", 
-        graph, 
-        true_branch,
-        condition=true_condition
+    condition_node = Node(
+        name="condition",
+        action_function=always_false,
+        graph=graph
     )
+    
+    true_node = Node(
+        name="true_branch",
+        action_function=true_branch,
+        condition=true_condition,
+        graph=graph
+    )
+    
     final_node = Node(
-        "final_node",
-        graph,
-        final_node_action
+        name="final_node",
+        action_function=final_node_action,
+        graph=graph
     )
     
     true_node.add_predecessor(condition_node, argument_name="x")

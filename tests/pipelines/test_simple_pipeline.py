@@ -6,7 +6,8 @@ from io import BytesIO
 from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
-
+from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 def create_sample_data() -> pd.DataFrame:
     """Create sample DataFrame for testing"""
@@ -38,27 +39,39 @@ def pipeline_graph(tmp_path):
     """Create a configured pipeline graph with all nodes"""
     builder = GraphBuilder(output_path=tmp_path / 'outputs')
     
-    # Create nodes using builder
-    builder.create_node(
-        "create_data", 
-        create_sample_data,
-        save_node=True
-    )
+    # Create nodes using builder pattern
+    graph = (builder
+        .create_node(
+            "create_data", 
+            create_sample_data,
+            save_node=True,
+            output_config=OutputConfig(
+                output_filename="create_data",
+                output_type=OutputType.PARQUET
+            )
+        )
+        .create_node(
+            "compute_average",
+            compute_average,
+            predecessors={"df": "create_data"},  # Connect to data node
+            save_node=True,
+            output_config=OutputConfig(
+                output_filename="compute_average",
+                output_type=OutputType.CSV
+            )
+        )
+        .create_node(
+            "create_plot",
+            create_plot,
+            predecessors={"avg_data": "compute_average"},  # Connect to average node
+            save_node=True,
+            output_config=OutputConfig(
+                output_filename="create_plot",
+                output_type=OutputType.PNG
+            )
+        )
+        .build())
     
-    # Average computation node
-    average_node = Node(
-        "compute_average",
-        compute_average,
-        save_node=True
-    )
-    
-    builder.create_node(
-        "create_plot",
-        create_plot,
-        save_node=True
-    )
-    
-    graph = builder.build()
     return graph
 
 @pytest.fixture
