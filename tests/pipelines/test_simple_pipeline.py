@@ -5,7 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.base import OutputConfig
-from pyautocausal.orchestration.graph import ExecutableGraph
+from pyautocausal.orchestration.graph_builder import GraphBuilder
 from pyautocausal.persistence.output_types import OutputType
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 
@@ -44,16 +44,13 @@ def output_config():
     return OutputConfig(save_output=True)
 
 @pytest.fixture
-def pipeline_graph(output_config, tmp_path):
+def pipeline_graph(tmp_path):
     """Create a configured pipeline graph with all nodes"""
-    graph = ExecutableGraph(
-        output_handler=LocalOutputHandler(tmp_path / 'outputs')
-    )
+    builder = GraphBuilder(output_path=tmp_path / 'outputs')
     
-    # Data node
-    data_node = Node(
+    # Create nodes using builder
+    builder.create_node(
         "create_data", 
-        graph,
         create_sample_data,
         output_config=OutputConfig(
             save_output=True,
@@ -62,44 +59,45 @@ def pipeline_graph(output_config, tmp_path):
         )
     )
     
-    # Average computation node
-    average_node = Node(
+    builder.create_node(
         "compute_average",
-        graph,
         compute_average,
+        predecessors={"df": "create_data"},
         output_config=OutputConfig(
             save_output=True,
             output_filename="compute_average",
             output_type=OutputType.CSV
         )
     )
-    average_node.add_predecessor(data_node, argument_name="df")
     
-    # Plot creation node
-    plot_node = Node(
+    builder.create_node(
         "create_plot",
-        graph,
         create_plot,
+        predecessors={"avg_data": "compute_average"},
         output_config=OutputConfig(
             save_output=True,
             output_filename="create_plot",
             output_type=OutputType.PNG
         )
     )
-    plot_node.add_predecessor(average_node, argument_name="avg_data")
     
-    return graph, data_node, average_node, plot_node
+    graph = builder.build()
+    return graph
 
 @pytest.fixture
 def executed_pipeline(pipeline_graph):
-    """Execute the pipeline and return the graph and nodes"""
-    graph, data_node, average_node, plot_node = pipeline_graph
-    graph.execute_graph()
-    return graph, data_node, average_node, plot_node
+    """Execute the pipeline and return the graph"""
+    pipeline_graph.execute_graph()
+    return pipeline_graph
 
 def test_pipeline_execution(executed_pipeline):
     """Test that all nodes complete execution"""
-    _, data_node, average_node, plot_node = executed_pipeline
+    graph = executed_pipeline
+    
+    # Get nodes by name
+    data_node = [n for n in graph.nodes() if n.name == "create_data"][0]
+    average_node = [n for n in graph.nodes() if n.name == "compute_average"][0]
+    plot_node = [n for n in graph.nodes() if n.name == "create_plot"][0]
     
     assert data_node.is_completed()
     assert average_node.is_completed()
@@ -107,7 +105,10 @@ def test_pipeline_execution(executed_pipeline):
 
 def test_data_node_output(executed_pipeline):
     """Test the output of the data node"""
-    _, data_node, _, _ = executed_pipeline
+    graph = executed_pipeline
+    
+    # Get data node
+    data_node = [n for n in graph.nodes() if n.name == "create_data"][0]
     
     df = data_node.output
     assert isinstance(df, pd.DataFrame)
@@ -116,7 +117,10 @@ def test_data_node_output(executed_pipeline):
 
 def test_average_node_output(executed_pipeline):
     """Test the output of the average computation node"""
-    _, _, average_node, _ = executed_pipeline
+    graph = executed_pipeline
+    
+    # Get average node
+    average_node = [n for n in graph.nodes() if n.name == "compute_average"][0]
     
     averages = average_node.output
     assert isinstance(averages, pd.Series)
@@ -126,7 +130,10 @@ def test_average_node_output(executed_pipeline):
 
 def test_plot_node_output(executed_pipeline):
     """Test the output of the plot creation node"""
-    _, _, _, plot_node = executed_pipeline
+    graph = executed_pipeline
+    
+    # Get plot node
+    plot_node = [n for n in graph.nodes() if n.name == "create_plot"][0]
     
     plot = plot_node.output
     assert isinstance(plot, bytes)

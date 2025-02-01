@@ -3,8 +3,7 @@ from pathlib import Path
 import pandas as pd
 from pyautocausal.orchestration.graph_builder import GraphBuilder
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect
-from pyautocausal.pipelines.example import condition_nObs_DoubleML, condition_nObs_OLS
+from pyautocausal.pipelines.library import OLSNode, DoubleMLNode
 
 def preprocess_lalonde_data() -> str:
     """
@@ -30,11 +29,11 @@ def output_dir(tmp_path):
 def causal_graph(output_dir):
     graph = (GraphBuilder(output_path=output_dir)
         .add_input_node("df")
-        .add_node(
+        .create_node(
             "doubleml",
-            doubleML_treatment_effect,
+            DoubleMLNode.action,
             predecessors={"df": "df"},
-            condition=condition_nObs_DoubleML,
+            condition=DoubleMLNode.condition,
             skip_reason="Sample size too small for Double ML",
             output_config=OutputConfig(
                 save_output=True,
@@ -42,11 +41,11 @@ def causal_graph(output_dir):
                 output_type=OutputType.TEXT
             )
         )
-        .add_node(
+        .create_node(
             "ols",
-            ols_treatment_effect,
+            OLSNode.action,
             predecessors={"df": "df"},
-            condition=condition_nObs_OLS,
+            condition=OLSNode.condition,
             skip_reason="Sample size too large for OLS",
             output_config=OutputConfig(
                 save_output=True,
@@ -57,6 +56,7 @@ def causal_graph(output_dir):
         .build())
     
     return graph
+
 def test_causal_pipeline_execution(output_dir):
     """Test that the pipeline executes successfully"""
     
