@@ -5,33 +5,32 @@ from typing import Callable, Optional
 from abc import abstractmethod
 from ..orchestration.nodes import Node, ExecutableGraph, OutputConfig
 from ..persistence.output_config import OutputType
+from ..orchestration.condition import Condition
 
 class LibraryNode(Node):
     """Base class for standardized nodes with configurable output and conditions."""
     
     def __init__(self, 
                  name: str = None,
-                 condition: Optional[Callable[[pd.DataFrame], bool]] = None, 
-                 skip_reason: str = "", 
-                 save_output: bool = True, 
+                 condition: Optional[Condition] = None,
+                 save_node: bool = True,
                  output_filename: str = "", 
                  output_type: OutputType = OutputType.TEXT,
                  graph: Optional[ExecutableGraph] = None):
         
         if condition is None:
-            condition = self.condition
+            condition = self.condition()
             
         super().__init__(
             name=name or self.__class__.__name__,
             graph=graph,
             action_function=self.action,
             condition=condition,
-            skip_reason=skip_reason,
+            save_node=save_node,
             output_config=OutputConfig(
-                save_output=save_output,
                 output_filename=output_filename,
                 output_type=output_type
-            )
+            ) if save_node else None
         )
     
     @abstractmethod
@@ -40,8 +39,8 @@ class LibraryNode(Node):
         pass
     
     @abstractmethod
-    def condition(self, df: pd.DataFrame) -> bool:
-        """Define the standard condition for this node."""
+    def condition(self) -> Condition:
+        """Define the default condition for this node."""
         pass
 
 
@@ -50,16 +49,16 @@ class OLSNode(LibraryNode):
     
     def __init__(self, 
                  name: str = "OLS Treatment Effect", 
-                 condition: Optional[Callable[[pd.DataFrame], bool]] = None,
-                 skip_reason: str = "Sample size too large for OLS",
-                 save_output: bool = True,
+                 graph: Optional[ExecutableGraph] = None,
+                 condition: Optional[Condition] = None,
+                 save_node: bool = True,
                  output_filename: str = "ols_treatment_effect"):
         super().__init__(
             name=name,
             condition=condition,
-            skip_reason=skip_reason,
-            save_output=save_output,
-            output_filename=output_filename
+            save_node=save_node,
+            output_filename=output_filename,
+            graph=graph
         )
    
     @staticmethod
@@ -84,9 +83,12 @@ class OLSNode(LibraryNode):
         return buffer.getvalue()
         
     @staticmethod
-    def condition(df: pd.DataFrame) -> bool:
-        """Check if sample size is appropriate for OLS."""
-        return len(df) <= 100
+    def condition() -> Condition:
+        """Default condition checking if sample size is appropriate for OLS."""
+        return Condition(
+            lambda df: len(df) <= 100,
+            "Sample size is less than or equal to 100 observations"
+        )
 
 
 class DoubleMLNode(LibraryNode):
@@ -94,16 +96,16 @@ class DoubleMLNode(LibraryNode):
     
     def __init__(self, 
                  name: str = "DoublesML Treatment Effect", 
-                 condition: Optional[Callable[[pd.DataFrame], bool]] = None,
-                 skip_reason: str = "Sample size too small for Double ML", 
-                 save_output: bool = True,
+                 graph: Optional[ExecutableGraph] = None,   
+                 condition: Optional[Condition] = None,
+                 save_node: bool = True,
                  output_filename: str = "doubleML_treatment_effect"):
         super().__init__(
             name=name,
             condition=condition,
-            skip_reason=skip_reason,
-            save_output=save_output,
-            output_filename=output_filename
+            save_node=save_node,
+            output_filename=output_filename,
+            graph=graph
         )
 
     @staticmethod
@@ -136,26 +138,27 @@ class DoubleMLNode(LibraryNode):
         return buffer.getvalue()
 
     @staticmethod
-    def condition(df: pd.DataFrame) -> bool:
-        """Check if sample size is appropriate for Double ML."""
-        return len(df) > 100
+    def condition() -> Condition:
+        """Default condition checking if sample size is appropriate for Double ML."""
+        return Condition(
+            lambda df: len(df) > 100,
+            "Sample size is greater than 100 observations"
+        )
 
 
 class PassthroughNode(LibraryNode):
     """Node for transforming data."""
     def __init__(self, 
                  name: str = "Passthrough Data",
-                 condition: Optional[Callable[[pd.DataFrame], bool]] = None,
-                 skip_reason: str = "Sample size too small for Transform Data",
-                 save_output: bool = False,
+                 graph: Optional[ExecutableGraph] = None,
+                 condition: Optional[Condition] = None,
+                 save_node: bool = False,
                  output_filename: str = "transform_data",
-                 output_type: OutputType = OutputType.PARQUET,
-                 graph: Optional[ExecutableGraph] = None):
+                 output_type: OutputType = OutputType.PARQUET):
         super().__init__(
             name=name,
             condition=condition,
-            skip_reason=skip_reason,
-            save_output=save_output,
+            save_node=save_node,
             output_filename=output_filename,
             output_type=output_type,
             graph=graph
@@ -166,8 +169,12 @@ class PassthroughNode(LibraryNode):
         return df
 
     @staticmethod
-    def condition(df: pd.DataFrame) -> bool:
-        return True
+    def condition() -> Condition:
+        """Default condition that always returns True."""
+        return Condition(
+            lambda df: True,
+            "Always execute passthrough node"
+        )
 
 # Add function versions that use the node actions
 def doubleML_treatment_effect(df: pd.DataFrame) -> str:
