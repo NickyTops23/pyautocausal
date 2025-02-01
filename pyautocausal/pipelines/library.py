@@ -10,19 +10,19 @@ class LibraryNode(Node):
     """Base class for standardized nodes with configurable output and conditions."""
     
     def __init__(self, 
-                 graph: ExecutableGraph, 
-                 name: str, 
+                 name: str = None,
                  condition: Optional[Callable[[pd.DataFrame], bool]] = None, 
                  skip_reason: str = "", 
                  save_output: bool = True, 
                  output_filename: str = "", 
-                 output_type: OutputType = OutputType.TEXT):
+                 output_type: OutputType = OutputType.TEXT,
+                 graph: Optional[ExecutableGraph] = None):
         
         if condition is None:
             condition = self.condition
             
         super().__init__(
-            name=name,
+            name=name or self.__class__.__name__,
             graph=graph,
             action_function=self.action,
             condition=condition,
@@ -49,14 +49,12 @@ class OLSNode(LibraryNode):
     """Node for Ordinary Least Squares regression analysis."""
     
     def __init__(self, 
-                 graph: ExecutableGraph, 
                  name: str = "OLS Treatment Effect", 
                  condition: Optional[Callable[[pd.DataFrame], bool]] = None,
                  skip_reason: str = "Sample size too large for OLS",
                  save_output: bool = True,
                  output_filename: str = "ols_treatment_effect"):
         super().__init__(
-            graph=graph,
             name=name,
             condition=condition,
             skip_reason=skip_reason,
@@ -95,14 +93,12 @@ class DoubleMLNode(LibraryNode):
     """Node for Double Machine Learning analysis."""
     
     def __init__(self, 
-                 graph: ExecutableGraph, 
                  name: str = "DoublesML Treatment Effect", 
                  condition: Optional[Callable[[pd.DataFrame], bool]] = None,
                  skip_reason: str = "Sample size too small for Double ML", 
                  save_output: bool = True,
                  output_filename: str = "doubleML_treatment_effect"):
         super().__init__(
-            graph=graph,
             name=name,
             condition=condition,
             skip_reason=skip_reason,
@@ -147,11 +143,37 @@ class DoubleMLNode(LibraryNode):
 
 class PassthroughNode(LibraryNode):
     """Node for transforming data."""
-    def __init__(self, graph: ExecutableGraph, name: str = "Passthrough Data", condition: Optional[Callable[[pd.DataFrame], bool]] = None, skip_reason: str = "Sample size too small for Transform Data", save_output: bool = True, output_filename: str = "transform_data"):
-        super().__init__(graph=graph, name=name, condition=condition, skip_reason=skip_reason, save_output=save_output, output_filename=output_filename)
+    def __init__(self, 
+                 name: str = "Passthrough Data",
+                 condition: Optional[Callable[[pd.DataFrame], bool]] = None,
+                 skip_reason: str = "Sample size too small for Transform Data",
+                 save_output: bool = False,
+                 output_filename: str = "transform_data",
+                 output_type: OutputType = OutputType.PARQUET,
+                 graph: Optional[ExecutableGraph] = None):
+        super().__init__(
+            name=name,
+            condition=condition,
+            skip_reason=skip_reason,
+            save_output=save_output,
+            output_filename=output_filename,
+            output_type=output_type,
+            graph=graph
+        )
 
-    def action(self, df: pd.DataFrame) -> str:
+    @staticmethod
+    def action(df: pd.DataFrame) -> str:
         return df
 
-    def condition(self, df: pd.DataFrame) -> bool:
+    @staticmethod
+    def condition(df: pd.DataFrame) -> bool:
         return True
+
+# Add function versions that use the node actions
+def doubleML_treatment_effect(df: pd.DataFrame) -> str:
+    """Function wrapper for DoubleMLNode's action"""
+    return DoubleMLNode.action(df)
+
+def ols_treatment_effect(df: pd.DataFrame) -> str:
+    """Function wrapper for OLSNode's action"""
+    return OLSNode.action(df)
