@@ -9,20 +9,36 @@ from networkx import DiGraph
 import inspect
 
 class BaseNode:
-    def __init__(self, name: str, graph: ExecutableGraph):
+    def __init__(self, name: str, graph: Optional[ExecutableGraph] = None):
         self.name = name
-        self.graph = graph
-        self.graph.add_node(self)
+        self.graph = None
+        if graph is not None:
+            self.set_graph(graph)
     
     def __str__(self):
         return f"BaseNode(name={self.name})"
     
+    def set_graph(self, graph: ExecutableGraph):
+        """Set the graph for this node and add the node to the graph."""
+        self.graph = graph
+        self.graph.add_node(self)
+    
+    def add_successor(self, successor: 'BaseNode'):
+        if self.graph is None:
+            raise ValueError("Node must be added to a graph before adding successors")
+        self.graph.add_edge(self, successor)
+        
+    def add_predecessor(self, predecessor: 'BaseNode', argument_name: Optional[str] = None):
+        if self.graph is None:
+            raise ValueError("Node must be added to a graph before adding predecessors")
+        self.graph.add_edge(predecessor, self, argument_name=argument_name)
+
 class Node(BaseNode):
     def __init__(
             self, 
             name: str, 
-            graph: DiGraph, 
             action_function: Callable,
+            graph: Optional[DiGraph] = None,
             output_config: OutputConfig = None,
             condition: Callable[..., bool] = None,
             skip_reason: str = "",
@@ -182,12 +198,6 @@ class Node(BaseNode):
             self.mark_failed()
             raise e
 
-    def add_successor(self, successor: BaseNode):
-        self.graph.add_edge(self, successor)
-        
-    def add_predecessor(self, predecessor: BaseNode, argument_name: Optional[str] = None):
-        self.graph.add_edge(predecessor, self, argument_name=argument_name)
-        
     def get_predecessors(self):
         return set(self.graph.predecessors(self))
     
