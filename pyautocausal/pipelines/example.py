@@ -5,7 +5,7 @@ import statsmodels.api as sm
 from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph_builder import GraphBuilder
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
-from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect, data_validation
+from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 from pyautocausal.orchestration.condition import create_condition
 
@@ -42,21 +42,23 @@ def create_causal_graph(output_path: Path):
     # Build graph using builder pattern
     graph = (GraphBuilder(output_path=output_path)
         .add_input_node("df")
-        .add_node(
+        .create_node(
             "doubleml",
-            doubleML_treatment_effect,
+            DoubleMLNode.action,
             predecessors={"df": "df"},
             condition=doubleml_condition,
+            save_node=True,
             output_config=OutputConfig(
                 output_filename="doubleml_results",
                 output_type=OutputType.TEXT
             )
         )
-        .add_node(
+        .create_node(
             "ols",
-            ols_treatment_effect,
+            OLSNode.action,
             predecessors={"df": "df"},
             condition=ols_condition,
+            save_node=True,
             output_config=OutputConfig(
                 output_filename="ols_results",
                 output_type=OutputType.TEXT

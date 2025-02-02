@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 import pandas as pd
 from pyautocausal.orchestration.graph_builder import GraphBuilder
-from pyautocausal.pipelines.library import doubleML_treatment_effect, ols_treatment_effect
+from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.pipelines.example import condition_nObs_DoubleML, condition_nObs_OLS
 from pyautocausal.orchestration.condition import Condition
 
@@ -41,16 +41,16 @@ ols_condition = Condition(
 def causal_graph(output_dir):
     graph = (GraphBuilder(output_path=output_dir)
         .add_input_node("df")
-        .add_node(
+        .create_node(
             "doubleml",
-            doubleML_treatment_effect,
+            DoubleMLNode.action,
             predecessors={"df": "df"},
             condition=doubleml_condition,
             save_node=True,
         )
-        .add_node(
+        .create_node(
             "ols",
-            ols_treatment_effect,
+            OLSNode.action,
             predecessors={"df": "df"},
             condition=ols_condition,
             save_node=True,

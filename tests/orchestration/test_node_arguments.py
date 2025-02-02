@@ -20,8 +20,16 @@ def process_data(
 def basic_graph():
     """Graph with just data and process nodes using default parameters"""
     graph = ExecutableGraph()
-    data_node = Node("data", graph, lambda: pd.DataFrame())
-    process_node = Node("process", graph, process_data)
+    data_node = Node(
+        name="data",
+        action_function=lambda: pd.DataFrame(),
+        graph=graph
+    )
+    process_node = Node(
+        name="process",
+        action_function=process_data,
+        graph=graph
+    )
     process_node.add_predecessor(data_node, argument_name="df")
     return graph, data_node, process_node
 
@@ -33,8 +41,16 @@ def graph_with_context():
     context.model_type = 'advanced'
     
     graph = ExecutableGraph(run_context=context)
-    data_node = Node("data", graph, lambda: pd.DataFrame())
-    process_node = Node("process", graph, process_data)
+    data_node = Node(
+        name="data",
+        action_function=lambda: pd.DataFrame(),
+        graph=graph
+    )
+    process_node = Node(
+        name="process",
+        action_function=process_data,
+        graph=graph
+    )
     process_node.add_predecessor(data_node, argument_name="df")
     return graph, data_node, process_node
 
@@ -50,11 +66,15 @@ def graph_with_verbose_data():
     context.model_type = 'advanced'
     
     graph = ExecutableGraph(run_context=context)
-    data_node = Node("data", graph, data_with_config)
+    data_node = Node(
+        name="data",
+        action_function=data_with_config,
+        graph=graph
+    )
     process_node = Node(
-        "process", 
-        graph, 
-        process_data,
+        name="process", 
+        action_function=process_data,
+        graph=graph,
         action_condition_kwarg_map={"verbose": "data"}
     )
     process_node.add_predecessor(data_node, argument_name="df")
@@ -78,8 +98,19 @@ def test_missing_required_argument():
         return f"Processed {required_param}"
     
     graph = ExecutableGraph()
-    data_node = Node("data", graph, lambda: pd.DataFrame())
-    process_node = Node("process", graph, process_data)
+    
+    # Update Node initialization to use named parameters
+    data_node = Node(
+        name="data",
+        action_function=lambda: pd.DataFrame(),
+        graph=graph
+    )
+    
+    process_node = Node(
+        name="process",
+        action_function=process_data,
+        graph=graph
+    )
     process_node.add_predecessor(data_node, argument_name="df")
     
     with pytest.raises(ValueError) as exc_info:
