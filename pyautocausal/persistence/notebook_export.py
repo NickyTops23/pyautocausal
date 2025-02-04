@@ -103,6 +103,16 @@ class NotebookExporter:
             exec_code = self._format_function_execution(node, func_def)
             self.nb.cells.append(new_code_cell(exec_code))
     
+    def _create_input_node_cells(self, node: InputNode) -> None:
+        """Create cells for a single input node's execution."""
+        # Add markdown cell with node info
+        info = f"## Node: {node.name}\n"
+        self.nb.cells.append(new_markdown_cell(info))
+        
+        # Add execution cell which is just a comment telling the user to provide the input
+        exec_code = f"# TODO: Load your input data for '{node.name}' here\n{node.name}_output = None  # Replace with your data"
+        self.nb.cells.append(new_code_cell(exec_code))
+    
     def export_notebook(self, filepath: str) -> None:
         """
         Export the graph execution as a Jupyter notebook.
@@ -118,8 +128,11 @@ class NotebookExporter:
         
         # Process nodes in topological order
         for node in self._get_topological_order():
-            if node.is_completed() and ~isinstance(node, InputNode):  # Only include executed nodes
-                self._create_node_cells(node)
+            if node.is_completed():
+                if isinstance(node, InputNode):
+                    self._create_input_node_cells(node)
+                else:
+                    self._create_node_cells(node)
         
         # Save the notebook
         with open(filepath, 'w') as f:
