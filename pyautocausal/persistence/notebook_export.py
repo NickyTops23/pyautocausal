@@ -68,8 +68,8 @@ class NotebookExporter:
             
         arguments = dict()
         # Get predecessor outputs dictionary
-        if not hasattr(node, 'predecessor_outputs'):
-            predecessors = node.get_predecessors()
+        predecessors = node.get_predecessors()
+        if predecessors:
             for predecessor in predecessors:
                 edge = self.graph.edges[predecessor, node]
                 argument_name = edge.get('argument_name')
