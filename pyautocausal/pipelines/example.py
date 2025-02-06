@@ -7,8 +7,8 @@ from pyautocausal.orchestration.graph_builder import GraphBuilder
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-from pyautocausal.orchestration.condition import create_condition
-
+from pyautocausal.orchestration.condition import create_condition   
+from pyautocausal.persistence.visualizer import visualize_graph
 
 def condition_nObs_DoubleML(df: pd.DataFrame) -> bool:
     return len(df) > 100
@@ -76,3 +76,5 @@ if __name__ == "__main__":
     # Create and execute graph
     graph = create_causal_graph(path)
     graph.fit(df=preprocess_lalonde_data())
+
+    visualize_graph(graph, path / "graph.png")
