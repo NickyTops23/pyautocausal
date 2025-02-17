@@ -96,9 +96,10 @@ class ExecutableGraph(nx.DiGraph):
         if extra_inputs:
             raise ValueError(f"Received values for non-existent input nodes: {extra_inputs}")
         
-        # Set input values
+        # Validate and set input values
         for name, value in kwargs.items():
-            self.input_nodes[name].set_input(value)
+            input_node = self.input_nodes[name]
+            input_node.set_input(value)  # Type checking happens in set_input
         
         # Execute the graph
         self.execute_graph()
