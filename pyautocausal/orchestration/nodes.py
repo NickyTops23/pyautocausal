@@ -38,6 +38,39 @@ class BaseNode:
             raise ValueError("Node must be added to a graph before adding predecessors")
         self.graph.add_edge(predecessor, self, argument_name=argument_name)
 
+    def __rshift__(self, other: 'BaseNode') -> 'BaseNode':
+        """Implements the >> operator for node wiring with type validation"""
+        if not isinstance(other, InputNode):
+            raise ValueError(f"Right-hand node must be an input node, got {type(other)}")
+        
+        # Get return type from action function signature
+        return_annotation = inspect.signature(self.action_function).return_annotation
+        
+        # Get expected input type from InputNode
+        input_type = other.input_type
+        
+        # Warn if types cannot be validated
+        if return_annotation == inspect.Parameter.empty:
+            self.graph.logger.warning(
+                f"Cannot validate connection: {self.name} -> {other.name}. "
+                f"Node {self.name}'s action function lacks return type annotation."
+            )
+        elif input_type == Any:
+            self.graph.logger.warning(
+                f"Cannot validate connection: {self.name} -> {other.name}. "
+                f"Input node {other.name} accepts Any type."
+            )
+        # Validate types if both are specified
+        elif return_annotation != inspect.Parameter.empty and input_type != Any:
+            if not issubclass(return_annotation, input_type):
+                raise TypeError(
+                    f"Type mismatch in connection {self.name} -> {other.name}: "
+                    f"Node outputs {return_annotation.__name__}, but input node expects {input_type.__name__}"
+                )
+        
+        self.add_successor(other)
+        return other  # Return other to allow chaining
+
 class Node(BaseNode):
     def __init__(
             self, 
