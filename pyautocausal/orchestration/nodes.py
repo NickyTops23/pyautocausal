@@ -340,13 +340,16 @@ class Node(BaseNode):
 class InputNode(BaseNode):
     """A node that accepts external input and passes it to its successors."""
     
-    def __init__(self, name: str, graph: ExecutableGraph):
+    def __init__(self, name: str, graph: ExecutableGraph, dtype: type = Any):
         super().__init__(name, graph)
         self.state = NodeState.PENDING
         self.output = None
+        self.dtype = dtype
     
     def set_input(self, value: Any):
         """Set the input value that will be passed to successor nodes"""
+        if self.dtype is not Any and not isinstance(value, self.dtype):
+            raise TypeError(f"Input value for node '{self.name}' must be of type {self.dtype.__name__}, got {type(value).__name__}")
         self.output = value
         self.state = NodeState.COMPLETED
 

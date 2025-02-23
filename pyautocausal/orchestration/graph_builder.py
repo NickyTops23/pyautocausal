@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Any
 from pathlib import Path
 from .graph import ExecutableGraph
 from .nodes import Node, InputNode
@@ -84,7 +84,7 @@ class GraphBuilder:
                 )
         return self
 
-    def add_input_node(self, name: str) -> "GraphBuilder":
+    def add_input_node(self, name: str, dtype: type = Any) -> "GraphBuilder":
         """
         Add an input node to the graph.
         
@@ -94,7 +94,7 @@ class GraphBuilder:
         Returns:
             self for method chaining
         """
-        node = InputNode(name=name, graph=self.graph)
+        node = InputNode(name=name, graph=self.graph, dtype=dtype)
         self.nodes[name] = node
         if not hasattr(self.graph, 'input_nodes'):
             self.graph.input_nodes = {}
