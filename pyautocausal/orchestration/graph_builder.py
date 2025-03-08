@@ -84,25 +84,22 @@ class GraphBuilder:
                 )
         return self
 
-    def add_input_node(self, name: str, dtype: type = Any) -> "GraphBuilder":
+    def add_input_node(self, name: str, input_dtype: type = Any) -> "GraphBuilder":
         """
         Add an input node to the graph.
         
         Args:
             name: Name of the input node
+            dtype: Expected input type for this node
             
         Returns:
             self for method chaining
         """
-        node = InputNode(name=name, graph=self.graph, dtype=dtype)
+        node = InputNode(name=name, graph=self.graph, input_dtype=input_dtype)
         self.nodes[name] = node
-        if not hasattr(self.graph, 'input_nodes'):
-            self.graph.input_nodes = {}
-        self.graph.input_nodes[name] = node
+        self.graph.add_input_node(name, node)
         return self
     
-
-
     def build(self) -> ExecutableGraph:
         """Build and return the configured graph."""
         return self.graph

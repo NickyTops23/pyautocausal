@@ -12,6 +12,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from ..persistence.type_inference import infer_output_type
 from ..persistence.serialization import prepare_output_for_saving
+from pyautocausal.utils.logger import get_class_logger
+import warnings
 
 class BaseNode:
     def __init__(self, name: str, graph: Optional[ExecutableGraph] = None):
@@ -39,35 +41,9 @@ class BaseNode:
         self.graph.add_edge(predecessor, self, argument_name=argument_name)
 
     def __rshift__(self, other: 'BaseNode') -> 'BaseNode':
-        """Implements the >> operator for node wiring with type validation"""
+        """Implements the >> operator for node wiring"""
         if not isinstance(other, InputNode):
             raise ValueError(f"Right-hand node must be an input node, got {type(other)}")
-        
-        # Get return type from action function signature
-        return_annotation = inspect.signature(self.action_function).return_annotation
-        
-        # Get expected input type from InputNode
-        input_type = other.input_type
-        
-        # Warn if types cannot be validated
-        if return_annotation == inspect.Parameter.empty:
-            self.graph.logger.warning(
-                f"Cannot validate connection: {self.name} -> {other.name}. "
-                f"Node {self.name}'s action function lacks return type annotation."
-            )
-        elif input_type == Any:
-            self.graph.logger.warning(
-                f"Cannot validate connection: {self.name} -> {other.name}. "
-                f"Input node {other.name} accepts Any type."
-            )
-        # Validate types if both are specified
-        elif return_annotation != inspect.Parameter.empty and input_type != Any:
-            if not issubclass(return_annotation, input_type):
-                raise TypeError(
-                    f"Type mismatch in connection {self.name} -> {other.name}: "
-                    f"Node outputs {return_annotation.__name__}, but input node expects {input_type.__name__}"
-                )
-        
         self.add_successor(other)
         return other  # Return other to allow chaining
 
@@ -83,6 +59,7 @@ class Node(BaseNode):
             save_node: bool = False,
         ):
         super().__init__(name, graph)
+        self.logger = get_class_logger(f"{self.__class__.__name__}_{name}")
         
         # Validate and setup output configuration
         return_annotation = self._get_return_annotation(action_function)
@@ -369,15 +346,65 @@ class Node(BaseNode):
             self.output = prepare_output_for_saving(output, self.output_config.output_type)
         else:
             self.output = output
+    
+    def __rshift__(self, other: 'BaseNode') -> tuple[BaseNode, BaseNode]:
+        """Implements the >> operator for node wiring with type validation"""
+        self._can_wire_nodes(self, other)
+        return (self, other)
+    
+    def _can_wire_nodes(self, source: 'BaseNode', target: 'BaseNode') -> bool:
+        """Tests if one node can be wired to another node.
+        
+        Args:
+            source: The source node that will output data
+            target: The target node that will receive data
+            
+        Returns:
+            bool: True if nodes can be wired, False otherwise
+            
+        Raises:
+            ValueError: If target is not an InputNode
+            TypeError: If there is a type mismatch between nodes
+        """
+        if not isinstance(target, InputNode):
+            raise ValueError(f"Target node must be an input node, got {type(target)}")
+        
+        # Get return type from action function signature
+        return_annotation = inspect.signature(source.action_function).return_annotation
+        
+        # Get expected input type from InputNode
+        input_type = target.input_dtype
+        
+        # Warn if types cannot be validated
+        if return_annotation == inspect.Parameter.empty:
+            warnings.warn(
+                f"Cannot validate connection: {source.name} -> {target.name}. "
+                f"Node {source.name}'s action function lacks return type annotation."
+            )
+            return True
+        elif input_type == Any:
+            warnings.warn(
+                f"Cannot validate connection: {source.name} -> {target.name}. "
+                f"Input node {target.name} accepts Any type."
+            )
+            return True
+        # Validate types if both are specified
+        elif return_annotation != inspect.Parameter.empty and input_type != Any:
+            if not issubclass(return_annotation, input_type):
+                raise TypeError(
+                    f"Type mismatch in connection {source.name} -> {target.name}: "
+                    f"Node outputs {return_annotation.__name__}, but input node expects {input_type.__name__}"
+                )
+        return True
 
 class InputNode(BaseNode):
     """A node that accepts external input and passes it to its successors."""
     
-    def __init__(self, name: str, graph: ExecutableGraph, dtype: type = Any):
+    def __init__(self, name: str, graph: ExecutableGraph, input_dtype: type = Any):
         super().__init__(name, graph)
         self.state = NodeState.PENDING
         self.output = None
-        self.dtype = dtype
+        self.input_dtype = input_dtype
     
     def set_input(self, value: Any):
         """Set the input value that will be passed to successor nodes"""
@@ -400,5 +427,11 @@ class InputNode(BaseNode):
     
     def execute(self) -> None:
         pass  # Input nodes don't execute; they just pass through their input
+
+    def get_predecessors(self):
+        return set(self.graph.predecessors(self))
+    
+    def get_successors(self):
+        return set(self.graph.successors(self))
 
 
