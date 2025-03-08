@@ -171,14 +171,24 @@ class ExecutableGraph(nx.DiGraph):
         from .nodes import InputNode, Node as NodeObject
 
         # Validate states first
-        non_pending_nodes = [
+        non_pending_nodes_self = [
             node.name for node in self.nodes() 
             if hasattr(node, 'state') and node.state != NodeState.PENDING
         ]
-        if non_pending_nodes:
+
+        non_pending_nodes_other = [             
+            node.name for node in other.nodes() 
+            if hasattr(node, 'state') and node.state != NodeState.PENDING
+        ]
+        if non_pending_nodes_self:
+            raise ValueError(
+                "Cannot merge graphs: the following nodes in the source graph "
+                f"are not in PENDING state: {non_pending_nodes_self}"
+            )
+        if non_pending_nodes_other:
             raise ValueError(
                 "Cannot merge graphs: the following nodes in the target graph "
-                f"are not in PENDING state: {non_pending_nodes}"
+                f"are not in PENDING state: {non_pending_nodes_other}"
             )
 
         # Validate wirings
@@ -192,15 +202,10 @@ class ExecutableGraph(nx.DiGraph):
         # Validate that all wirings are between the two graphs
         for wiring in wirings:
             source, target = wiring
-            if source.graph is other and target.graph is self:
-                raise ValueError(
-                    f"Invalid wiring direction: {source.name} >> {target.name}. "
-                    "Source must be from the target graph (first argument)"
-                )
             if source.graph is not self or target.graph is not other:
                 raise ValueError(
                     f"Invalid wiring: {source.name} >> {target.name}. "
-                    "Source must be from the target graph and target from the source graph"
+                    "Source must be from the left graph and target from the right graph"
                 )
             if not isinstance(target, InputNode):
                 raise ValueError(

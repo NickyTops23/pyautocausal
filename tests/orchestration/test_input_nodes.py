@@ -43,13 +43,13 @@ def test_graph_builder_with_typed_inputs():
     builder.add_input_node("data", input_dtype=pd.DataFrame)
     
     # Get the input node and verify its type
-    input_node = builder.nodes["data"]
+    input_node = builder.graph.get("data")
     assert isinstance(input_node, InputNode)
-    assert input_node.dtype == pd.DataFrame
+    assert input_node.input_dtype == pd.DataFrame
     
     # Verify default Any type
     builder.add_input_node("any_data")
-    assert builder.nodes["any_data"].dtype == Any
+    assert builder.graph.get("any_data").input_dtype == Any
 
 def test_complex_graph_with_typed_inputs():
     """Test typed inputs in a more complex graph with processing nodes"""
