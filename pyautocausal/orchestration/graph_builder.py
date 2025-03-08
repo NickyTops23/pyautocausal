@@ -14,8 +14,7 @@ class GraphBuilder:
         self.graph = ExecutableGraph(
             output_handler=LocalOutputHandler(output_path) if output_path else None
         )
-        self.nodes = {}
-    
+
     def create_node(
         self,
         name: str,
@@ -66,20 +65,18 @@ class GraphBuilder:
         # Override the node's name
         node.name = name
         
+        # add the node to the graph
+        self.graph.add_node(node)
+
         # Set graph to the builder's graph
         node.set_graph(self.graph)
-        
-        self.nodes[name] = node
         
         # Add predecessors if specified
         if predecessors:
             for arg_name, pred_name in predecessors.items():
-                if pred_name not in self.nodes:
-                    raise ValueError(
-                        f"Predecessor node '{pred_name}' not found for argument '{arg_name}'"
-                    )
+                # throws error if predecessor not found
                 node.add_predecessor(
-                    self.nodes[pred_name],
+                    self.graph.get_node_by_name(pred_name),
                     argument_name=arg_name
                 )
         return self
@@ -96,7 +93,6 @@ class GraphBuilder:
             self for method chaining
         """
         node = InputNode(name=name, graph=self.graph, input_dtype=input_dtype)
-        self.nodes[name] = node
         self.graph.add_input_node(name, node)
         return self
     

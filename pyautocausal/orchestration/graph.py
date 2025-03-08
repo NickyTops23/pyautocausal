@@ -18,6 +18,7 @@ class ExecutableGraph(nx.DiGraph):
         self.logger = get_class_logger(self.__class__.__name__)
         self.run_context = run_context or RunContext()
         self._input_nodes = {}
+        self._nodes_by_name = {}  # New dictionary to track nodes by name
         
         if output_handler is None:
             self.save_node_outputs = False
@@ -117,18 +118,31 @@ class ExecutableGraph(nx.DiGraph):
         self.execute_graph()
         return self
 
+    def get_node_by_name(self, name: str) -> Node:
+        """Get a node by its name.
+        
+        Args:
+            name: Name of the node to find
+            
+        Returns:
+            The node with the given name
+            
+        Raises:
+            ValueError: If no node exists with the given name
+        """
+        node = self._nodes_by_name.get(name)
+        if node is None:
+            raise ValueError(f"No node found with name '{name}'")
+        return node
+
     def add_node(self, node, **attr):
-        """Override add_node to check for name conflicts."""
+        """Override add_node to check for name conflicts and maintain name mapping."""
         if hasattr(node, 'name'):
-            # Check for existing nodes with the same name
-            existing_node = next(
-                (n for n in self.nodes() if hasattr(n, 'name') and n.name == node.name),
-                None
-            )
-            if existing_node is not None:
+            if node.name in self._nodes_by_name:
                 raise ValueError(
                     f"Cannot add node: a node with name '{node.name}' already exists in the graph"
                 )
+            self._nodes_by_name[node.name] = node
         
         super().add_node(node, **attr)
 
@@ -194,7 +208,7 @@ class ExecutableGraph(nx.DiGraph):
                 )
 
         # Get existing node names in self
-        existing_names = {node.name for node in self.nodes()}
+        existing_names = self._nodes_by_name.keys()
         
         # Create mapping of old nodes to new nodes
         node_mapping = {}
@@ -204,7 +218,7 @@ class ExecutableGraph(nx.DiGraph):
             # Generate unique name if there's a conflict
             new_name = node.name
             counter = 1
-            while new_name in existing_names:
+            while new_name in existing_names or new_name in self._nodes_by_name:
                 new_name = f"{node.name}_{counter}"
                 counter += 1
             
@@ -224,6 +238,7 @@ class ExecutableGraph(nx.DiGraph):
                     save_node=bool(node.output_config)
                 )
                 node_mapping[node] = new_node
+                self._nodes_by_name[new_name] = new_node
             elif isinstance(node, InputNode):
                 new_node = InputNode(
                     name=new_name,
@@ -232,6 +247,7 @@ class ExecutableGraph(nx.DiGraph):
                 )
                 self.add_input_node(new_name, new_node)
                 node_mapping[node] = new_node
+                self._nodes_by_name[new_name] = new_node
             
             existing_names.add(new_name)
 
