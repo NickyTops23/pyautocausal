@@ -35,16 +35,16 @@ def test_fit_with_merged_graphs():
     """Test fit behavior with merged graphs"""
     graph1 = (GraphBuilder()
     .add_input_node(name="external_input", input_dtype=pd.DataFrame)
-    .add_node(name="process", action_function=process_dataframe, predecessors={"df": "external_input"})
+    .create_node(name="process", action_function=process_dataframe, predecessors={"df": "external_input"})
     .build())
     
     graph2 = (GraphBuilder()
     .add_input_node(name="internal_input", input_dtype=pd.DataFrame)
-    .add_node(name="transform", action_function=transform_dataframe, predecessors={"df": "internal_input"})
+    .create_node(name="transform", action_function=transform_dataframe, predecessors={"df": "internal_input"})
     .build())
     
     # Merge graphs with explicit wiring
-    graph1.merge_with(graph2, process_node >> input_node2)
+    graph1.merge_with(graph2, graph1.get("process") >> graph2.get("internal_input"))
 
     assert len(graph1.input_nodes) == 2
     

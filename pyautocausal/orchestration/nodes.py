@@ -412,8 +412,8 @@ class InputNode(BaseNode):
     
     def set_input(self, value: Any):
         """Set the input value that will be passed to successor nodes"""
-        if self.dtype is not Any and not isinstance(value, self.dtype):
-            raise TypeError(f"Input value for node '{self.name}' must be of type {self.dtype.__name__}, got {type(value).__name__}")
+        if self.input_dtype is not Any and not isinstance(value, self.input_dtype):
+            raise TypeError(f"Input value for node '{self.name}' must be of type {self.input_dtype.__name__}, got {type(value).__name__}")
         self.output = value
         self.state = NodeState.COMPLETED
 

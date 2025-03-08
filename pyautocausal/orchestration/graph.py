@@ -187,6 +187,7 @@ class ExecutableGraph(nx.DiGraph):
                 "to ensure graphs are connected"
             )
 
+        targets = set()
         # Validate that all wirings are between the two graphs
         for wiring in wirings:
             source, target = wiring
@@ -205,6 +206,7 @@ class ExecutableGraph(nx.DiGraph):
                     f"Invalid wiring: {source.name} >> {target.name}. "
                     "Target must be an InputNode"
                 )
+            targets.add(target)
         
         # Create mapping of old nodes to new nodes
         node_mapping = {}
@@ -234,10 +236,23 @@ class ExecutableGraph(nx.DiGraph):
                     save_node=bool(node.output_config)
                 )
                 node_mapping[node] = new_node
-                self.add_node(new_node)
             elif isinstance(node, InputNode):
-                self.add_input_node(new_name, node.input_dtype)
-                node_mapping[node] = new_node
+                if node in targets:
+                    # Target nodes are no longer input nodes
+                    # we need to make a new regular node that simply passes the input
+                    def pass_input(x: node.input_dtype) -> node.input_dtype:
+                        return x
+                    
+                    new_node = Node(
+                        name=new_name,
+                        action_function=pass_input,
+                        graph=self,
+                    )
+                else:
+                    self.add_input_node(new_name, node.input_dtype)
+                node_mapping[node] = self.get(new_name)
+            else:
+                raise ValueError(f"Invalid node type: {type(node)}")
 
             
             
@@ -256,3 +271,46 @@ class ExecutableGraph(nx.DiGraph):
             self.add_edge(source, new_target)
 
         return self 
+
+    def to_text(self) -> str:
+        """Generate a text representation of the graph for debugging.
+        
+        Returns:
+            A string containing a text visualization of the graph structure.
+        """
+        from .nodes import InputNode
+        output = []
+        
+        # Header
+        output.append("Graph Structure:")
+        output.append("=" * 50)
+        
+        # Nodes section
+        output.append("\nNodes:")
+        output.append("-" * 20)
+        for node in sorted(self._nodes_by_name.values(), key=lambda n: n.name):
+            node_type = "InputNode" if isinstance(node, InputNode) else "Node"
+            state = f"[{node.state.value}]" if hasattr(node, "state") else ""
+            output.append(f"{node.name} ({node_type}) {state}")
+        
+        # Edges section
+        output.append("\nConnections:")
+        output.append("-" * 20)
+        for u, v, data in sorted(self.edges(data=True), key=lambda x: (x[0].name, x[1].name)):
+            arg_name = f" as '{data.get('argument_name')}'" if data.get('argument_name') else ""
+            output.append(f"{u.name} -> {v.name}{arg_name}")
+        
+        # Input nodes section
+        output.append("\nExternal Inputs:")
+        output.append("-" * 20)
+        for name, node in sorted(self.input_nodes.items()):
+            preds = list(self.predecessors(node))
+            if not preds:  # Only show external inputs
+                dtype = getattr(node, 'input_dtype', 'Any').__name__
+                output.append(f"{name} (expects {dtype})")
+        
+        return "\n".join(output)
+
+    def print_graph(self):
+        """Print a text representation of the graph."""
+        print(self.to_text()) 
