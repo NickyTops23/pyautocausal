@@ -6,6 +6,7 @@ from ..persistence.output_handler import OutputHandler
 from pyautocausal.utils.logger import get_class_logger
 from pyautocausal.orchestration.run_context import RunContext
 from pyautocausal.orchestration.node_state import NodeState
+from inspect import Parameter, Signature
 
 
 class ExecutableGraph(nx.DiGraph):
@@ -238,14 +239,20 @@ class ExecutableGraph(nx.DiGraph):
                 node_mapping[node] = new_node
             elif isinstance(node, InputNode):
                 if node in targets:
-                    # Target nodes are no longer input nodes
-                    # we need to make a new regular node that simply passes the input
-                    def pass_input(x: node.input_dtype) -> node.input_dtype:
-                        return x
+                    def make_pass_function(dtype, param_name):
+                        def pass_input(**kwargs):
+                            return kwargs[param_name]
+                        
+                        # Create explicit signature with one keyword-only parameter
+                        pass_input.__signature__ = Signature([
+                            Parameter(param_name, Parameter.KEYWORD_ONLY, annotation=dtype)
+                        ])
+                        pass_input.__annotations__ = {param_name: dtype, 'return': dtype}
+                        return pass_input
                     
-                    new_node = Node(
+                    new_node = NodeObject(
                         name=new_name,
-                        action_function=pass_input,
+                        action_function=make_pass_function(node.input_dtype, node.name),
                         graph=self,
                     )
                 else:
@@ -268,7 +275,7 @@ class ExecutableGraph(nx.DiGraph):
         for wiring in wirings:
             source, target = wiring
             new_target = node_mapping[target]
-            self.add_edge(source, new_target)
+            new_target.add_predecessor(source, argument_name=new_target.name)
 
         return self 
 

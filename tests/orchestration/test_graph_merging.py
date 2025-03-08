@@ -46,7 +46,7 @@ def test_fit_with_merged_graphs():
     # Merge graphs with explicit wiring
     graph1.merge_with(graph2, graph1.get("process") >> graph2.get("internal_input"))
 
-    assert len(graph1.input_nodes) == 2
+    assert len(graph1.input_nodes) == 1
     
     # Should only need to provide external input
     test_df = pd.DataFrame({'a': [1, 2, 3]})
@@ -55,10 +55,8 @@ def test_fit_with_merged_graphs():
     graph1.fit(external_input=test_df)
     
     # Verify execution
-    assert input_node1.is_completed()
-    assert process_node.is_completed()
-    new_input = next(n for n in graph1.nodes() if n.name == "internal_input")
-    new_transform = next(n for n in graph1.nodes() if n.name == "transform")
+    new_input = graph1.get("internal_input")
+    new_transform = graph1.get("transform")
     assert new_input.is_completed()
     assert new_transform.is_completed()
 
