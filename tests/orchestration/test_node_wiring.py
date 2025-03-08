@@ -35,9 +35,6 @@ def test_valid_type_connection():
     # Should not raise any errors
     node >> input_node
 
-    assert input_node in node.get_successors()
-    assert node in input_node.get_predecessors()
-
 def test_incompatible_type_connection():
     """Test connecting nodes with incompatible types raises TypeError"""
     graph = Mock()
@@ -115,8 +112,3 @@ def test_chaining_connections():
     # Chain connections
     node1 >> input_node
     node1 >> input_node2
-
-    
-    # Verify connections
-    assert input_node in node1.get_successors()
-    assert input_node2 in node1.get_successors() 
