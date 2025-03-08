@@ -1,5 +1,5 @@
 import networkx as nx
-from typing import Set, Optional, Dict
+from typing import Set, Optional, Dict, Any
 from .base import Node
 
 from ..persistence.output_handler import OutputHandler
@@ -118,7 +118,7 @@ class ExecutableGraph(nx.DiGraph):
         self.execute_graph()
         return self
 
-    def get_node_by_name(self, name: str) -> Node:
+    def get(self, name: str) -> Node:
         """Get a node by its name.
         
         Args:
@@ -143,17 +143,16 @@ class ExecutableGraph(nx.DiGraph):
                     f"Cannot add node: a node with name '{node.name}' already exists in the graph"
                 )
             self._nodes_by_name[node.name] = node
+        else:
+            raise ValueError(f"Node must have a name, got {type(node)}")
         
         super().add_node(node, **attr)
 
-    def add_input_node(self, name: str, node: 'InputNode'):
+    def add_input_node(self, name: str, input_dtype: type = Any):
         """Add an input node to the graph."""
         from .nodes import InputNode
-        if name in self._input_nodes:
-            raise ValueError(f"Input node with name '{name}' already exists")
-        if not isinstance(node, InputNode):
-            raise ValueError(f"Node must be an InputNode, got {type(node)}")
-        self._input_nodes[name] = node
+        input_node = InputNode(name=name, graph=self, input_dtype=input_dtype)
+        self._input_nodes[name] = input_node        
 
     def merge_with(self, other: 'ExecutableGraph', *wirings) -> 'ExecutableGraph':
         """Merge another graph into this one with explicit wiring.
@@ -206,9 +205,6 @@ class ExecutableGraph(nx.DiGraph):
                     f"Invalid wiring: {source.name} >> {target.name}. "
                     "Target must be an InputNode"
                 )
-
-        # Get existing node names in self
-        existing_names = self._nodes_by_name.keys()
         
         # Create mapping of old nodes to new nodes
         node_mapping = {}
@@ -218,7 +214,7 @@ class ExecutableGraph(nx.DiGraph):
             # Generate unique name if there's a conflict
             new_name = node.name
             counter = 1
-            while new_name in existing_names or new_name in self._nodes_by_name:
+            while new_name in self._nodes_by_name:
                 new_name = f"{node.name}_{counter}"
                 counter += 1
             
@@ -238,18 +234,13 @@ class ExecutableGraph(nx.DiGraph):
                     save_node=bool(node.output_config)
                 )
                 node_mapping[node] = new_node
-                self._nodes_by_name[new_name] = new_node
+                self.add_node(new_node)
             elif isinstance(node, InputNode):
-                new_node = InputNode(
-                    name=new_name,
-                    graph=self,
-                    input_dtype=node.input_dtype
-                )
-                self.add_input_node(new_name, new_node)
+                self.add_input_node(new_name, node.input_dtype)
                 node_mapping[node] = new_node
-                self._nodes_by_name[new_name] = new_node
+
             
-            existing_names.add(new_name)
+            
 
         # Add edges from the original graph
         for u, v, data in other.edges(data=True):
