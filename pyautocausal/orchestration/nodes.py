@@ -403,10 +403,12 @@ class InputNode(BaseNode):
     """A node that accepts external input and passes it to its successors."""
     
     def __init__(self, name: str, graph: ExecutableGraph, input_dtype: type = Any):
-        super().__init__(name, graph)
         self.state = NodeState.PENDING
         self.output = None
         self.input_dtype = input_dtype
+        super().__init__(name, graph)
+
+
     
     def set_input(self, value: Any):
         """Set the input value that will be passed to successor nodes"""

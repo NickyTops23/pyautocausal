@@ -11,21 +11,24 @@ def transform_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def test_merge_linked_graphs():
     """Test merging graphs that are properly linked"""
-    graph1 = GraphBuilder().build()
-    graph2 = GraphBuilder().build()
-    
+    graph1Builder = GraphBuilder()
+    graph2Builder = GraphBuilder()
+
     # Create and link nodes
-    node1 = Node(name="process1", action_function=process_dataframe, graph=graph1)
-    input_node2 = InputNode(name="input2", graph=graph2, input_dtype=pd.DataFrame)
+    graph1Builder.create_node(name="process1", action_function=process_dataframe)
+    graph2Builder.add_input_node(name="input2", input_dtype=pd.DataFrame)
+
+    graph1 = graph1Builder.build()
+    graph2 = graph2Builder.build()
     
     # Merge graphs with explicit wiring
-    merged = graph1.merge_with(graph2, node1 >> input_node2)
+    merged = graph1.merge_with(graph2, graph1.get("process1") >> graph2.get("input2"))
     
     # Verify structure
     new_input = next(n for n in merged.nodes() if n.name == "input2")
     assert new_input in merged.nodes()
-    assert node1 in merged.nodes()
-    assert new_input in node1.get_successors()
+    assert graph1.get("process1") in merged.nodes()
+    assert new_input in graph1.get("process1").get_successors()
     assert new_input.graph == merged
 
 def test_fit_with_merged_graphs():

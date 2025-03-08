@@ -64,9 +64,6 @@ class GraphBuilder:
         """
         # Override the node's name
         node.name = name
-        
-        # add the node to the graph
-        self.graph.add_node(node)
 
         # Set graph to the builder's graph
         node.set_graph(self.graph)
@@ -76,7 +73,7 @@ class GraphBuilder:
             for arg_name, pred_name in predecessors.items():
                 # throws error if predecessor not found
                 node.add_predecessor(
-                    self.graph.get_node_by_name(pred_name),
+                    self.graph.get(pred_name),
                     argument_name=arg_name
                 )
         return self
@@ -92,8 +89,7 @@ class GraphBuilder:
         Returns:
             self for method chaining
         """
-        node = InputNode(name=name, graph=self.graph, input_dtype=input_dtype)
-        self.graph.add_input_node(name, node)
+        self.graph.add_input_node(name, input_dtype)
         return self
     
     def build(self) -> ExecutableGraph:
