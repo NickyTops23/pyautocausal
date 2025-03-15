@@ -8,6 +8,25 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def get_node_colors(graph):
+    """Get colors for nodes based on their state"""
+    colors = []
+    for node in graph.nodes():
+        if hasattr(node, 'state'):
+            if node.state.name == 'COMPLETED':
+                colors.append('lightgreen')
+            elif node.state.name == 'FAILED':
+                colors.append('salmon')
+            elif node.state.name == 'SKIPPED':
+                colors.append('lightgray')
+            elif node.state.name == 'RUNNING':
+                colors.append('yellow')
+            else:  # PENDING
+                colors.append('lightblue')
+        else:
+            colors.append('lightblue')  # Default color for nodes without state
+    return colors
+
 def visualize_graph(graph, save_path, return_positions=False, return_labels=False):
     """
     Visualize the provided graph as a static image in a bottom-to-top (decision tree) layout.
@@ -69,6 +88,9 @@ def visualize_graph(graph, save_path, return_positions=False, return_labels=Fals
         # Create labels dictionary using just the node names
         labels = {node: node.name for node in graph.nodes()}
         
+        # Get node colors based on state
+        node_colors = get_node_colors(graph)
+        
         # Create the figure and draw
         plt.figure(figsize=(12, 8))
         nx.draw(
@@ -78,15 +100,31 @@ def visualize_graph(graph, save_path, return_positions=False, return_labels=Fals
             with_labels=True,
             arrows=True,
             node_size=2000,
-            node_color='lightblue',
+            node_color=node_colors,  # Use state-based colors
             font_size=10,
             font_weight='bold',
             edge_color='gray',
             arrowsize=20
         )
+        
+        # Add legend
+        legend_elements = [
+            plt.Line2D([0], [0], marker='o', color='w', 
+                      markerfacecolor=c, label=l, markersize=10)
+            for c, l in [
+                ('lightblue', 'Pending'),
+                ('yellow', 'Running'),
+                ('lightgreen', 'Completed'),
+                ('salmon', 'Failed'),
+                ('lightgray', 'Skipped')
+            ]
+        ]
+        plt.legend(handles=legend_elements, loc='upper left', 
+                  bbox_to_anchor=(1, 1))
+        
         plt.title("Executable Graph Visualization")
         
-        # Save the static image
+        # Save the static image with room for legend
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         
         # Return values for testing if requested
