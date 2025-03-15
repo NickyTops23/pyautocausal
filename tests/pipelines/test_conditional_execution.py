@@ -24,9 +24,15 @@ def is_false(x: bool) -> bool:
 def final_node_action() -> str:
     return "final_node_executed"
 
+# Function that would raise an error if called with None
+def requires_attribute_access(df):
+    # This will raise AttributeError if df is None
+    return 'columns' in df
+
 # Create reusable conditions
 true_condition = Condition(is_true, "Condition is true")
 false_condition = Condition(is_false, "Condition is false")
+attribute_condition = Condition(requires_attribute_access, "Condition requires attribute access")
 
 def test_true_condition():
     """Test that when condition is True, only true branch executes"""
@@ -134,3 +140,48 @@ def test_skip_propagation():
     assert true_node.output is None
     assert final_node.state == NodeState.SKIPPED
     assert final_node.output is None
+
+def test_condition_not_evaluated_with_skipped_predecessors():
+    """Test that conditions are not evaluated when predecessors are skipped.
+    
+    This test verifies the fix for the bug where conditions were being evaluated
+    even when predecessors were skipped, which could lead to errors like
+    'NoneType' object has no attribute 'columns'.
+    """
+    graph = ExecutableGraph()
+    
+    # First branch - will be skipped due to condition
+    branch_condition = Node(
+        name="branch_condition",
+        action_function=always_false,  # This will make the next node skip
+        graph=graph
+    )
+    
+    skipped_node = Node(
+        name="skipped_node",
+        action_function=lambda: {"columns": ["a", "b", "c"]},  # Returns a dict with columns
+        condition=true_condition,  # This condition won't be satisfied
+        graph=graph
+    )
+    skipped_node.add_predecessor(branch_condition, argument_name="x")
+    
+    # This node would raise an error if it tried to evaluate its condition
+    # with None input from the skipped predecessor
+    attribute_dependent_node = Node(
+        name="attribute_dependent_node",
+        action_function=final_node_action,
+        condition=attribute_condition,  # This would raise an error if evaluated with None
+        graph=graph
+    )
+    attribute_dependent_node.add_predecessor(skipped_node, argument_name="df")
+    
+    # Execute the graph - this should not raise an error
+    graph.execute_graph()
+    
+    # Verify that nodes were skipped correctly
+    assert branch_condition.is_completed()
+    assert branch_condition.output is False
+    assert skipped_node.is_skipped()
+    assert skipped_node.output is None
+    assert attribute_dependent_node.is_skipped()
+    assert attribute_dependent_node.output is None
