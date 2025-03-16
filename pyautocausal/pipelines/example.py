@@ -3,7 +3,6 @@ from typing import Callable, Optional
 import pandas as pd
 import statsmodels.api as sm
 from pyautocausal.orchestration.nodes import Node
-from pyautocausal.orchestration.graph_builder import GraphBuilder
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.persistence.output_config import OutputConfig, OutputType

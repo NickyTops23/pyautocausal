@@ -3,7 +3,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 from pyautocausal.persistence.visualizer import visualize_graph
-from pyautocausal.orchestration.graph_builder import ExecutableGraph
+from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 @pytest.fixture

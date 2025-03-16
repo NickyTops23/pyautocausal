@@ -3,7 +3,7 @@ import pandas as pd
 import nbformat
 from pathlib import Path
 from pyautocausal.persistence.notebook_export import NotebookExporter
-from pyautocausal.orchestration.graph_builder import ExecutableGraph
+from pyautocausal.orchestration.graph import ExecutableGraph
 
 def simple_func(x: pd.DataFrame) -> pd.DataFrame:
     """A simple function that adds a column"""

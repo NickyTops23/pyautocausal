@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 from pathlib import Path
-from pyautocausal.orchestration.graph_builder import ExecutableGraph
+from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.pipelines.library import OLSNode, DoubleMLNode, PassthroughNode
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 from pyautocausal.orchestration.condition import create_condition

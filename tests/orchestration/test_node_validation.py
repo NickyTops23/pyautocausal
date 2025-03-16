@@ -1,6 +1,6 @@
 import pytest
 import pandas as pd
-from pyautocausal.orchestration.graph_builder import ExecutableGraph
+from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.orchestration.nodes import Node, InputNode
 
 def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
