@@ -448,3 +448,53 @@ class ExecutableGraph(nx.DiGraph):
                 f"{inconsistent_nodes}"
             )
         return True
+
+    def can_wire_nodes(self, source: 'BaseNode', target: 'BaseNode') -> bool:
+        """Tests if one node can be wired to another node.
+        
+        Args:
+            source: The source node that will output data
+            target: The target node that will receive data
+            
+        Returns:
+            bool: True if nodes can be wired, False otherwise
+            
+        Raises:
+            ValueError: If target is not an InputNode
+            TypeError: If there is a type mismatch between nodes
+        """
+        from .nodes import InputNode
+        import inspect
+        from typing import Any
+        import warnings
+        
+        if not isinstance(target, InputNode):
+            raise ValueError(f"Target node must be an input node, got {type(target)}")
+
+        # Get return type from action function signature
+        return_annotation = inspect.signature(source.action_function).return_annotation
+
+        # Get expected input type from InputNode
+        input_type = target.input_dtype
+
+        # Warn if types cannot be validated
+        if return_annotation == inspect.Parameter.empty:
+            warnings.warn(
+                f"Cannot validate connection: {source.name} -> {target.name}. "
+                f"Node {source.name}'s action function lacks return type annotation."
+            )
+            return True
+        elif input_type == Any:
+            warnings.warn(
+                f"Cannot validate connection: {source.name} -> {target.name}. "
+                f"Input node {target.name} accepts Any type."
+            )
+            return True
+        # Validate types if both are specified
+        elif return_annotation != inspect.Parameter.empty and input_type != Any:
+            if not issubclass(return_annotation, input_type):
+                raise TypeError(
+                    f"Type mismatch in connection {source.name} -> {target.name}: "
+                    f"Node outputs {return_annotation.__name__}, but input node expects {input_type.__name__}"
+                )
+        return True
