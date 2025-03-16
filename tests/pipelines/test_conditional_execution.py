@@ -35,24 +35,24 @@ def test_true_condition():
     # Create nodes
     condition_node = Node(
         name="condition",
-        action_function=always_true,
-        graph=graph
+        action_function=always_true
     )
+    graph.add_node_to_graph(condition_node)
     
     true_node = Node(
         name="true_branch",
         action_function=true_branch,
-        condition=true_condition,
-        graph=graph
+        condition=true_condition
     )
+    graph.add_node_to_graph(true_node)
     graph.add_edge(condition_node, true_node, argument_name="x")
     
     false_node = Node(
         name="false_branch",
         action_function=false_branch,
-        condition=false_condition,
-        graph=graph
+        condition=false_condition
     )
+    graph.add_node_to_graph(false_node)
     graph.add_edge(condition_node, false_node, argument_name="x")
     
     graph.execute_graph()
@@ -70,24 +70,24 @@ def test_false_condition():
     
     condition_node = Node(
         name="condition",
-        action_function=always_false,
-        graph=graph
+        action_function=always_false
     )
+    graph.add_node_to_graph(condition_node)
     
     true_node = Node(
         name="true_branch",
         action_function=true_branch,
-        condition=true_condition,
-        graph=graph
+        condition=true_condition
     )
+    graph.add_node_to_graph(true_node)
     graph.add_edge(condition_node, true_node, argument_name="x")
     
     false_node = Node(
         name="false_branch",
         action_function=false_branch,
-        condition=false_condition,
-        graph=graph
+        condition=false_condition
     )
+    graph.add_node_to_graph(false_node)
     graph.add_edge(condition_node, false_node, argument_name="x")
     
     graph.execute_graph()
@@ -106,22 +106,22 @@ def test_skip_propagation():
     
     condition_node = Node(
         name="condition",
-        action_function=always_false,
-        graph=graph
+        action_function=always_false
     )
+    graph.add_node_to_graph(condition_node)
     
     true_node = Node(
         name="true_branch",
         action_function=true_branch,
-        condition=true_condition,
-        graph=graph
+        condition=true_condition
     )
+    graph.add_node_to_graph(true_node)
     
     final_node = Node(
         name="final_node",
-        action_function=final_node_action,
-        graph=graph
+        action_function=final_node_action
     )
+    graph.add_node_to_graph(final_node)
     
     graph.add_edge(condition_node, true_node, argument_name="x")
     graph.add_edge(true_node, final_node)

@@ -265,12 +265,12 @@ class ExecutableGraph(nx.DiGraph):
                 new_node = NodeObject(
                     name=new_name,
                     action_function=node.action_function,
-                    graph=self,
                     output_config=node.output_config,
                     condition=node.condition,
                     action_condition_kwarg_map=node.action_condition_kwarg_map,
                     save_node=bool(node.output_config)
                 )
+                self.add_node_to_graph(new_node)
                 node_mapping[node] = new_node
             elif isinstance(node, InputNode):
                 if node in targets:
@@ -288,8 +288,8 @@ class ExecutableGraph(nx.DiGraph):
                     new_node = NodeObject(
                         name=new_name,
                         action_function=make_pass_function(node.input_dtype, node.name),
-                        graph=self,
                     )
+                    self.add_node_to_graph(new_node)
                 else:
                     self.add_input_node(new_name, node.input_dtype)
                 node_mapping[node] = self.get(new_name)

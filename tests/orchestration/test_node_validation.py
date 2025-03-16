@@ -11,13 +11,13 @@ def test_duplicate_node_name():
     graph = GraphBuilder().build()
     
     # Add first node
-    node1 = Node(name="process", action_function=process_dataframe, graph=None)
-    graph.add_node(node1)
+    node1 = Node(name="process", action_function=process_dataframe)
+    graph.add_node_to_graph(node1)
     
     # Try to add second node with same name
-    node2 = Node(name="process", action_function=process_dataframe, graph=None)
+    node2 = Node(name="process", action_function=process_dataframe)
     with pytest.raises(ValueError) as exc_info:
-        graph.add_node(node2)
+        graph.add_node_to_graph(node2)
     assert "already exists in the graph" in str(exc_info.value)
 
 def test_duplicate_input_node_name():
@@ -25,14 +25,14 @@ def test_duplicate_input_node_name():
     graph = GraphBuilder().build()
     
     # Add first input node
-    input1 = InputNode(name="input", graph=None, input_dtype=pd.DataFrame)
-    graph.add_input_node("input", input1)
+    input1 = InputNode(name="input", input_dtype=pd.DataFrame)
+    graph.add_node_to_graph(input1)
     
     # Try to add second input node with same name
-    input2 = InputNode(name="input", graph=None, input_dtype=pd.DataFrame)
+    input2 = InputNode(name="input", input_dtype=pd.DataFrame)
     with pytest.raises(ValueError) as exc_info:
-        graph.add_input_node("input", input2)
-    assert "already exists" in str(exc_info.value)
+        graph.add_node_to_graph(input2)
+    assert "already exists in the graph" in str(exc_info.value)
 
 def test_graph_builder_duplicate_node_name():
     """Test that GraphBuilder prevents duplicate node names"""

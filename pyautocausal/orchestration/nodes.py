@@ -340,7 +340,7 @@ class Node(BaseNode):
 class InputNode(BaseNode):
     """A node that accepts external input and passes it to its successors."""
     
-    def __init__(self, name: str, input_dtype: type = Any, graph: Optional[ExecutableGraph] = None):
+    def __init__(self, name: str, input_dtype: type = Any):
         self.state = NodeState.PENDING
         self.output = None
         self.input_dtype = input_dtype
