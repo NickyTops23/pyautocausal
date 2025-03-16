@@ -64,7 +64,16 @@ class Node(BaseNode):
         return signature.return_annotation
     
     def __rshift__(self, other: 'BaseNode') -> tuple[BaseNode, BaseNode]:
-        """Implements the >> operator for node wiring with type validation"""
+        """Implements the >> operator for node wiring with type validation
+        NB: This method is only part of the Node class because the >> syntax is cool.
+        Args:
+            other: The node to wire to
+            
+        Returns:
+            A tuple containing the source and target nodes
+            
+        
+        """
         if self.graph is None:
             raise ValueError("Node must be added to a graph before wiring")
         self.graph.can_wire_nodes(self, other)
