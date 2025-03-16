@@ -30,21 +30,13 @@ class BaseNode:
         self.graph = graph
         self.graph.add_node(self)
     
-    def add_successor(self, successor: 'BaseNode'):
-        if self.graph is None:
-            raise ValueError("Node must be added to a graph before adding successors")
-        self.graph.add_edge(self, successor)
-        
-    def add_predecessor(self, predecessor: 'BaseNode', argument_name: Optional[str] = None):
-        if self.graph is None:
-            raise ValueError("Node must be added to a graph before adding predecessors")
-        self.graph.add_edge(predecessor, self, argument_name=argument_name)
-
     def __rshift__(self, other: 'BaseNode') -> 'BaseNode':
         """Implements the >> operator for node wiring"""
         if not isinstance(other, InputNode):
             raise ValueError(f"Right-hand node must be an input node, got {type(other)}")
-        self.add_successor(other)
+        if self.graph is None:
+            raise ValueError("Node must be added to a graph before wiring")
+        self.graph.add_successor(self, other)
         return other  # Return other to allow chaining
 
 class Node(BaseNode):
@@ -123,7 +115,7 @@ class Node(BaseNode):
         if not self.predecessor_outputs:
             raise ValueError("No predecessor outputs found. Please call get_predecessor_outputs() before calling validate_condition()")
         
-        if self.condition is not None and not self.get_predecessors():
+        if self.condition is not None and not self.graph.get_node_predecessors(self):
             raise ValueError(f"Node {self.name} has a condition but no predecessors")
         
         if self.condition is not None:
@@ -281,17 +273,11 @@ class Node(BaseNode):
             self.mark_failed()
             raise e
 
-    def get_predecessors(self):
-        return set(self.graph.predecessors(self))
-    
-    def get_successors(self):
-        return set(self.graph.successors(self))
-    
     def get_predecessor_outputs(self):
         """Get outputs from immediate predecessor nodes"""
 
         # key in dict is the argument name if provided, otherwise the node name
-        predecessors = self.get_predecessors()
+        predecessors = self.graph.get_node_predecessors(self)
         predecessor_outputs = {}
         for predecessor in predecessors:
             edge = self.graph.edges[predecessor, self]
@@ -301,7 +287,7 @@ class Node(BaseNode):
             else:
                 predecessor_outputs[predecessor.name] = predecessor.output
         self.predecessor_outputs = predecessor_outputs
-        
+    
     def mark_running(self):
         self.state = NodeState.RUNNING
         
@@ -324,15 +310,16 @@ class Node(BaseNode):
         return self.state == NodeState.SKIPPED
     
     def has_skipped_predecessors(self):
-        return any(predecessor.is_skipped() for predecessor in self.get_predecessors())
+        return any(predecessor.is_skipped() for predecessor in self.graph.get_node_predecessors(self))
     
     def is_ready(self) -> bool:
         """Returns True if all ancestors are completed and this node is pending"""
         if self.state != NodeState.PENDING:
             return False
-        if not self.get_predecessors():
+        predecessors = self.graph.get_node_predecessors(self)
+        if not predecessors:
             return True
-        return all(predecessor.is_completed() or predecessor.is_skipped() for predecessor in self.get_predecessors())
+        return all(predecessor.is_completed() or predecessor.is_skipped() for predecessor in predecessors)
 
     def _execute(self):
         """Execute the node's action function with predecessor outputs"""
@@ -431,11 +418,5 @@ class InputNode(BaseNode):
     
     def execute(self) -> None:
         pass  # Input nodes don't execute; they just pass through their input
-
-    def get_predecessors(self):
-        return set(self.graph.predecessors(self))
-    
-    def get_successors(self):
-        return set(self.graph.successors(self))
 
 
