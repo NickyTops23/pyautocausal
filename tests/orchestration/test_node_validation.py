@@ -36,17 +36,15 @@ def test_duplicate_input_node_name():
 
 def test_graph_builder_duplicate_node_name():
     """Test that ExecutableGraph prevents duplicate node names"""
-    builder = ExecutableGraph()
-    
-    # Add first node
-    builder.create_node(
+    graph = (ExecutableGraph()
+    .create_node(
         name="process",
         action_function=process_dataframe
-    )
+    ))
     
     # Try to add second node with same name
     with pytest.raises(ValueError) as exc_info:
-        builder.create_node(
+        graph.create_node(
             name="process",
             action_function=process_dataframe
         )
