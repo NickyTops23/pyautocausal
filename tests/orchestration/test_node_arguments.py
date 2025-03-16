@@ -30,7 +30,7 @@ def basic_graph():
         action_function=process_data,
         graph=graph
     )
-    process_node.add_predecessor(data_node, argument_name="df")
+    graph.add_edge(data_node, process_node, argument_name="df")
     return graph, data_node, process_node
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def graph_with_context():
         action_function=process_data,
         graph=graph
     )
-    process_node.add_predecessor(data_node, argument_name="df")
+    graph.add_edge(data_node, process_node, argument_name="df")
     return graph, data_node, process_node
 
 @pytest.fixture
@@ -77,7 +77,7 @@ def graph_with_verbose_data():
         graph=graph,
         action_condition_kwarg_map={"verbose": "data"}
     )
-    process_node.add_predecessor(data_node, argument_name="df")
+    graph.add_edge(data_node, process_node, argument_name="df")
     return graph, data_node, process_node
 
 def test_default_parameters(basic_graph):
@@ -111,7 +111,7 @@ def test_missing_required_argument():
         action_function=process_data,
         graph=graph
     )
-    process_node.add_predecessor(data_node, argument_name="df")
+    graph.add_edge(data_node, process_node, argument_name="df")
     
     with pytest.raises(ValueError) as exc_info:
         graph.execute_graph()

@@ -45,7 +45,7 @@ def test_true_condition():
         condition=true_condition,
         graph=graph
     )
-    true_node.add_predecessor(condition_node, argument_name="x")
+    graph.add_edge(condition_node, true_node, argument_name="x")
     
     false_node = Node(
         name="false_branch",
@@ -53,7 +53,7 @@ def test_true_condition():
         condition=false_condition,
         graph=graph
     )
-    false_node.add_predecessor(condition_node, argument_name="x")
+    graph.add_edge(condition_node, false_node, argument_name="x")
     
     graph.execute_graph()
     
@@ -80,7 +80,7 @@ def test_false_condition():
         condition=true_condition,
         graph=graph
     )
-    true_node.add_predecessor(condition_node, argument_name="x")
+    graph.add_edge(condition_node, true_node, argument_name="x")
     
     false_node = Node(
         name="false_branch",
@@ -88,7 +88,7 @@ def test_false_condition():
         condition=false_condition,
         graph=graph
     )
-    false_node.add_predecessor(condition_node, argument_name="x")
+    graph.add_edge(condition_node, false_node, argument_name="x")
     
     graph.execute_graph()
     
@@ -123,8 +123,8 @@ def test_skip_propagation():
         graph=graph
     )
     
-    true_node.add_predecessor(condition_node, argument_name="x")
-    final_node.add_predecessor(true_node)
+    graph.add_edge(condition_node, true_node, argument_name="x")
+    graph.add_edge(true_node, final_node)
     
     graph.execute_graph()
     
