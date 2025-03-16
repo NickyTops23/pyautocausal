@@ -142,24 +142,48 @@ class ExecutableGraph(nx.DiGraph):
             raise ValueError(f"No node found with name '{name}'")
         return node
 
-    def add_node(self, node, **attr):
-        """Override add_node to check for name conflicts and maintain name mapping."""
+    def add_node_to_graph(self, node, **attr):
+        """Add a node to the graph and set the graph reference on the node."""
         if hasattr(node, 'name'):
             if node.name in self._nodes_by_name:
                 raise ValueError(
                     f"Cannot add node: a node with name '{node.name}' already exists in the graph"
                 )
+            
+            # Check if node is already in another graph
+            if hasattr(node, 'graph') and node.graph is not None and node.graph != self:
+                raise ValueError(
+                    f"Cannot add node '{node.name}': node is already part of a different graph"
+                )
+            
             self._nodes_by_name[node.name] = node
+            
+            # Set the graph reference on the node
+            node._set_graph_reference(self)
+            
+            # Add the node to the graph
+            super().add_node(node, **attr)
         else:
             raise ValueError(f"Node must have a name, got {type(node)}")
-        
-        super().add_node(node, **attr)
+
+    # Override the original add_node to prevent direct addition
+    def add_node(self, node, **attr):
+        """Override to ensure nodes are added through add_node_to_graph."""
+        if hasattr(node, '_set_graph_reference'):
+            # This is a BaseNode or subclass, so redirect to add_node_to_graph
+            return self.add_node_to_graph(node, **attr)
+        else:
+            # This is not a BaseNode, so proceed with normal NetworkX behavior
+            if hasattr(node, 'name'):
+                self._nodes_by_name[node.name] = node
+            super().add_node(node, **attr)
 
     def add_input_node(self, name: str, input_dtype: type = Any):
         """Add an input node to the graph."""
         from .nodes import InputNode
-        input_node = InputNode(name=name, graph=self, input_dtype=input_dtype)
-        self._input_nodes[name] = input_node        
+        input_node = InputNode(name=name, input_dtype=input_dtype)
+        self.add_node_to_graph(input_node)
+        self._input_nodes[name] = input_node
 
     def merge_with(self, other: 'ExecutableGraph', *wirings) -> 'ExecutableGraph':
         """Merge another graph into this one with explicit wiring.
@@ -409,3 +433,18 @@ class ExecutableGraph(nx.DiGraph):
         
         return all(predecessor.is_completed() or predecessor.is_skipped() 
                    for predecessor in predecessors)
+
+    def validate_node_graph_consistency(self):
+        """Validate that all nodes in the graph have this graph as their graph reference."""
+        inconsistent_nodes = []
+        for node in self.nodes():
+            if hasattr(node, 'graph'):
+                if node.graph != self:
+                    inconsistent_nodes.append(node.name)
+        
+        if inconsistent_nodes:
+            raise ValueError(
+                f"Graph inconsistency detected: the following nodes do not reference this graph: "
+                f"{inconsistent_nodes}"
+            )
+        return True

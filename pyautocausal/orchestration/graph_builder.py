@@ -65,9 +65,9 @@ class GraphBuilder:
         # Override the node's name
         node.name = name
 
-        # Set graph to the builder's graph
-        node.set_graph(self.graph)
-        
+        # Add node to graph
+        self.graph.add_node_to_graph(node)
+
         # Add predecessors if specified
         if predecessors:
             for arg_name, pred_name in predecessors.items():
