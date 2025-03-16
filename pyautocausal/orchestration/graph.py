@@ -325,4 +325,42 @@ class ExecutableGraph(nx.DiGraph):
 
     def print_graph(self):
         """Print a text representation of the graph."""
-        print(self.to_text()) 
+        print(self.to_text())
+
+    def get_node_predecessors(self, node) -> set:
+        """Returns all predecessor nodes for the given node.
+        
+        Args:
+            node: The node whose predecessors to retrieve
+            
+        Returns:
+            Set of predecessor nodes
+        """
+        return set(self.predecessors(node))
+
+    def get_node_successors(self, node) -> set:
+        """Returns all successor nodes for the given node.
+        
+        Args:
+            node: The node whose successors to retrieve
+            
+        Returns:
+            Set of successor nodes
+        """
+        return set(self.successors(node))
+
+    def add_successor(self, node: 'BaseNode', successor: 'BaseNode'):
+        """Add a successor to a node in the graph."""
+        if node not in self.nodes():
+            raise ValueError(f"Node {node.name} is not in this graph")
+        if successor not in self.nodes():
+            raise ValueError(f"Successor node {successor.name} is not in this graph")
+        self.add_edge(node, successor)
+    
+    def add_predecessor(self, node: 'BaseNode', predecessor: 'BaseNode', argument_name: Optional[str] = None):
+        """Add a predecessor to a node in the graph with an optional argument name."""
+        if node not in self.nodes():
+            raise ValueError(f"Node {node.name} is not in this graph")
+        if predecessor not in self.nodes():
+            raise ValueError(f"Predecessor node {predecessor.name} is not in this graph")
+        self.add_edge(predecessor, node, argument_name=argument_name) 
