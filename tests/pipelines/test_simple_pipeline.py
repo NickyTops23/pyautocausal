@@ -33,10 +33,8 @@ def sample_data():
 @pytest.fixture
 def pipeline_graph(tmp_path):
     """Create a configured pipeline graph with all nodes"""
-    builder = ExecutableGraph(output_path=tmp_path / 'outputs')
     
-    # Create nodes using builder pattern
-    graph = (builder
+    graph = (ExecutableGraph(output_path=tmp_path / 'outputs')
         .create_node(
             "create_data", 
             create_sample_data,

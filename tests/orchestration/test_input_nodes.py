@@ -37,19 +37,19 @@ def test_input_node_type_validation_errors():
 
 def test_graph_builder_with_typed_inputs():
     """Test that graph builder correctly sets up typed input nodes"""
-    builder = ExecutableGraph()
+    
     
     # Add typed input node
-    builder.add_input_node("data", input_dtype=pd.DataFrame)
+    graph = ExecutableGraph().add_input_node("data", input_dtype=pd.DataFrame)
     
     # Get the input node and verify its type
-    input_node = builder.get("data")
+    input_node = graph.get("data")
     assert isinstance(input_node, InputNode)
     assert input_node.input_dtype == pd.DataFrame
     
     # Verify default Any type
-    builder.add_input_node("any_data")
-    assert builder.get("any_data").input_dtype == Any
+    graph.add_input_node("any_data")
+    assert graph.get("any_data").input_dtype == Any
 
 def test_complex_graph_with_typed_inputs():
     """Test typed inputs in a more complex graph with processing nodes"""
