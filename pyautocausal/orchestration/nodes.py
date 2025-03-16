@@ -231,12 +231,8 @@ class Node(BaseNode):
     def should_execute(self) -> bool:
         """Check if the node should be executed based on predecessors and condition."""
         try:
-            # First check if any predecessors were skipped
-            if self.has_skipped_predecessors():
-                return False
-            
-            # Only evaluate condition if no predecessors were skipped
-            return self.condition_satisfied()
+            return not self.has_skipped_predecessors() and self.condition_satisfied()
+
         except Exception as e:
             self.mark_failed()
             raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
