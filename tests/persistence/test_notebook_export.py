@@ -3,7 +3,7 @@ import pandas as pd
 import nbformat
 from pathlib import Path
 from pyautocausal.persistence.notebook_export import NotebookExporter
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph_builder import ExecutableGraph
 
 def simple_func(x: pd.DataFrame) -> pd.DataFrame:
     """A simple function that adds a column"""
@@ -17,7 +17,7 @@ def process_func(df: pd.DataFrame) -> str:
 @pytest.fixture
 def sample_graph():
     """Create a simple graph for testing"""
-    graph = (GraphBuilder()
+    graph = (ExecutableGraph()
         .add_input_node("data")
         .create_node(
             "transform",
@@ -29,7 +29,7 @@ def sample_graph():
             process_func,
             predecessors={"df": "transform"}
         )
-        .build())
+        )
     
     # Set input data
     input_data = pd.DataFrame({'value': [1, 2, 3]})

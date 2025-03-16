@@ -1,6 +1,6 @@
 import pytest
 import pandas as pd
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph_builder import ExecutableGraph
 from pyautocausal.orchestration.nodes import Node, InputNode
 
 def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -8,7 +8,7 @@ def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def test_duplicate_node_name():
     """Test that adding a node with a duplicate name raises an error"""
-    graph = GraphBuilder().build()
+    graph = ExecutableGraph()
     
     # Add first node
     node1 = Node(name="process", action_function=process_dataframe)
@@ -22,7 +22,7 @@ def test_duplicate_node_name():
 
 def test_duplicate_input_node_name():
     """Test that adding an input node with a duplicate name raises an error"""
-    graph = GraphBuilder().build()
+    graph = ExecutableGraph()
     
     # Add first input node
     input1 = InputNode(name="input", input_dtype=pd.DataFrame)
@@ -35,8 +35,8 @@ def test_duplicate_input_node_name():
     assert "already exists in the graph" in str(exc_info.value)
 
 def test_graph_builder_duplicate_node_name():
-    """Test that GraphBuilder prevents duplicate node names"""
-    builder = GraphBuilder()
+    """Test that ExecutableGraph prevents duplicate node names"""
+    builder = ExecutableGraph()
     
     # Add first node
     builder.create_node(

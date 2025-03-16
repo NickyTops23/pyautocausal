@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 import pandas as pd
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph_builder import ExecutableGraph
 from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.pipelines.example import condition_nObs_DoubleML, condition_nObs_OLS
 from pyautocausal.orchestration.condition import Condition
@@ -39,7 +39,7 @@ ols_condition = Condition(
 )
 
 def causal_graph(output_dir):
-    graph = (GraphBuilder(output_path=output_dir)
+    graph = (ExecutableGraph(output_path=output_dir)
         .add_input_node("df")
         .create_node(
             "doubleml",
@@ -55,7 +55,7 @@ def causal_graph(output_dir):
             condition=ols_condition,
             save_node=True,
         )
-        .build())
+        )
     
     return graph
 

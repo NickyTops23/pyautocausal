@@ -3,7 +3,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 from pyautocausal.persistence.visualizer import visualize_graph
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph_builder import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 @pytest.fixture
@@ -15,7 +15,7 @@ def simple_graph(tmp_path):
     def node2_action(x: pd.DataFrame) -> pd.DataFrame:
         return x
     
-    graph = (GraphBuilder(output_path=tmp_path)
+    graph = (ExecutableGraph(output_path=tmp_path)
         .add_input_node("input")
         .create_node(
             "node1",
@@ -37,7 +37,7 @@ def simple_graph(tmp_path):
                 output_type=OutputType.PARQUET
             )
         )
-        .build())
+        )
     return graph
 
 def test_visualize_graph_creates_file(simple_graph, tmp_path):

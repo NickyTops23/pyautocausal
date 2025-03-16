@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 from pathlib import Path
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph_builder import ExecutableGraph
 from pyautocausal.pipelines.library import OLSNode, DoubleMLNode, PassthroughNode
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 from pyautocausal.orchestration.condition import create_condition
@@ -23,7 +23,7 @@ def output_path(tmp_path):
 def test_create_simple_pipeline(sample_df, output_path):
     """Test basic node execution with default settings"""
     # Build graph using builder pattern
-    graph = (GraphBuilder(output_path=output_path)
+    graph = (ExecutableGraph(output_path=output_path)
         .add_input_node("data")
         .create_node(
             "ols",
@@ -35,7 +35,7 @@ def test_create_simple_pipeline(sample_df, output_path):
                 output_type=OutputType.TEXT
             )
         )
-        .build())
+        )
     
     # Execute graph
     graph.fit(data=sample_df)
@@ -56,7 +56,7 @@ def test_custom_conditions(sample_df, output_path):
     )
     
     # Build graph using builder pattern
-    graph = (GraphBuilder(output_path=output_path)
+    graph = (ExecutableGraph(output_path=output_path)
         .add_input_node("data")
         .create_node(
             "ols",
@@ -69,7 +69,7 @@ def test_custom_conditions(sample_df, output_path):
                 output_type=OutputType.TEXT
             )
         )
-        .build())
+        )
     
     # Execute graph
     graph.fit(data=sample_df)

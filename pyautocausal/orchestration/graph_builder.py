@@ -50,20 +50,17 @@ class GraphBuilder:
         # Use add_node to handle the rest
         return self.add_node(name, node, predecessors)
     
-    def add_node(self, name: str, node: Node, predecessors: Optional[Dict[str, str]] = None) -> "GraphBuilder":
+    def add_node(self, node: Node, predecessors: Optional[Dict[str, str]] = None) -> "GraphBuilder":
         """
         Add an existing node to the graph.
         
         Args:
-            name: Name of the node (overrides the node's internal name)
             node: Node to add
             predecessors: Dict mapping argument names to predecessor node names
             
         Returns:
             self for method chaining
         """
-        # Override the node's name
-        node.name = name
 
         # Add node to graph
         self.graph.add_node_to_graph(node)
@@ -92,3 +89,4 @@ class GraphBuilder:
     def build(self) -> ExecutableGraph:
         """Build and return the configured graph."""
         return self.graph
+    

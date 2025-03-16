@@ -1,5 +1,5 @@
 import networkx as nx
-from typing import Set, Optional, Dict, Any
+from typing import Set, Optional, Dict, Any, Callable, Union
 from .base import Node
 
 from ..persistence.output_handler import OutputHandler
@@ -7,12 +7,17 @@ from pyautocausal.utils.logger import get_class_logger
 from pyautocausal.orchestration.run_context import RunContext
 from pyautocausal.orchestration.node_state import NodeState
 from inspect import Parameter, Signature
+from ..persistence.local_output_handler import LocalOutputHandler
+from pathlib import Path
+from .condition import Condition
+from ..persistence.output_config import OutputConfig
 
 
 class ExecutableGraph(nx.DiGraph):
     def __init__(
             self,
             output_handler: Optional[OutputHandler] = None,
+            output_path: Optional[Union[Path, str]] = None,
             run_context: Optional[RunContext] = None
         ):
         super().__init__()
@@ -21,12 +26,22 @@ class ExecutableGraph(nx.DiGraph):
         self._input_nodes = {}
         self._nodes_by_name = {}  # New dictionary to track nodes by name
         
-        if output_handler is None:
-            self.save_node_outputs = False
-            self.logger.warning("No output handler provided, node outputs will not be saved")
-        else:
-            self.save_node_outputs = True
+        if output_path is not None and output_handler is not None:
+            raise ValueError("Cannot provide both output_path and output_handler")
+
+        self.save_node_outputs = False
+        
+        if output_handler is not None:
             self.output_handler = output_handler
+            self.save_node_outputs = True
+        elif output_path is not None:
+            if isinstance(output_path, str):
+                output_path = Path(output_path)
+            self.output_handler = LocalOutputHandler(output_path)
+            self.save_node_outputs = True
+            self.logger.info(f"Local output handler created with path {output_path}")
+        else:
+            self.logger.warning("No output handler provided, node outputs will not be saved")
 
     @property
     def input_nodes(self) -> Dict[str, 'InputNode']:
@@ -142,29 +157,65 @@ class ExecutableGraph(nx.DiGraph):
             raise ValueError(f"No node found with name '{name}'")
         return node
 
+    def create_node(
+        self,
+        name: str,
+        action_function: Callable,
+        predecessors: Optional[Dict[str, str]] = None,
+        condition: Optional[Condition] = None,
+        output_config: Optional[OutputConfig] = None,
+        save_node: bool = False,
+    ):
+        """
+        Add a node to the graph.
+        
+        Args:
+            name: Name of the node
+            action_function: Function to execute
+            predecessors: Dict mapping argument names to predecessor node names
+            condition: Optional Condition object that determines if node should execute
+            output_config: Optional configuration for node output
+            save_node: Whether to save the node's output
+            
+        Returns:
+            self for method chaining
+        """
+        # Create the node
+        from .nodes import Node as NodeObject
+        node = NodeObject(
+            name=name,
+            action_function=action_function,
+            condition=condition,
+            output_config=output_config,
+            save_node=save_node
+        )
+        
+        # Use add_node to handle the rest
+        return self.add_node_with_predecessors( node, predecessors)
+    
     def add_node_to_graph(self, node, **attr):
         """Add a node to the graph and set the graph reference on the node."""
-        if hasattr(node, 'name'):
-            if node.name in self._nodes_by_name:
-                raise ValueError(
-                    f"Cannot add node: a node with name '{node.name}' already exists in the graph"
-                )
-            
-            # Check if node is already in another graph
-            if hasattr(node, 'graph') and node.graph is not None and node.graph != self:
-                raise ValueError(
-                    f"Cannot add node '{node.name}': node is already part of a different graph"
-                )
-            
-            self._nodes_by_name[node.name] = node
-            
-            # Set the graph reference on the node
-            node._set_graph_reference(self)
-            
-            # Add the node to the graph
-            super().add_node(node, **attr)
-        else:
+        if not hasattr(node, 'name'):
             raise ValueError(f"Node must have a name, got {type(node)}")
+        
+        if node.name in self._nodes_by_name:
+            raise ValueError(
+                f"Cannot add node: a node with name '{node.name}' already exists in the graph"
+            )
+            
+        # Check if node is already in another graph
+        if hasattr(node, 'graph') and node.graph is not None and node.graph != self:
+            raise ValueError(
+                f"Cannot add node '{node.name}': node is already part of a different graph"
+            )
+        
+        # Set the graph reference on the node
+        node._set_graph_reference(self)
+
+        # Add the node to the graph
+        self._nodes_by_name[node.name] = node
+        super().add_node(node, **attr)
+
 
     # Override the original add_node to prevent direct addition
     def add_node(self, node, **attr):
@@ -173,17 +224,15 @@ class ExecutableGraph(nx.DiGraph):
             # This is a BaseNode or subclass, so redirect to add_node_to_graph
             return self.add_node_to_graph(node, **attr)
         else:
-            # This is not a BaseNode, so proceed with normal NetworkX behavior
-            if hasattr(node, 'name'):
-                self._nodes_by_name[node.name] = node
-            super().add_node(node, **attr)
+            raise ValueError(f"Node must be a BaseNode or subclass, got {type(node)}")
 
     def add_input_node(self, name: str, input_dtype: type = Any):
         """Add an input node to the graph."""
-        from .nodes import InputNode
-        input_node = InputNode(name=name, input_dtype=input_dtype)
+        from .nodes import InputNode as InputNodeObject
+        input_node = InputNodeObject(name=name, input_dtype=input_dtype)
         self.add_node_to_graph(input_node)
         self._input_nodes[name] = input_node
+        return self
 
     def merge_with(self, other: 'ExecutableGraph', *wirings) -> 'ExecutableGraph':
         """Merge another graph into this one with explicit wiring.
@@ -498,3 +547,33 @@ class ExecutableGraph(nx.DiGraph):
                     f"Node outputs {return_annotation.__name__}, but input node expects {input_type.__name__}"
                 )
         return True
+    
+    def add_node_with_predecessors(self, node, predecessors: Optional[Dict[str, str]] = None):
+        """
+        Add a node to the graph with connections to predecessor nodes.
+        
+        Args:
+            node: Node to add
+            predecessors: Dict mapping argument names to predecessor node names
+            
+        Returns:
+            The added node
+        """
+        if predecessors is None:
+            predecessors = {}
+        # First check if all predecessors are in the graph
+        for pred_name in predecessors.values():
+            if pred_name not in self._nodes_by_name:
+                raise ValueError(f"Predecessor node {pred_name} not found in graph")
+        
+        # Add node to graph
+        self.add_node_to_graph(node)
+
+        # Add predecessors if specified
+        if predecessors:
+            for arg_name, pred_name in predecessors.items():
+                # throws error if predecessor not found
+                pred_node = self.get(pred_name)
+                self.add_edge(pred_node, node, argument_name=arg_name)
+        
+        return self
