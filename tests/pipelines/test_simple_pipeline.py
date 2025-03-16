@@ -7,7 +7,7 @@ from io import BytesIO
 from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph_builder import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 def create_sample_data() -> pd.DataFrame:
@@ -38,7 +38,7 @@ def sample_data():
 @pytest.fixture
 def pipeline_graph(tmp_path):
     """Create a configured pipeline graph with all nodes"""
-    builder = GraphBuilder(output_path=tmp_path / 'outputs')
+    builder = ExecutableGraph(output_path=tmp_path / 'outputs')
     
     # Create nodes using builder pattern
     graph = (builder
@@ -71,7 +71,7 @@ def pipeline_graph(tmp_path):
                 output_type=OutputType.PNG
             )
         )
-        .build())
+        )
     
     return graph
 

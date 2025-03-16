@@ -2,7 +2,7 @@ import pytest
 from typing import Any
 import pandas as pd
 from pyautocausal.orchestration.nodes import Node, InputNode
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph_builder import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig
 from pyautocausal.persistence.output_types import OutputType
 from unittest.mock import Mock
@@ -21,7 +21,7 @@ def untyped_function(x):
 # Test cases
 def test_valid_type_connection():
     """Test connecting nodes with compatible types"""
-    graph = GraphBuilder().build()
+    graph = ExecutableGraph()
     
     # Create nodes
     node = Node(
@@ -39,7 +39,7 @@ def test_valid_type_connection():
 
 def test_incompatible_type_connection():
     """Test connecting nodes with incompatible types raises TypeError"""
-    graph = GraphBuilder().build()
+    graph = ExecutableGraph()
     
     # Create nodes with incompatible types
     node = Node(
@@ -59,7 +59,7 @@ def test_incompatible_type_connection():
 
 def test_untyped_function_warning():
     """Test warning is logged when connecting untyped function"""
-    graph = GraphBuilder().build()
+    graph = ExecutableGraph()
     
     # Create nodes
     node = Node(
@@ -80,7 +80,7 @@ def test_untyped_function_warning():
 
 def test_any_input_type_warning():
     """Test warning is logged when input node accepts Any type"""
-    graph = GraphBuilder().build()
+    graph = ExecutableGraph()
     
     # Create nodes
     node = Node(
@@ -101,8 +101,8 @@ def test_any_input_type_warning():
 
 def test_chaining_connections():
     """Test chaining multiple connections"""
-    graph = GraphBuilder().build()
-    graph2 = GraphBuilder().build()
+    graph = ExecutableGraph()
+    graph2 = ExecutableGraph()
     
     # Create nodes
     node1 = Node(
