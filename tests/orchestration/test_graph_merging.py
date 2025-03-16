@@ -28,7 +28,7 @@ def test_merge_linked_graphs():
     new_input = next(n for n in merged.nodes() if n.name == "input2")
     assert new_input in merged.nodes()
     assert graph1.get("process1") in merged.nodes()
-    assert new_input in graph1.get("process1").get_successors()
+    assert new_input in graph1.get_node_successors(graph1.get("process1"))
     assert new_input.graph == merged
 
 def test_fit_with_merged_graphs():

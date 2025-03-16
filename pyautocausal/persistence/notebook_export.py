@@ -68,7 +68,7 @@ class NotebookExporter:
             
         arguments = dict()
         # Get predecessor outputs dictionary
-        predecessors = node.get_predecessors()
+        predecessors = self.graph.get_node_predecessors(node)
         if predecessors:
             for predecessor in predecessors:
                 edge = self.graph.edges[predecessor, node]

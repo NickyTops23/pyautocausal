@@ -72,10 +72,7 @@ class GraphBuilder:
         if predecessors:
             for arg_name, pred_name in predecessors.items():
                 # throws error if predecessor not found
-                node.add_predecessor(
-                    self.graph.get(pred_name),
-                    argument_name=arg_name
-                )
+                self.graph.add_edge(self.graph.get(pred_name), node, argument_name=arg_name)
         return self
 
     def add_input_node(self, name: str, input_dtype: type = Any) -> "GraphBuilder":

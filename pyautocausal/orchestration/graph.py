@@ -36,7 +36,7 @@ class ExecutableGraph(nx.DiGraph):
     def get_ready_nodes(self) -> Set[Node]:
         """Returns all nodes that are ready to be executed"""
         return {node for node in self.nodes() 
-               if isinstance(node, Node) and node.is_ready()}
+               if isinstance(node, Node) and self.is_node_ready(node)}
     
     def get_running_nodes(self) -> Set[Node]:
         """Returns all nodes that are currently running"""
@@ -84,8 +84,14 @@ class ExecutableGraph(nx.DiGraph):
                     )
             
             for node in ready_nodes:
-                node.execute()
-                self.save_node_output(node)  # Save output immediately after execution 
+                if self.node_has_skipped_predecessors(node):
+                    node.mark_skipped()
+                    self.logger.info(
+                        f"Skipping {node.name}: predecessor nodes were skipped"
+                    )
+                else:
+                    node.execute()
+                    self.save_node_output(node)  # Save output immediately after execution 
 
     def fit(self, **kwargs):
         """
@@ -280,7 +286,7 @@ class ExecutableGraph(nx.DiGraph):
         for wiring in wirings:
             source, target = wiring
             new_target = node_mapping[target]
-            new_target.add_predecessor(source, argument_name=new_target.name)
+            self.add_edge(source, new_target, argument_name=target.name)
 
         return self 
 
@@ -349,18 +355,57 @@ class ExecutableGraph(nx.DiGraph):
         """
         return set(self.successors(node))
 
-    def add_successor(self, node: 'BaseNode', successor: 'BaseNode'):
-        """Add a successor to a node in the graph."""
-        if node not in self.nodes():
-            raise ValueError(f"Node {node.name} is not in this graph")
-        if successor not in self.nodes():
-            raise ValueError(f"Successor node {successor.name} is not in this graph")
-        self.add_edge(node, successor)
-    
-    def add_predecessor(self, node: 'BaseNode', predecessor: 'BaseNode', argument_name: Optional[str] = None):
-        """Add a predecessor to a node in the graph with an optional argument name."""
-        if node not in self.nodes():
-            raise ValueError(f"Node {node.name} is not in this graph")
-        if predecessor not in self.nodes():
-            raise ValueError(f"Predecessor node {predecessor.name} is not in this graph")
-        self.add_edge(predecessor, node, argument_name=argument_name) 
+    def get_node_predecessor_outputs(self, node) -> dict:
+        """Get outputs from immediate predecessor nodes of the given node.
+        
+        Args:
+            node: The node whose predecessor outputs to retrieve
+            
+        Returns:
+            Dictionary mapping argument names (or node names) to predecessor outputs
+        """
+        predecessors = self.get_node_predecessors(node)
+        predecessor_outputs = {}
+        for predecessor in predecessors:
+            edge = self.edges[predecessor, node]
+            argument_name = edge.get('argument_name')
+            if argument_name:
+                predecessor_outputs[argument_name] = predecessor.output
+            else:
+                predecessor_outputs[predecessor.name] = predecessor.output
+        return predecessor_outputs
+
+    def node_has_skipped_predecessors(self, node) -> bool:
+        """Check if any predecessor nodes of the given node have been skipped.
+        
+        Args:
+            node: The node to check
+            
+        Returns:
+            True if any predecessor has been skipped, False otherwise
+        """
+        predecessors = self.get_node_predecessors(node)
+        return any(predecessor.is_skipped() for predecessor in predecessors)
+
+    def is_node_ready(self, node) -> bool:
+        """Check if a node is ready to be executed.
+        
+        A node is ready when:
+        1. It is in PENDING state
+        2. All its predecessors are either COMPLETED or SKIPPED
+        
+        Args:
+            node: The node to check
+            
+        Returns:
+            True if the node is ready to be executed, False otherwise
+        """
+        if node.state != NodeState.PENDING:
+            return False
+        
+        predecessors = self.get_node_predecessors(node)
+        if not predecessors:
+            return True
+        
+        return all(predecessor.is_completed() or predecessor.is_skipped() 
+                   for predecessor in predecessors)

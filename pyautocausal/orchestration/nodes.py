@@ -36,7 +36,7 @@ class BaseNode:
             raise ValueError(f"Right-hand node must be an input node, got {type(other)}")
         if self.graph is None:
             raise ValueError("Node must be added to a graph before wiring")
-        self.graph.add_successor(self, other)
+        self.graph.add_edge(self, other)
         return other  # Return other to allow chaining
 
 class Node(BaseNode):
@@ -112,8 +112,8 @@ class Node(BaseNode):
     
     def validate_condition(self):
         """Verify that condition is valid given the node's predecessors"""
-        if not self.predecessor_outputs:
-            raise ValueError("No predecessor outputs found. Please call get_predecessor_outputs() before calling validate_condition()")
+        # Get predecessor outputs directly from the graph
+        predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
         
         if self.condition is not None and not self.graph.get_node_predecessors(self):
             raise ValueError(f"Node {self.name} has a condition but no predecessors")
@@ -122,7 +122,7 @@ class Node(BaseNode):
             # Map predecessor outputs according to the condition argument mapping
             mapped_outputs = {
                 self.action_condition_kwarg_map.get(arg, arg): value 
-                for arg, value in self.predecessor_outputs.items()
+                for arg, value in predecessor_outputs.items()
             }
             
             # Use _resolve_function_arguments to check that all required arguments are available
@@ -130,7 +130,7 @@ class Node(BaseNode):
                 self._resolve_function_arguments(self.condition.condition_func, mapped_outputs)
             except ValueError as e:
                 raise ValueError(f"Invalid condition for node {self.name}: {str(e)}")
-    
+
     def _resolve_function_arguments(self, func: Callable, available_args: dict) -> dict:
         """
         Resolve arguments for a function from available arguments and run context.
@@ -213,14 +213,14 @@ class Node(BaseNode):
         if self.condition is None:
             return True
         
-        if not self.predecessor_outputs:
-            self.get_predecessor_outputs()
+        # Get predecessor outputs directly from the graph
+        predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
         
         try:
             # Map predecessor outputs according to the condition argument mapping
             mapped_outputs = {
-                arg: self.predecessor_outputs[self.action_condition_kwarg_map.get(arg, arg)]
-                for arg in self.predecessor_outputs
+                arg: predecessor_outputs[self.action_condition_kwarg_map.get(arg, arg)]
+                for arg in predecessor_outputs
             }
             
             # Resolve arguments including run context
@@ -230,30 +230,14 @@ class Node(BaseNode):
         except Exception as e:
             raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
 
-    def should_execute(self) -> bool:
-        """Check if the node should be executed based on predecessors and condition."""
-        try:
-            return not self.has_skipped_predecessors() and self.condition_satisfied()
-
-        except Exception as e:
-            self.mark_failed()
-            raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
 
     def execute(self):
         """Template method that handles state management and conditional execution"""
         self.execution_count += 1
         try:
-            # First check if any predecessors were skipped
-            has_skipped_predecessors = self.has_skipped_predecessors()
-            if has_skipped_predecessors:
-                self.mark_skipped()
-                self.graph.logger.info(
-                    f"Skipping {self.name}: predecessor nodes were skipped"
-                )
-                return
-            
-            # Only evaluate condition if no predecessors were skipped
+            # Check condition satisfaction before executing
             condition_satisfied = self.condition_satisfied()
+            
             if not condition_satisfied:
                 self.mark_skipped()
                 if self.condition:
@@ -273,21 +257,6 @@ class Node(BaseNode):
             self.mark_failed()
             raise e
 
-    def get_predecessor_outputs(self):
-        """Get outputs from immediate predecessor nodes"""
-
-        # key in dict is the argument name if provided, otherwise the node name
-        predecessors = self.graph.get_node_predecessors(self)
-        predecessor_outputs = {}
-        for predecessor in predecessors:
-            edge = self.graph.edges[predecessor, self]
-            argument_name = edge.get('argument_name')
-            if argument_name:
-                predecessor_outputs[argument_name] = predecessor.output
-            else:
-                predecessor_outputs[predecessor.name] = predecessor.output
-        self.predecessor_outputs = predecessor_outputs
-    
     def mark_running(self):
         self.state = NodeState.RUNNING
         
@@ -309,22 +278,16 @@ class Node(BaseNode):
     def is_skipped(self):
         return self.state == NodeState.SKIPPED
     
-    def has_skipped_predecessors(self):
-        return any(predecessor.is_skipped() for predecessor in self.graph.get_node_predecessors(self))
-    
     def is_ready(self) -> bool:
         """Returns True if all ancestors are completed and this node is pending"""
-        if self.state != NodeState.PENDING:
-            return False
-        predecessors = self.graph.get_node_predecessors(self)
-        if not predecessors:
-            return True
-        return all(predecessor.is_completed() or predecessor.is_skipped() for predecessor in predecessors)
+        return self.graph.is_node_ready(self)
 
     def _execute(self):
         """Execute the node's action function with predecessor outputs"""
-        self.get_predecessor_outputs()
-        arguments = self._resolve_function_arguments(self.action_function, self.predecessor_outputs)
+        # Get predecessor outputs directly from the graph
+        predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
+        
+        arguments = self._resolve_function_arguments(self.action_function, predecessor_outputs)
         print(f"Executing {self.name} with arguments: {arguments}")
         output = (
             self.action_function(**arguments) if arguments 
