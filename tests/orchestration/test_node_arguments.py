@@ -22,14 +22,16 @@ def basic_graph():
     graph = ExecutableGraph()
     data_node = Node(
         name="data",
-        action_function=lambda: pd.DataFrame(),
-        graph=graph
+        action_function=lambda: pd.DataFrame()
     )
+    graph.add_node_to_graph(data_node)
+    
     process_node = Node(
         name="process",
-        action_function=process_data,
-        graph=graph
+        action_function=process_data
     )
+    graph.add_node_to_graph(process_node)
+    
     graph.add_edge(data_node, process_node, argument_name="df")
     return graph, data_node, process_node
 
@@ -43,14 +45,16 @@ def graph_with_context():
     graph = ExecutableGraph(run_context=context)
     data_node = Node(
         name="data",
-        action_function=lambda: pd.DataFrame(),
-        graph=graph
+        action_function=lambda: pd.DataFrame()
     )
+    graph.add_node_to_graph(data_node)
+    
     process_node = Node(
         name="process",
-        action_function=process_data,
-        graph=graph
+        action_function=process_data
     )
+    graph.add_node_to_graph(process_node)
+    
     graph.add_edge(data_node, process_node, argument_name="df")
     return graph, data_node, process_node
 
@@ -68,15 +72,17 @@ def graph_with_verbose_data():
     graph = ExecutableGraph(run_context=context)
     data_node = Node(
         name="data",
-        action_function=data_with_config,
-        graph=graph
+        action_function=data_with_config
     )
+    graph.add_node_to_graph(data_node)
+    
     process_node = Node(
         name="process", 
         action_function=process_data,
-        graph=graph,
         action_condition_kwarg_map={"verbose": "data"}
     )
+    graph.add_node_to_graph(process_node)
+    
     graph.add_edge(data_node, process_node, argument_name="df")
     return graph, data_node, process_node
 
@@ -102,15 +108,16 @@ def test_missing_required_argument():
     # Update Node initialization to use named parameters
     data_node = Node(
         name="data",
-        action_function=lambda: pd.DataFrame(),
-        graph=graph
+        action_function=lambda: pd.DataFrame()
     )
+    graph.add_node_to_graph(data_node)
     
     process_node = Node(
         name="process",
-        action_function=process_data,
-        graph=graph
+        action_function=process_data
     )
+    graph.add_node_to_graph(process_node)
+    
     graph.add_edge(data_node, process_node, argument_name="df")
     
     with pytest.raises(ValueError) as exc_info:
