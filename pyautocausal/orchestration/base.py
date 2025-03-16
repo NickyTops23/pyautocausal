@@ -11,10 +11,6 @@ class Node(Protocol):
     output: Optional[object]
     output_config: OutputConfig
     
-    def is_ready(self) -> bool:
-        """Returns True if the node is ready to be executed"""
-        ...
-    
     def is_running(self) -> bool:
         """Returns True if the node is currently running"""
         ...

@@ -16,41 +16,32 @@ from pyautocausal.utils.logger import get_class_logger
 import warnings
 
 class BaseNode:
-    def __init__(self, name: str, graph: Optional[ExecutableGraph] = None):
+    def __init__(self, name: str):
         self.name = name
         self.graph = None
-        if graph is not None:
-            self.set_graph(graph)
     
     def __str__(self):
         return f"BaseNode(name={self.name})"
     
-    def set_graph(self, graph: ExecutableGraph):
-        """Set the graph for this node and add the node to the graph."""
+    # Remove the set_graph method that adds the node to the graph
+    # Instead, we'll have a method that only sets the graph reference
+    def _set_graph_reference(self, graph: ExecutableGraph):
+        """Set the graph reference for this node. Should only be called by the graph."""
+        if self.graph is not None and self.graph != graph:
+            raise ValueError(f"Node {self.name} is already part of a different graph")
         self.graph = graph
-        self.graph.add_node(self)
     
-    def __rshift__(self, other: 'BaseNode') -> 'BaseNode':
-        """Implements the >> operator for node wiring"""
-        if not isinstance(other, InputNode):
-            raise ValueError(f"Right-hand node must be an input node, got {type(other)}")
-        if self.graph is None:
-            raise ValueError("Node must be added to a graph before wiring")
-        self.graph.add_edge(self, other)
-        return other  # Return other to allow chaining
-
 class Node(BaseNode):
     def __init__(
             self, 
             name: str, 
             action_function: Callable,
-            graph: Optional[ExecutableGraph] = None,
             output_config: Optional[OutputConfig] = None,
             condition: Optional[Condition] = None,
             action_condition_kwarg_map: dict[str, str] = {},
             save_node: bool = False,
         ):
-        super().__init__(name, graph)
+        super().__init__(name)
         self.logger = get_class_logger(f"{self.__class__.__name__}_{name}")
         
         # Validate and setup output configuration
@@ -71,6 +62,56 @@ class Node(BaseNode):
         """Get the return type annotation from the action function"""
         signature = inspect.signature(action_function)
         return signature.return_annotation
+    
+    def __rshift__(self, other: 'BaseNode') -> tuple[BaseNode, BaseNode]:
+        """Implements the >> operator for node wiring with type validation"""
+        self._can_wire_nodes(self, other)
+        return (self, other)
+    
+    def _can_wire_nodes(self, source: 'BaseNode', target: 'BaseNode') -> bool:
+        """Tests if one node can be wired to another node.
+        
+        Args:
+            source: The source node that will output data
+            target: The target node that will receive data
+            
+        Returns:
+            bool: True if nodes can be wired, False otherwise
+            
+        Raises:
+            ValueError: If target is not an InputNode
+            TypeError: If there is a type mismatch between nodes
+        """
+        if not isinstance(target, InputNode):
+            raise ValueError(f"Target node must be an input node, got {type(target)}")
+
+        # Get return type from action function signature
+        return_annotation = inspect.signature(source.action_function).return_annotation
+
+        # Get expected input type from InputNode
+        input_type = target.input_dtype
+
+        # Warn if types cannot be validated
+        if return_annotation == inspect.Parameter.empty:
+            warnings.warn(
+                f"Cannot validate connection: {source.name} -> {target.name}. "
+                f"Node {source.name}'s action function lacks return type annotation."
+            )
+            return True
+        elif input_type == Any:
+            warnings.warn(
+                f"Cannot validate connection: {source.name} -> {target.name}. "
+                f"Input node {target.name} accepts Any type."
+            )
+            return True
+        # Validate types if both are specified
+        elif return_annotation != inspect.Parameter.empty and input_type != Any:
+            if not issubclass(return_annotation, input_type):
+                raise TypeError(
+                    f"Type mismatch in connection {source.name} -> {target.name}: "
+                    f"Node outputs {return_annotation.__name__}, but input node expects {input_type.__name__}"
+                )
+        return True
 
     def _validate_save_configuration(
             self, 
@@ -241,14 +282,14 @@ class Node(BaseNode):
             if not condition_satisfied:
                 self.mark_skipped()
                 if self.condition:
-                    self.graph.logger.info(
+                    self.logger.info(
                         f"Skipping {self.name}: condition '{self.condition.description}' was not satisfied"
                     )
                 return
             
             self.mark_running()
             if self.condition:
-                self.graph.logger.info(
+                self.logger.info(
                     f"Executing {self.name}: condition '{self.condition.description}' was satisfied"
                 )
             self._execute()
@@ -277,10 +318,6 @@ class Node(BaseNode):
     
     def is_skipped(self):
         return self.state == NodeState.SKIPPED
-    
-    def is_ready(self) -> bool:
-        """Returns True if all ancestors are completed and this node is pending"""
-        return self.graph.is_node_ready(self)
 
     def _execute(self):
         """Execute the node's action function with predecessor outputs"""
@@ -299,64 +336,15 @@ class Node(BaseNode):
         else:
             self.output = output
     
-    def __rshift__(self, other: 'BaseNode') -> tuple[BaseNode, BaseNode]:
-        """Implements the >> operator for node wiring with type validation"""
-        self._can_wire_nodes(self, other)
-        return (self, other)
-    
-    def _can_wire_nodes(self, source: 'BaseNode', target: 'BaseNode') -> bool:
-        """Tests if one node can be wired to another node.
-        
-        Args:
-            source: The source node that will output data
-            target: The target node that will receive data
-            
-        Returns:
-            bool: True if nodes can be wired, False otherwise
-            
-        Raises:
-            ValueError: If target is not an InputNode
-            TypeError: If there is a type mismatch between nodes
-        """
-        if not isinstance(target, InputNode):
-            raise ValueError(f"Target node must be an input node, got {type(target)}")
-        
-        # Get return type from action function signature
-        return_annotation = inspect.signature(source.action_function).return_annotation
-        
-        # Get expected input type from InputNode
-        input_type = target.input_dtype
-        
-        # Warn if types cannot be validated
-        if return_annotation == inspect.Parameter.empty:
-            warnings.warn(
-                f"Cannot validate connection: {source.name} -> {target.name}. "
-                f"Node {source.name}'s action function lacks return type annotation."
-            )
-            return True
-        elif input_type == Any:
-            warnings.warn(
-                f"Cannot validate connection: {source.name} -> {target.name}. "
-                f"Input node {target.name} accepts Any type."
-            )
-            return True
-        # Validate types if both are specified
-        elif return_annotation != inspect.Parameter.empty and input_type != Any:
-            if not issubclass(return_annotation, input_type):
-                raise TypeError(
-                    f"Type mismatch in connection {source.name} -> {target.name}: "
-                    f"Node outputs {return_annotation.__name__}, but input node expects {input_type.__name__}"
-                )
-        return True
 
 class InputNode(BaseNode):
     """A node that accepts external input and passes it to its successors."""
     
-    def __init__(self, name: str, graph: ExecutableGraph, input_dtype: type = Any):
+    def __init__(self, name: str, input_dtype: type = Any, graph: Optional[ExecutableGraph] = None):
         self.state = NodeState.PENDING
         self.output = None
         self.input_dtype = input_dtype
-        super().__init__(name, graph)
+        super().__init__(name)
 
 
     
@@ -369,10 +357,7 @@ class InputNode(BaseNode):
 
     def is_skipped(self) -> bool:
         return False # Input nodes are never skipped
-    
-    def is_ready(self) -> bool:
-        return False  # Input nodes are never ready for execution
-    
+
     def is_running(self) -> bool:
         return False
     
