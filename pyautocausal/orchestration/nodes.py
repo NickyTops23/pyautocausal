@@ -229,8 +229,10 @@ class Node(BaseNode):
             raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
 
     def should_execute(self) -> bool:
+        """Check if the node should be executed based on predecessors and condition."""
         try:
-            return self.condition_satisfied() and not self.has_skipped_predecessors()
+            return not self.has_skipped_predecessors() and self.condition_satisfied()
+
         except Exception as e:
             self.mark_failed()
             raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
@@ -239,10 +241,8 @@ class Node(BaseNode):
         """Template method that handles state management and conditional execution"""
         self.execution_count += 1
         try:
-            # Check condition satisfaction before executing
-            condition_satisfied = self.condition_satisfied()
+            # First check if any predecessors were skipped
             has_skipped_predecessors = self.has_skipped_predecessors()
-            
             if has_skipped_predecessors:
                 self.mark_skipped()
                 self.graph.logger.info(
@@ -250,6 +250,8 @@ class Node(BaseNode):
                 )
                 return
             
+            # Only evaluate condition if no predecessors were skipped
+            condition_satisfied = self.condition_satisfied()
             if not condition_satisfied:
                 self.mark_skipped()
                 if self.condition:
