@@ -2,12 +2,7 @@ import pytest
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
-from matplotlib.figure import Figure
-from io import BytesIO
-from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph import ExecutableGraph
-from pyautocausal.persistence.local_output_handler import LocalOutputHandler
-from pyautocausal.orchestration.graph_builder import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 def create_sample_data() -> pd.DataFrame:
