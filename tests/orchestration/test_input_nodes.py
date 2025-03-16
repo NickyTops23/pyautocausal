@@ -8,8 +8,8 @@ def test_input_node_type_validation():
     """Test that input nodes validate data types correctly"""
     # Create graph with typed input nodes
     graph = (GraphBuilder()
-        .add_input_node("df_input", dtype=pd.DataFrame)
-        .add_input_node("int_input", dtype=int)
+        .add_input_node("df_input", input_dtype=pd.DataFrame)
+        .add_input_node("int_input", input_dtype=int)
         .add_input_node("any_input")  # defaults to Any
         .build())
     
@@ -28,7 +28,7 @@ def test_input_node_type_validation_errors():
     """Test that input nodes raise appropriate type errors"""
     # Create graph with typed input node
     graph = (GraphBuilder()
-        .add_input_node("df_input", dtype=pd.DataFrame)
+        .add_input_node("df_input", input_dtype=pd.DataFrame)
         .build())
     
     # Test invalid input
@@ -40,21 +40,21 @@ def test_graph_builder_with_typed_inputs():
     builder = GraphBuilder()
     
     # Add typed input node
-    builder.add_input_node("data", dtype=pd.DataFrame)
+    builder.add_input_node("data", input_dtype=pd.DataFrame)
     
     # Get the input node and verify its type
-    input_node = builder.nodes["data"]
+    input_node = builder.graph.get("data")
     assert isinstance(input_node, InputNode)
-    assert input_node.dtype == pd.DataFrame
+    assert input_node.input_dtype == pd.DataFrame
     
     # Verify default Any type
     builder.add_input_node("any_data")
-    assert builder.nodes["any_data"].dtype == Any
+    assert builder.graph.get("any_data").input_dtype == Any
 
 def test_complex_graph_with_typed_inputs():
     """Test typed inputs in a more complex graph with processing nodes"""
     graph = (GraphBuilder()
-        .add_input_node("data", dtype=pd.DataFrame)
+        .add_input_node("data", input_dtype=pd.DataFrame)
         .create_node(
             "process",
             lambda df: len(df),

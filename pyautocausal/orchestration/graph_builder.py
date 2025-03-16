@@ -14,8 +14,7 @@ class GraphBuilder:
         self.graph = ExecutableGraph(
             output_handler=LocalOutputHandler(output_path) if output_path else None
         )
-        self.nodes = {}
-    
+
     def create_node(
         self,
         name: str,
@@ -65,44 +64,34 @@ class GraphBuilder:
         """
         # Override the node's name
         node.name = name
-        
+
         # Set graph to the builder's graph
         node.set_graph(self.graph)
-        
-        self.nodes[name] = node
         
         # Add predecessors if specified
         if predecessors:
             for arg_name, pred_name in predecessors.items():
-                if pred_name not in self.nodes:
-                    raise ValueError(
-                        f"Predecessor node '{pred_name}' not found for argument '{arg_name}'"
-                    )
+                # throws error if predecessor not found
                 node.add_predecessor(
-                    self.nodes[pred_name],
+                    self.graph.get(pred_name),
                     argument_name=arg_name
                 )
         return self
 
-    def add_input_node(self, name: str, dtype: type = Any) -> "GraphBuilder":
+    def add_input_node(self, name: str, input_dtype: type = Any) -> "GraphBuilder":
         """
         Add an input node to the graph.
         
         Args:
             name: Name of the input node
+            dtype: Expected input type for this node
             
         Returns:
             self for method chaining
         """
-        node = InputNode(name=name, graph=self.graph, dtype=dtype)
-        self.nodes[name] = node
-        if not hasattr(self.graph, 'input_nodes'):
-            self.graph.input_nodes = {}
-        self.graph.input_nodes[name] = node
+        self.graph.add_input_node(name, input_dtype)
         return self
     
-
-
     def build(self) -> ExecutableGraph:
         """Build and return the configured graph."""
         return self.graph
