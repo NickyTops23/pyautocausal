@@ -14,6 +14,7 @@ from ..persistence.type_inference import infer_output_type
 from ..persistence.serialization import prepare_output_for_saving
 from pyautocausal.utils.logger import get_class_logger
 import warnings
+import types
 
 class BaseNode:
     def __init__(self, name: str):
@@ -38,7 +39,6 @@ class Node(BaseNode):
             action_function: Callable,
             output_config: Optional[OutputConfig] = None,
             condition: Optional[Condition] = None,
-            action_condition_kwarg_map: dict[str, str] = {},
             save_node: bool = False,
         ):
         super().__init__(name)
@@ -54,7 +54,6 @@ class Node(BaseNode):
         self.condition = condition
         self.output = None
         self.predecessor_outputs = {}
-        self.action_condition_kwarg_map = action_condition_kwarg_map
         self.action_function = action_function
         self.execution_count = 0
     
@@ -126,15 +125,9 @@ class Node(BaseNode):
             raise ValueError(f"Node {self.name} has a condition but no predecessors")
         
         if self.condition is not None:
-            # Map predecessor outputs according to the condition argument mapping
-            mapped_outputs = {
-                self.action_condition_kwarg_map.get(arg, arg): value 
-                for arg, value in predecessor_outputs.items()
-            }
-            
             # Use _resolve_function_arguments to check that all required arguments are available
             try:
-                self._resolve_function_arguments(self.condition.condition_func, mapped_outputs)
+                self._resolve_function_arguments(self.condition.condition_func, predecessor_outputs)
             except ValueError as e:
                 raise ValueError(f"Invalid condition for node {self.name}: {str(e)}")
 
@@ -142,6 +135,7 @@ class Node(BaseNode):
         """
         Resolve arguments for a function from available arguments and run context.
         Handles functions with default argument values.
+        We allow for lambda functions to take any argument as long as it's a single argument.
         
         Args:
             func: The function that needs arguments
@@ -150,6 +144,16 @@ class Node(BaseNode):
         Returns:
             dict: Complete dictionary of resolved arguments
         """
+        
+        is_lambda_with_single_argument = isinstance(func, types.LambdaType) and func.__code__.co_argcount == 1
+        if is_lambda_with_single_argument:
+            self.logger.info(f"Node {self.name}: has a lambda function with a single argument as either an action function or a condition function")
+            available_args_keys = list(available_args.keys())
+            if len(available_args_keys) == 1:
+                self.logger.info(f"Node {self.name}: Lambda function with single argument {func.__name__} will use argument {available_args_keys[0]} from available arguments")
+                return {func.__code__.co_varnames[0]: available_args[available_args_keys[0]]}
+            else:
+                raise ValueError(f"Lambda function with single argument {func.__name__} must take a single argument, got {list(available_args.keys())}")
         
         
         # Get information about function parameters
@@ -224,14 +228,8 @@ class Node(BaseNode):
         predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
         
         try:
-            # Map predecessor outputs according to the condition argument mapping
-            mapped_outputs = {
-                arg: predecessor_outputs[self.action_condition_kwarg_map.get(arg, arg)]
-                for arg in predecessor_outputs
-            }
-            
             # Resolve arguments including run context
-            arguments = self._resolve_function_arguments(self.condition.condition_func, mapped_outputs)
+            arguments = self._resolve_function_arguments(self.condition.condition_func, predecessor_outputs)
             return self.condition.evaluate(**arguments)
         
         except Exception as e:

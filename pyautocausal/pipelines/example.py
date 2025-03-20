@@ -6,14 +6,12 @@ from pyautocausal.orchestration.nodes import Node
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-from pyautocausal.orchestration.condition import create_condition   
+from pyautocausal.orchestration.condition import Condition   
 from pyautocausal.persistence.visualizer import visualize_graph
 
-def condition_nObs_DoubleML(df: pd.DataFrame) -> bool:
-    return len(df) > 100
+condition_nObs_DoubleML = lambda df: len(df) > 100
 
-def condition_nObs_OLS(df: pd.DataFrame) -> bool:
-    return len(df) <= 100
+condition_nObs_OLS = lambda df: len(df) <= 100
 
 def preprocess_lalonde_data() -> pd.DataFrame:
     """Load and preprocess the LaLonde dataset."""
@@ -28,12 +26,12 @@ def create_causal_graph(output_path: Path):
     """Create the causal graph using GraphBuilder."""
     
     # Define reusable conditions
-    doubleml_condition = create_condition(
+    doubleml_condition = Condition(
         condition_nObs_DoubleML,
         "Sample size is greater than 100 observations"
     )
 
-    ols_condition = create_condition(
+    ols_condition = Condition(
         condition_nObs_OLS,
         "Sample size is less than or equal to 100 observations"
     )
@@ -44,7 +42,7 @@ def create_causal_graph(output_path: Path):
         .create_node(
             "doubleml",
             DoubleMLNode.action,
-            predecessors={"df": "df"},
+            predecessors=["df"],
             condition=doubleml_condition,
             save_node=True,
             output_config=OutputConfig(
@@ -55,7 +53,7 @@ def create_causal_graph(output_path: Path):
         .create_node(
             "ols",
             OLSNode.action,
-            predecessors={"df": "df"},
+            predecessors=["df"],
             condition=ols_condition,
             save_node=True,
             output_config=OutputConfig(

@@ -57,8 +57,8 @@ def test_complex_graph_with_typed_inputs():
         .add_input_node("data", input_dtype=pd.DataFrame)
         .create_node(
             "process",
-            lambda df: len(df),
-            predecessors={"df": "data"}
+            lambda data: len(data),
+            predecessors=["data"]
         )
         )
     

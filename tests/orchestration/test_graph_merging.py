@@ -5,11 +5,11 @@ from pyautocausal.orchestration.nodes import Node, InputNode
 import copy
 from inspect import Parameter, Signature
 
-def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    return df
+def process_dataframe(external_input: pd.DataFrame) -> pd.DataFrame:
+    return external_input
 
-def transform_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    return df
+def transform_dataframe(internal_input: pd.DataFrame) -> pd.DataFrame:
+    return internal_input
 
 def test_merge_linked_graphs():
     """Test merging graphs that are properly linked"""
@@ -37,12 +37,12 @@ def test_fit_with_merged_graphs():
     """Test fit behavior with merged graphs"""
     graph1 = (ExecutableGraph()
     .add_input_node(name="external_input", input_dtype=pd.DataFrame)
-    .create_node(name="process", action_function=process_dataframe, predecessors={"df": "external_input"})
+    .create_node(name="process", action_function=process_dataframe, predecessors=["external_input"])
     )
     
     graph2 = (ExecutableGraph()
     .add_input_node(name="internal_input", input_dtype=pd.DataFrame)
-    .create_node(name="transform", action_function=transform_dataframe, predecessors={"df": "internal_input"})
+    .create_node(name="transform", action_function=transform_dataframe, predecessors=["internal_input"])
     )
     
     # Merge graphs with explicit wiring
@@ -66,21 +66,21 @@ def test_fit_with_multiple_external_inputs():
     """Builed two graphs. Graph 1 has one integer input, squares it and then has one output.
     and then has one output. Graph 2 takes two integer inputs and adds them together.
     Wire graph 2 to graph 1 and verify that the merge graph has two inputs and one output."""
-    def square(x: int) -> int:
-        return x**2
+    def square(input1: int) -> int:
+        return input1**2
     
-    def add(x: int, y: int) -> int:
-        return x + y
+    def add(input2: int, input3: int) -> int:
+        return input2 + input3
     
     graph1 = (ExecutableGraph()
     .add_input_node(name="input1", input_dtype=int)
-    .create_node(name="square", action_function=square, predecessors={"x": "input1"})
+    .create_node(name="square", action_function=square, predecessors=["input1"])
     )
     
     graph2 = (ExecutableGraph()
     .add_input_node(name="input2", input_dtype=int)
     .add_input_node(name="input3", input_dtype=int)
-    .create_node(name="add", action_function=add, predecessors={"x": "input2", "y": "input3"})
+    .create_node(name="add", action_function=add, predecessors=["input2", "input3"])
     )
     
     graph1.merge_with(graph2, graph1.get("square") >> graph2.get("input2"))
@@ -92,21 +92,21 @@ def test_fit_with_multiple_external_inputs():
     assert len(graph1.input_nodes) == 2
 
 def test_merge_with_non_pending_nodes():
-    def square(x: int) -> int:
-        return x**2
+    def square(input1: int) -> int:
+        return input1**2
     
-    def add(x: int, y: int) -> int:
-        return x + y
+    def add(input2: int, input3: int) -> int:
+        return input2 + input3
     
     graph1 = (ExecutableGraph()
     .add_input_node(name="input1", input_dtype=int)
-    .create_node(name="square", action_function=square, predecessors={"x": "input1"})
+    .create_node(name="square", action_function=square, predecessors=["input1"])
     )
     
     graph2 = (ExecutableGraph()
     .add_input_node(name="input2", input_dtype=int)
     .add_input_node(name="input3", input_dtype=int)
-    .create_node(name="add", action_function=add, predecessors={"x": "input2", "y": "input3"})
+    .create_node(name="add", action_function=add, predecessors=["input2", "input3"])
     )
 
     graph2.fit(input2=2, input3=3)
@@ -119,17 +119,20 @@ def test_merge_with_non_pending_nodes():
 def test_merge_with_duplicate_node_names():
     """Test that merging graphs with duplicate node names creates
     new nodes with unique names"""
-    def add_one(x: int) -> int:
-        return x + 1
+    def add_one(input1: int) -> int:
+        return input1 + 1
+    
+    def add_one_v2(input2: int) -> int:
+        return input2 + 1
     
     graph1 = (ExecutableGraph()
     .add_input_node(name="input1", input_dtype=int)
-    .create_node(name="add_one", action_function=add_one, predecessors={"x": "input1"})
+    .create_node(name="add_one", action_function=add_one, predecessors=["input1"])
     )
 
     graph2 = (ExecutableGraph()
     .add_input_node(name="input2", input_dtype=int)
-    .create_node(name="add_one", action_function=add_one, predecessors={"x": "input2"})
+    .create_node(name="add_one", action_function=add_one_v2, predecessors=["input2"])
     )
 
     graph1.merge_with(graph2, graph1.get("add_one") >> graph2.get("input2"))
@@ -145,17 +148,20 @@ def test_merge_with_duplicate_node_names():
 
 def test_merge_with_non_input_target():
     """Test that merging fails when target node is not an InputNode"""
-    def add_one(x: int) -> int:
-        return x + 1
+    def add_one(input1: int) -> int:
+        return input1 + 1
+    
+    def add_one_v2(input2: int) -> int:
+        return input2 + 1
     
     graph1 = (ExecutableGraph()
     .add_input_node(name="input1", input_dtype=int)
-    .create_node(name="add_one", action_function=add_one, predecessors={"x": "input1"})
+    .create_node(name="add_one", action_function=add_one, predecessors=["input1"])
     )
 
     graph2 = (ExecutableGraph()
     .add_input_node(name="input2", input_dtype=int)
-    .create_node(name="add_one", action_function=add_one, predecessors={"x": "input2"})
+    .create_node(name="add_one", action_function=add_one_v2, predecessors=["input2"])
     )
 
     
@@ -166,22 +172,28 @@ def test_merge_with_non_input_target():
 
 def test_merge_with_wrong_graph_nodes():
     """Test that merging fails when nodes are from wrong graphs"""
-    def add_one(x: int) -> int:
-        return x + 1
+    def add_one(input1: int) -> int:
+        return input1 + 1
+    
+    def add_one_v2(input2: int) -> int:
+        return input2 + 1
+    
+    def add_one_v3(input3: int) -> int:
+        return input3 + 1
     
     graph1 = (ExecutableGraph()
     .add_input_node(name="input1", input_dtype=int)
-    .create_node(name="add_one", action_function=add_one, predecessors={"x": "input1"})
+    .create_node(name="add_one", action_function=add_one, predecessors=["input1"])
     )
 
     graph2 = (ExecutableGraph()
     .add_input_node(name="input2", input_dtype=int)
-    .create_node(name="add_one", action_function=add_one, predecessors={"x": "input2"})
+    .create_node(name="add_one", action_function=add_one_v2, predecessors=["input2"])
     )
 
     graph3 = (ExecutableGraph()
     .add_input_node(name="input3", input_dtype=int)
-    .create_node(name="add_one", action_function=add_one, predecessors={"x": "input3"})
+    .create_node(name="add_one", action_function=add_one_v3, predecessors=["input3"])
     )
 
     with pytest.raises(ValueError) as exc_info:
