@@ -1,5 +1,5 @@
 import networkx as nx
-from typing import Set, Optional, Dict, Any, Callable, Union
+from typing import Set, Optional, Dict, Any, Callable, Union, List
 from .base import Node
 
 from ..persistence.output_handler import OutputHandler
@@ -277,7 +277,7 @@ class ExecutableGraph(nx.DiGraph):
                 "to ensure graphs are connected"
             )
 
-        targets = set()
+        targets = dict()
         # Validate that all wirings are between the two graphs
         for wiring in wirings:
             source, target = wiring
@@ -291,7 +291,12 @@ class ExecutableGraph(nx.DiGraph):
                     f"Invalid wiring: {source.name} >> {target.name}. "
                     "Target must be an InputNode"
                 )
-            targets.add(target)
+            if target in targets:
+                raise ValueError(
+                    f"Cannot add wiring: {source.name} >> {target.name}. "
+                    "Target node already has a wiring"
+                )
+            targets.update({target: source})
         
         # Create mapping of old nodes to new nodes
         node_mapping = {}
@@ -316,7 +321,6 @@ class ExecutableGraph(nx.DiGraph):
                     action_function=node.action_function,
                     output_config=node.output_config,
                     condition=node.condition,
-                    action_condition_kwarg_map=node.action_condition_kwarg_map,
                     save_node=bool(node.output_config)
                 )
                 self.add_node_to_graph(new_node)
@@ -336,7 +340,8 @@ class ExecutableGraph(nx.DiGraph):
                     
                     new_node = NodeObject(
                         name=new_name,
-                        action_function=make_pass_function(node.input_dtype, node.name),
+                        # New action function that passes the input from the source node
+                        action_function=make_pass_function(node.input_dtype, targets[node].name),
                     )
                     self.add_node_to_graph(new_node)
                 else:
@@ -344,9 +349,6 @@ class ExecutableGraph(nx.DiGraph):
                 node_mapping[node] = self.get(new_name)
             else:
                 raise ValueError(f"Invalid node type: {type(node)}")
-
-            
-            
 
         # Add edges from the original graph
         for u, v, data in other.edges(data=True):
@@ -359,7 +361,7 @@ class ExecutableGraph(nx.DiGraph):
         for wiring in wirings:
             source, target = wiring
             new_target = node_mapping[target]
-            self.add_edge(source, new_target, argument_name=target.name)
+            self.add_edge(source, new_target)
 
         return self 
 
@@ -435,18 +437,10 @@ class ExecutableGraph(nx.DiGraph):
             node: The node whose predecessor outputs to retrieve
             
         Returns:
-            Dictionary mapping argument names (or node names) to predecessor outputs
+            Dictionary mapping predecessor node names to their outputs
         """
         predecessors = self.get_node_predecessors(node)
-        predecessor_outputs = {}
-        for predecessor in predecessors:
-            edge = self.edges[predecessor, node]
-            argument_name = edge.get('argument_name')
-            if argument_name:
-                predecessor_outputs[argument_name] = predecessor.output
-            else:
-                predecessor_outputs[predecessor.name] = predecessor.output
-        return predecessor_outputs
+        return {predecessor.name: predecessor.output for predecessor in predecessors}
 
     def node_has_skipped_predecessors(self, node) -> bool:
         """Check if any predecessor nodes of the given node have been skipped.
@@ -548,7 +542,7 @@ class ExecutableGraph(nx.DiGraph):
                 )
         return True
     
-    def add_node_with_predecessors(self, node, predecessors: Optional[Dict[str, str]] = None):
+    def add_node_with_predecessors(self, node, predecessors: List[str]):
         """
         Add a node to the graph with connections to predecessor nodes.
         
@@ -562,7 +556,7 @@ class ExecutableGraph(nx.DiGraph):
         if predecessors is None:
             predecessors = {}
         # First check if all predecessors are in the graph
-        for pred_name in predecessors.values():
+        for pred_name in predecessors:
             if pred_name not in self._nodes_by_name:
                 raise ValueError(f"Predecessor node {pred_name} not found in graph")
         
@@ -571,9 +565,9 @@ class ExecutableGraph(nx.DiGraph):
 
         # Add predecessors if specified
         if predecessors:
-            for arg_name, pred_name in predecessors.items():
+            for pred_name in predecessors:
                 # throws error if predecessor not found
                 pred_node = self.get(pred_name)
-                self.add_edge(pred_node, node, argument_name=arg_name)
+                self.add_edge(pred_node, node)
         
         return self

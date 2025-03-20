@@ -5,13 +5,13 @@ from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.orchestration.run_context import RunContext
 
 def process_data(
-    df: pd.DataFrame,           # required param from predecessor
+    data: pd.DataFrame,           # required param from predecessor
     n_jobs: int = 1,           # optional param with default
     verbose: bool = False,      # optional param with default
     model_type: str = 'basic'   # optional param with default
 ):
     return (
-        f"Processed {df.shape[0]} rows with {n_jobs} jobs, "
+        f"Processed {data.shape[0]} rows with {n_jobs} jobs, "
         f"verbose={verbose}, "
         f"model_type={model_type}"
     )

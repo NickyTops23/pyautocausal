@@ -17,17 +17,24 @@ def process_func(df: pd.DataFrame) -> str:
 @pytest.fixture
 def sample_graph():
     """Create a simple graph for testing"""
+
+    def transform_func(data: pd.DataFrame) -> pd.DataFrame:
+        return data
+    
+    def process_func_action(transform: pd.DataFrame) -> str:
+        return f"Processed {len(transform)} rows"
+    
     graph = (ExecutableGraph()
         .add_input_node("data")
         .create_node(
             "transform",
-            simple_func,
-            predecessors={"x": "data"}
+            transform_func,
+            predecessors=["data"]
         )
         .create_node(
             "process",
-            process_func,
-            predecessors={"df": "transform"}
+            process_func_action,
+            predecessors=["transform"]
         )
         )
     

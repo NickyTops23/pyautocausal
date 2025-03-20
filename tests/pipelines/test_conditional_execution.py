@@ -15,11 +15,9 @@ def true_branch() -> str:
 def false_branch() -> str:
     return "false_branch_executed"
 
-def is_true(x: bool) -> bool:
-    return x
-
-def is_false(x: bool) -> bool:
-    return not x
+# Lambda functions for condition checks
+is_true = lambda x: x
+is_false = lambda x: not x
 
 def final_node_action() -> str:
     return "final_node_executed"
@@ -51,7 +49,7 @@ def test_true_condition():
         condition=true_condition
     )
     graph.add_node_to_graph(true_node)
-    graph.add_edge(condition_node, true_node, argument_name="x")
+    graph.add_edge(condition_node, true_node)
     
     false_node = Node(
         name="false_branch",

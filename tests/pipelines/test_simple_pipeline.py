@@ -34,6 +34,12 @@ def sample_data():
 def pipeline_graph(tmp_path):
     """Create a configured pipeline graph with all nodes"""
     
+    def compute_average_action(create_data: pd.DataFrame) -> pd.Series:
+        return compute_average(create_data)
+    
+    def create_plot_action(compute_average: pd.Series) -> Figure:
+        return create_plot(compute_average)
+
     graph = (ExecutableGraph(output_path=tmp_path / 'outputs')
         .create_node(
             "create_data", 
@@ -46,8 +52,8 @@ def pipeline_graph(tmp_path):
         )
         .create_node(
             "compute_average",
-            compute_average,
-            predecessors={"df": "create_data"},  # Connect to data node
+            compute_average_action,
+            predecessors=["create_data"],  # Connect to data node
             save_node=True,
             output_config=OutputConfig(
                 output_filename="compute_average",
@@ -56,8 +62,8 @@ def pipeline_graph(tmp_path):
         )
         .create_node(
             "create_plot",
-            create_plot,
-            predecessors={"avg_data": "compute_average"},  # Connect to average node
+            create_plot_action,
+            predecessors=["compute_average"],  # Connect to average node
             save_node=True,
             output_config=OutputConfig(
                 output_filename="create_plot",
