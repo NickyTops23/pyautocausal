@@ -18,7 +18,7 @@ def test_merge_linked_graphs():
 
     # Create and link nodes
     graph1Builder.create_node(name="process1", action_function=process_dataframe)
-    graph2Builder.add_input_node(name="input2", input_dtype=pd.DataFrame)
+    graph2Builder.create_input_node(name="input2", input_dtype=pd.DataFrame)
 
     graph1 = graph1Builder
     graph2 = graph2Builder
@@ -36,12 +36,12 @@ def test_merge_linked_graphs():
 def test_fit_with_merged_graphs():
     """Test fit behavior with merged graphs"""
     graph1 = (ExecutableGraph()
-    .add_input_node(name="external_input", input_dtype=pd.DataFrame)
+    .create_input_node(name="external_input", input_dtype=pd.DataFrame)
     .create_node(name="process", action_function=process_dataframe, predecessors=["external_input"])
     )
     
     graph2 = (ExecutableGraph()
-    .add_input_node(name="internal_input", input_dtype=pd.DataFrame)
+    .create_input_node(name="internal_input", input_dtype=pd.DataFrame)
     .create_node(name="transform", action_function=transform_dataframe, predecessors=["internal_input"])
     )
     
@@ -73,13 +73,13 @@ def test_fit_with_multiple_external_inputs():
         return input2 + input3
     
     graph1 = (ExecutableGraph()
-    .add_input_node(name="input1", input_dtype=int)
+    .create_input_node(name="input1", input_dtype=int)
     .create_node(name="square", action_function=square, predecessors=["input1"])
     )
     
     graph2 = (ExecutableGraph()
-    .add_input_node(name="input2", input_dtype=int)
-    .add_input_node(name="input3", input_dtype=int)
+    .create_input_node(name="input2", input_dtype=int)
+    .create_input_node(name="input3", input_dtype=int)
     .create_node(name="add", action_function=add, predecessors=["input2", "input3"])
     )
     
@@ -87,7 +87,7 @@ def test_fit_with_multiple_external_inputs():
 
     graph1.fit(input1=2, input3=3)
     assert graph1.get("add").is_completed()
-    assert graph1.get("add").output == 7
+    assert graph1.get("add").get_result_value() == 7
     
     assert len(graph1.input_nodes) == 2
 
@@ -99,13 +99,13 @@ def test_merge_with_non_pending_nodes():
         return input2 + input3
     
     graph1 = (ExecutableGraph()
-    .add_input_node(name="input1", input_dtype=int)
+    .create_input_node(name="input1", input_dtype=int)
     .create_node(name="square", action_function=square, predecessors=["input1"])
     )
     
     graph2 = (ExecutableGraph()
-    .add_input_node(name="input2", input_dtype=int)
-    .add_input_node(name="input3", input_dtype=int)
+    .create_input_node(name="input2", input_dtype=int)
+    .create_input_node(name="input3", input_dtype=int)
     .create_node(name="add", action_function=add, predecessors=["input2", "input3"])
     )
 
@@ -126,12 +126,12 @@ def test_merge_with_duplicate_node_names():
         return input2 + 1
     
     graph1 = (ExecutableGraph()
-    .add_input_node(name="input1", input_dtype=int)
+    .create_input_node(name="input1", input_dtype=int)
     .create_node(name="add_one", action_function=add_one, predecessors=["input1"])
     )
 
     graph2 = (ExecutableGraph()
-    .add_input_node(name="input2", input_dtype=int)
+    .create_input_node(name="input2", input_dtype=int)
     .create_node(name="add_one", action_function=add_one_v2, predecessors=["input2"])
     )
 
@@ -143,7 +143,7 @@ def test_merge_with_duplicate_node_names():
 
     graph1.fit(input1=1)
     assert graph1.get("add_one_1").is_completed()
-    assert graph1.get("add_one_1").output == 3
+    assert graph1.get("add_one_1").get_result_value() == 3
 
 
 def test_merge_with_non_input_target():
@@ -155,12 +155,12 @@ def test_merge_with_non_input_target():
         return input2 + 1
     
     graph1 = (ExecutableGraph()
-    .add_input_node(name="input1", input_dtype=int)
+    .create_input_node(name="input1", input_dtype=int)
     .create_node(name="add_one", action_function=add_one, predecessors=["input1"])
     )
 
     graph2 = (ExecutableGraph()
-    .add_input_node(name="input2", input_dtype=int)
+    .create_input_node(name="input2", input_dtype=int)
     .create_node(name="add_one", action_function=add_one_v2, predecessors=["input2"])
     )
 
@@ -182,17 +182,17 @@ def test_merge_with_wrong_graph_nodes():
         return input3 + 1
     
     graph1 = (ExecutableGraph()
-    .add_input_node(name="input1", input_dtype=int)
+    .create_input_node(name="input1", input_dtype=int)
     .create_node(name="add_one", action_function=add_one, predecessors=["input1"])
     )
 
     graph2 = (ExecutableGraph()
-    .add_input_node(name="input2", input_dtype=int)
+    .create_input_node(name="input2", input_dtype=int)
     .create_node(name="add_one", action_function=add_one_v2, predecessors=["input2"])
     )
 
     graph3 = (ExecutableGraph()
-    .add_input_node(name="input3", input_dtype=int)
+    .create_input_node(name="input3", input_dtype=int)
     .create_node(name="add_one", action_function=add_one_v3, predecessors=["input3"])
     )
 

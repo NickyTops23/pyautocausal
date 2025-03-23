@@ -4,7 +4,7 @@ from typing import Any, ClassVar, Set
 import pandas as pd
 from .output_types import OutputType
 from matplotlib.figure import Figure
-
+from ..orchestration.result import Result
 class UnsupportedOutputTypeError(Exception):
     """Raised when attempting to save an unsupported output type"""
     pass
@@ -52,7 +52,8 @@ class OutputHandler(ABC):
             UnsupportedOutputTypeError: If the output type is not supported
             TypeError: If the data is not of the correct type for the specified format
             RuntimeError: If there's an error during the save operation
-        """
+        """             
+
         if not isinstance(output_type, OutputType):
             raise UnsupportedOutputTypeError(
                 f"Output type {output_type} is not supported. "

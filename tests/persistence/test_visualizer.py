@@ -16,7 +16,7 @@ def simple_graph(tmp_path):
         return node1
     
     graph = (ExecutableGraph(output_path=tmp_path)
-        .add_input_node("input")
+        .create_input_node("input")
         .create_node(
             "node1",
             node1_action,

@@ -8,9 +8,9 @@ def test_input_node_type_validation():
     """Test that input nodes validate data types correctly"""
     # Create graph with typed input nodes
     graph = (ExecutableGraph()
-        .add_input_node("df_input", input_dtype=pd.DataFrame)
-        .add_input_node("int_input", input_dtype=int)
-        .add_input_node("any_input")  # defaults to Any
+        .create_input_node("df_input", input_dtype=pd.DataFrame)
+        .create_input_node("int_input", input_dtype=int)
+        .create_input_node("any_input")  # defaults to Any
         )
     
     # Test valid inputs
@@ -28,7 +28,7 @@ def test_input_node_type_validation_errors():
     """Test that input nodes raise appropriate type errors"""
     # Create graph with typed input node
     graph = (ExecutableGraph()
-        .add_input_node("df_input", input_dtype=pd.DataFrame)
+        .create_input_node("df_input", input_dtype=pd.DataFrame)
         )
     
     # Test invalid input
@@ -40,7 +40,7 @@ def test_graph_builder_with_typed_inputs():
     
     
     # Add typed input node
-    graph = ExecutableGraph().add_input_node("data", input_dtype=pd.DataFrame)
+    graph = ExecutableGraph().create_input_node("data", input_dtype=pd.DataFrame)
     
     # Get the input node and verify its type
     input_node = graph.get("data")
@@ -48,13 +48,13 @@ def test_graph_builder_with_typed_inputs():
     assert input_node.input_dtype == pd.DataFrame
     
     # Verify default Any type
-    graph.add_input_node("any_data")
+    graph.create_input_node("any_data")
     assert graph.get("any_data").input_dtype == Any
 
 def test_complex_graph_with_typed_inputs():
     """Test typed inputs in a more complex graph with processing nodes"""
     graph = (ExecutableGraph()
-        .add_input_node("data", input_dtype=pd.DataFrame)
+        .create_input_node("data", input_dtype=pd.DataFrame)
         .create_node(
             "process",
             lambda data: len(data),
@@ -67,7 +67,19 @@ def test_complex_graph_with_typed_inputs():
     graph.fit(data=df)
     
     process_node = [n for n in graph.nodes() if n.name == "process"][0]
-    assert process_node.output == 3
+    assert process_node.get_result_value() == 3
+    
+def test_input_node_type_validation_errors():
+    """Test that input nodes raise appropriate type errors"""
+    # Create graph with typed input node
+    graph = (ExecutableGraph()
+        .create_input_node("data", input_dtype=pd.DataFrame)
+        .create_node(
+            "process",
+            lambda data: len(data),
+            predecessors=["data"]
+        )
+        )
     
     # Test with invalid input
     with pytest.raises(TypeError, match="must be of type DataFrame"):

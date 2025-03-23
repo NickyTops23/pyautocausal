@@ -1,6 +1,7 @@
-import networkx as nx
+
 from typing import Set, Optional, Dict, Any, Callable, Union, List
 from .base import Node
+from .result import Result
 
 from ..persistence.output_handler import OutputHandler
 from pyautocausal.utils.logger import get_class_logger
@@ -9,8 +10,8 @@ from pyautocausal.orchestration.node_state import NodeState
 from inspect import Parameter, Signature
 from ..persistence.local_output_handler import LocalOutputHandler
 from pathlib import Path
-from .condition import Condition
 from ..persistence.output_config import OutputConfig
+import networkx as nx
 
 
 class ExecutableGraph(nx.DiGraph):
@@ -78,35 +79,50 @@ class ExecutableGraph(nx.DiGraph):
                 output_filename = getattr(node.output_config, 'output_filename', node.name)
                 if node.output_config.output_type is None:
                     raise ValueError(f"Output type is not set for node {node.name}")
-                self.output_handler.save(output_filename, node.output, node.output_config.output_type)
+                self.output_handler.save(output_filename, node.output_to_save, node.output_config.output_type)
             else:
                 self.logger.warning(f"Node {node.name} output not saved because no output config was provided")
             
     def execute_graph(self):
-        """Execute all nodes in the graph in dependency order"""
-        while True:
-            ready_nodes = self.get_ready_nodes()
-            running_nodes = self.get_running_nodes()
+        from .nodes import InputNode
+        """Execute all nodes in the graph using a breadth-first approach."""
+        # Find all start nodes (input nodes or nodes with no predecessors)
+        start_nodes = [node for node in self.nodes() 
+                      if isinstance(node, Node) and not list(self.predecessors(node))]
+        
+        if not start_nodes:
+            self.logger.warning("No start nodes found in graph")
+            return
+        
+        # Initialize a queue with start nodes
+        queue = start_nodes.copy()
+        
+        # Process nodes in BFS order
+        while queue:
+            current_node = queue.pop(0)
             
-            if not ready_nodes and not running_nodes:
-                if self.is_execution_finished():
-                    break
-                else:
-                    incomplete = self.get_incomplete_nodes()
-                    raise ValueError(
-                        f"Graph execution stuck with incomplete nodes: "
-                        f"{[node.name for node in incomplete]}"
-                    )
+            # Skip if already processed
+            if current_node.state.is_terminal():
+                continue
             
-            for node in ready_nodes:
-                if self.node_has_skipped_predecessors(node):
-                    node.mark_skipped()
-                    self.logger.info(
-                        f"Skipping {node.name}: predecessor nodes were skipped"
-                    )
-                else:
-                    node.execute()
-                    self.save_node_output(node)  # Save output immediately after execution 
+            # Execute regular node
+            current_node.execute()
+            self.save_node_output(current_node)
+            
+            # If completed successfully, mark outgoing edges as traversable
+            if current_node.is_completed():
+                # Add nodes that are now ready to the queue
+                for successor in self.successors(current_node):
+                    if self._is_node_ready_to_queue(successor) and successor not in queue:
+                        queue.append(successor)
+                    
+        # Check if all nodes are in terminal state
+        incomplete = self.get_incomplete_nodes()
+        if incomplete:
+            self.logger.warning(
+                f"Graph execution completed with {len(incomplete)} incomplete nodes: "
+                f"{[node.name for node in incomplete]}"
+            )
 
     def fit(self, **kwargs):
         """
@@ -162,9 +178,9 @@ class ExecutableGraph(nx.DiGraph):
         name: str,
         action_function: Callable,
         predecessors: Optional[Dict[str, str]] = None,
-        condition: Optional[Condition] = None,
         output_config: Optional[OutputConfig] = None,
         save_node: bool = False,
+        node_description: str | None = None
     ):
         """
         Add a node to the graph.
@@ -173,7 +189,8 @@ class ExecutableGraph(nx.DiGraph):
             name: Name of the node
             action_function: Function to execute
             predecessors: Dict mapping argument names to predecessor node names
-            condition: Optional Condition object that determines if node should execute
+            condition: Optional callable that returns a boolean 
+              and determines if node should execute
             output_config: Optional configuration for node output
             save_node: Whether to save the node's output
             
@@ -185,7 +202,6 @@ class ExecutableGraph(nx.DiGraph):
         node = NodeObject(
             name=name,
             action_function=action_function,
-            condition=condition,
             output_config=output_config,
             save_node=save_node
         )
@@ -226,7 +242,7 @@ class ExecutableGraph(nx.DiGraph):
         else:
             raise ValueError(f"Node must be a BaseNode or subclass, got {type(node)}")
 
-    def add_input_node(self, name: str, input_dtype: type = Any):
+    def create_input_node(self, name: str, input_dtype: type = Any):
         """Add an input node to the graph."""
         from .nodes import InputNode as InputNodeObject
         input_node = InputNodeObject(name=name, input_dtype=input_dtype)
@@ -247,7 +263,7 @@ class ExecutableGraph(nx.DiGraph):
                 node2 >> input_node2
             )
         """
-        from .nodes import InputNode, Node as NodeObject
+        from .nodes import InputNode, Node as NodeObject, DecisionNode
 
         # Validate states first
         non_pending_nodes_self = [
@@ -315,17 +331,7 @@ class ExecutableGraph(nx.DiGraph):
                     f"Renaming node '{node.name}' to '{new_name}' during merge to avoid name conflict"
                 )
             
-            if isinstance(node, Node):
-                new_node = NodeObject(
-                    name=new_name,
-                    action_function=node.action_function,
-                    output_config=node.output_config,
-                    condition=node.condition,
-                    save_node=bool(node.output_config)
-                )
-                self.add_node_to_graph(new_node)
-                node_mapping[node] = new_node
-            elif isinstance(node, InputNode):
+            if isinstance(node, InputNode):
                 if node in targets:
                     def make_pass_function(dtype, param_name):
                         def pass_input(**kwargs):
@@ -345,8 +351,25 @@ class ExecutableGraph(nx.DiGraph):
                     )
                     self.add_node_to_graph(new_node)
                 else:
-                    self.add_input_node(new_name, node.input_dtype)
+                    self.create_input_node(new_name, node.input_dtype)
                 node_mapping[node] = self.get(new_name)
+            elif isinstance(node, DecisionNode):
+                new_node = DecisionNode(
+                    name=new_name,
+                    condition=node.condition,
+                )
+                self.add_node_to_graph(new_node)
+                node_mapping[node] = new_node
+            elif isinstance(node, Node):
+                new_node = NodeObject(
+                    name=new_name,
+                    action_function=node.action_function,
+                    output_config=node.output_config,
+                    save_node=bool(node.output_config)
+                )
+                self.add_node_to_graph(new_node)
+                node_mapping[node] = new_node
+                
             else:
                 raise ValueError(f"Invalid node type: {type(node)}")
 
@@ -440,26 +463,21 @@ class ExecutableGraph(nx.DiGraph):
             Dictionary mapping predecessor node names to their outputs
         """
         predecessors = self.get_node_predecessors(node)
-        return {predecessor.name: predecessor.output for predecessor in predecessors}
 
-    def node_has_skipped_predecessors(self, node) -> bool:
-        """Check if any predecessor nodes of the given node have been skipped.
-        
-        Args:
-            node: The node to check
-            
-        Returns:
-            True if any predecessor has been skipped, False otherwise
-        """
-        predecessors = self.get_node_predecessors(node)
-        return any(predecessor.is_skipped() for predecessor in predecessors)
+        all_outputs = {}
+        # validate that each predecessor's output is a Result
+        for predecessor in predecessors:
+            if not isinstance(predecessor.output, Result):
+                raise ValueError(f"Predecessor {predecessor.name} output is not a Result")
+            all_outputs.update(predecessor.output.result_dict)
+        return all_outputs
 
     def is_node_ready(self, node) -> bool:
         """Check if a node is ready to be executed.
         
         A node is ready when:
         1. It is in PENDING state
-        2. All its predecessors are either COMPLETED or SKIPPED
+        2. All incoming edges are traversable and from completed nodes
         
         Args:
             node: The node to check
@@ -470,12 +488,14 @@ class ExecutableGraph(nx.DiGraph):
         if node.state != NodeState.PENDING:
             return False
         
-        predecessors = self.get_node_predecessors(node)
-        if not predecessors:
-            return True
+        # Check all incoming edges
+        for pred in self.predecessors(node):
+            edge = self.edges[pred, node]
+            # If any predecessor is not completed or edge is not traversable, node is not ready
+            if not pred.is_completed() or not edge.get('traversable', False):
+                return False
         
-        return all(predecessor.is_completed() or predecessor.is_skipped() 
-                   for predecessor in predecessors)
+        return True
 
     def validate_node_graph_consistency(self):
         """Validate that all nodes in the graph have this graph as their graph reference."""
@@ -570,4 +590,96 @@ class ExecutableGraph(nx.DiGraph):
                 pred_node = self.get(pred_name)
                 self.add_edge(pred_node, node)
         
+        return self
+    
+    def add_edge(self, u, v, **attr):
+        """Add an edge from u to v with traversable=False by default."""
+        attr['traversable'] = True
+        super().add_edge(u, v, **attr)
+
+    def _is_node_ready_to_queue(self, node) -> bool:
+        """Check if a node is ready to be added to the execution queue.
+        
+        A node is ready when:
+        1. It is in PENDING state
+        2. All incoming edges are from completed nodes and are traversable
+        
+        Args:
+            node: The node to check
+            
+        Returns:
+            True if the node is ready to be queued, False otherwise
+        """
+        if node.state != NodeState.PENDING:
+            return False
+        
+        # Check all incoming edges
+        for pred in self.predecessors(node):
+            edge = self.edges[pred, node]
+            # If any predecessor is not completed or edge is not traversable, node is not ready
+            if not pred.is_completed() or not edge.get('traversable', False):
+                return False
+        
+        return True
+
+    def create_decision_node(
+        self,
+        name: str,
+        condition: Callable,
+        predecessors: Optional[List[str]] = None,
+        save_node: bool = False,
+    ):
+        """
+        Add a decision node to the graph.
+        
+        Args:
+            name: Name of the node
+            condition: function that returns a boolean
+            predecessors: List of predecessor node names
+            output_config: Optional configuration for node output
+            save_node: Whether to save the node's output
+            
+        Returns:
+            self for method chaining
+        """
+        from .nodes import DecisionNode
+        
+        node = DecisionNode(
+            name=name,
+            condition=condition,
+        )
+        
+        # Use add_node to handle the rest
+        return self.add_node_with_predecessors(node, predecessors)
+
+    def when_true(self, decision_node_name: str, ewt_node_name: str):
+        """
+        Define nodes that should execute when a decision node's condition is true.
+        
+        Args:
+            decision_node_name: Name of the decision node
+            ewt_node_name: Name of the node to execute when the condition is true
+        """
+        decision_node = self.get(decision_node_name)
+        from .nodes import DecisionNode
+        
+        if not isinstance(decision_node, DecisionNode):
+            raise ValueError(f"Node '{decision_node_name}' is not a DecisionNode")
+        
+        decision_node.add_execute_when_true(self.get(ewt_node_name))
+        return self
+
+    def when_false(self, decision_node_name, ewf_node_name):
+        """
+        Define nodes that should execute when a decision node's condition is false.
+        
+        Args:
+            decision_node_name: Name of the decision node
+            ewf_node_name: Name of the node to execute when the condition is false
+        """
+        decision_node = self.get(decision_node_name)
+        from .nodes import DecisionNode
+        if not isinstance(decision_node, DecisionNode):
+            raise ValueError(f"Node '{decision_node_name}' is not a DecisionNode")
+        decision_node.add_execute_when_false(self.get(ewf_node_name))
         return self

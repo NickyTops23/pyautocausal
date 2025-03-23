@@ -1,15 +1,14 @@
 import networkx as nx
-from typing import Callable, Any, Optional, Union
+from typing import Callable, Any, Optional
 from .node_state import NodeState
 from .base import OutputConfig
 from .graph import ExecutableGraph
+from .result import Result
 from ..persistence.output_types import OutputType
 from ..persistence.output_config import OutputConfig
 from networkx import DiGraph
+from .result import Result
 import inspect
-from .condition import Condition
-import pandas as pd
-import matplotlib.pyplot as plt
 from ..persistence.type_inference import infer_output_type
 from ..persistence.serialization import prepare_output_for_saving
 from pyautocausal.utils.logger import get_class_logger
@@ -38,8 +37,8 @@ class Node(BaseNode):
             name: str, 
             action_function: Callable,
             output_config: Optional[OutputConfig] = None,
-            condition: Optional[Condition] = None,
             save_node: bool = False,
+            node_description: str | None = None
         ):
         super().__init__(name)
         self.logger = get_class_logger(f"{self.__class__.__name__}_{name}")
@@ -51,11 +50,12 @@ class Node(BaseNode):
         
         # Initialize node state and attributes
         self.state = NodeState.PENDING
-        self.condition = condition
-        self.output = None
+        self.output = Result()
+        self.output_to_save = None
         self.predecessor_outputs = {}
         self.action_function = action_function
         self.execution_count = 0
+        self.node_description = node_description
     
     def _get_return_annotation(self, action_function: Callable) -> Any:
         """Get the return type annotation from the action function"""
@@ -115,21 +115,6 @@ class Node(BaseNode):
                 output_filename=self.name
             )
         return output_config
-    
-    def validate_condition(self):
-        """Verify that condition is valid given the node's predecessors"""
-        # Get predecessor outputs directly from the graph
-        predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
-        
-        if self.condition is not None and not self.graph.get_node_predecessors(self):
-            raise ValueError(f"Node {self.name} has a condition but no predecessors")
-        
-        if self.condition is not None:
-            # Use _resolve_function_arguments to check that all required arguments are available
-            try:
-                self._resolve_function_arguments(self.condition.condition_func, predecessor_outputs)
-            except ValueError as e:
-                raise ValueError(f"Invalid condition for node {self.name}: {str(e)}")
 
     def _resolve_function_arguments(self, func: Callable, available_args: dict) -> dict:
         """
@@ -161,7 +146,8 @@ class Node(BaseNode):
         required_params = {
             name: None
             for name, param in signature.parameters.items()
-            if param.default is inspect.Parameter.empty
+            if param.default is inspect.Parameter.empty # only include required parameters
+              and param.kind != inspect.Parameter.VAR_KEYWORD # exclude varargs
         }
         missing_required = set(required_params.keys())
 
@@ -170,6 +156,9 @@ class Node(BaseNode):
             for name, param in signature.parameters.items()
             if param.default is not inspect.Parameter.empty
         }
+        has_varkeyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+        # check if any keyword arguments are VAR_KEYWORD
+
         missing_optional = set(optional_params.keys())
         
         # Start with available arguments
@@ -181,6 +170,9 @@ class Node(BaseNode):
             elif argument in optional_params:
                 optional_params[argument] = arguments[argument]
                 missing_optional.remove(argument)
+            elif has_varkeyword:
+                # if there are varargs we always add the argument to optional_params
+                optional_params[argument] = arguments[argument]
         
         # For any missing required parameters, try to get them from run context
         
@@ -219,43 +211,11 @@ class Node(BaseNode):
         
         return {**required_params, **optional_params}
 
-    def condition_satisfied(self) -> bool:
-        """Check if the node's condition is satisfied using predecessors and run context"""
-        if self.condition is None:
-            return True
-        
-        # Get predecessor outputs directly from the graph
-        predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
-        
-        try:
-            # Resolve arguments including run context
-            arguments = self._resolve_function_arguments(self.condition.condition_func, predecessor_outputs)
-            return self.condition.evaluate(**arguments)
-        
-        except Exception as e:
-            raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
-
-
     def execute(self):
-        """Template method that handles state management and conditional execution"""
+        """Execute the node's action function"""
         self.execution_count += 1
         try:
-            # Check condition satisfaction before executing
-            condition_satisfied = self.condition_satisfied()
-            
-            if not condition_satisfied:
-                self.mark_skipped()
-                if self.condition:
-                    self.logger.info(
-                        f"Skipping {self.name}: condition '{self.condition.description}' was not satisfied"
-                    )
-                return
-            
             self.mark_running()
-            if self.condition:
-                self.logger.info(
-                    f"Executing {self.name}: condition '{self.condition.description}' was satisfied"
-                )
             self._execute()
             self.mark_completed()
         except Exception as e:
@@ -270,65 +230,213 @@ class Node(BaseNode):
         
     def mark_failed(self):
         self.state = NodeState.FAILED
-    
-    def mark_skipped(self):
-        self.state = NodeState.SKIPPED
         
     def is_completed(self):
         return self.state == NodeState.COMPLETED
     
     def is_running(self):
         return self.state == NodeState.RUNNING
-    
-    def is_skipped(self):
-        return self.state == NodeState.SKIPPED
 
-    def _execute(self):
-        """Execute the node's action function with predecessor outputs"""
-        # Get predecessor outputs directly from the graph
+    def get_result_value(self) -> Any:
+        """Return the output value of this node from the result dictionary.
+        
+        This is a convenience method that returns the node's output value
+        directly from the result_dict using the node's name as the key.
+        
+        Returns:
+            The output value of this node
+        """
+        if self.output is None or self.output.result_dict is None:
+            return None
+        return self.output.result_dict.get(self.name)
+
+    def _execute_action_function(self):
+            # Get predecessor outputs directly from the graph
         predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
         
         arguments = self._resolve_function_arguments(self.action_function, predecessor_outputs)
         print(f"Executing {self.name} with arguments: {arguments}")
-        output = (
+        return (
             self.action_function(**arguments) if arguments 
             else self.action_function()
         )
-        
-        if self.output_config:
-            self.output = prepare_output_for_saving(output, self.output_config.output_type)
-        else:
-            self.output = output
-    
 
-class InputNode(BaseNode):
+    def _execute(self):
+        """Execute the node's action function with predecessor outputs"""
+        output = self._execute_action_function()
+        
+        self.output.update({self.name: output})
+        if self.output_config:
+            self.output_to_save = prepare_output_for_saving(output, self.output_config.output_type)
+            
+    
+class DecisionNode(Node):
+    """
+    A node that makes a decision based on a condition and controls flow to downstream nodes.
+    
+    DecisionNode evaluates its condition and determines which downstream paths
+    should be traversable. Nodes can be designated as "execute when true" (EWT)
+    or "execute when false" (EWF).
+    """
+    def __init__(
+            self, 
+            name: str,
+            condition: Callable,
+            node_description: str | None = None
+        ):
+        # Create a passthrough function that aggregates predecessor outputs
+        # by unioning the results of all predecessors
+        def passthrough_function(**kwargs):
+            result = {}
+            for key, value in kwargs.items():
+                result.update({key: value})
+            return result
+        
+        super().__init__(
+            name=name,
+            action_function=passthrough_function,
+            output_config=None,
+            save_node=False,
+            node_description=node_description
+        )
+        self.condition = condition
+        # warn if the condition does not return a boolean
+        if not callable(condition):
+            raise ValueError(f"Condition for decision node {self.name} is not a callable function")
+        # get the signature of the condition
+        self.condition_signature = inspect.signature(condition)
+        
+        # warn if the condition does not have a return type annotation or returns a non-boolean value
+        if self.condition_signature.return_annotation is inspect.Parameter.empty:
+            warnings.warn(f"Condition for decision node {self.name} does not have a return type annotation")
+        elif self.condition_signature.return_annotation != bool:
+            warnings.warn(f"Condition for decision node {self.name} returns a non-boolean value: {self.condition_signature.return_annotation}")
+
+
+        self._ewt_nodes = set()  # Nodes to execute when condition is True
+        self._ewf_nodes = set()  # Nodes to execute when condition is False
+    
+    def add_execute_when_true(self, node):
+        """Add a node to execute when condition evaluates to True"""
+        self._ewt_nodes.add(node)
+        return self
+    
+    def add_execute_when_false(self, node):
+        """Add a node to execute when condition evaluates to False"""
+        self._ewf_nodes.add(node)
+        return self
+    
+    def validate_branches(self):
+        """
+        Validate that all successors have been classified as either EWT or EWF.
+        This should be called before execution.
+        """
+        if not hasattr(self, 'graph') or self.graph is None:
+            return  # Can't validate without a graph
+            
+        all_successors = set(self.graph.successors(self))
+
+        # validate that successors are not classified as both EWT and EWF
+        if self._ewt_nodes.intersection(self._ewf_nodes):
+            raise ValueError(
+                f"Decision node '{self.name}' has successors that are classified as both execute_when_true and execute_when_false: "
+                f"{[node.name for node in self._ewt_nodes.intersection(self._ewf_nodes)]}"
+            )
+
+        all_classified = self._ewt_nodes.union(self._ewf_nodes)
+        
+        missing = all_successors - all_classified
+        if missing:
+            raise ValueError(
+                f"Decision node '{self.name}' has successor nodes that are not classified as "
+                f"execute_when_true or execute_when_false: {[node.name for node in missing]}"
+            )
+        
+        extra = all_classified - all_successors
+        if extra:
+            raise ValueError(
+                f"Decision node '{self.name}' has nodes classified as execute_when_true or "
+                f"execute_when_false that are not successors: {[node.name for node in extra]}"
+            )
+    
+    def condition_satisfied(self) -> bool:
+        """Check if the node's condition is satisfied using predecessors and run context"""
+        # Get predecessor outputs directly from the graph
+        predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
+        
+        try:
+            # Resolve arguments including run context
+            arguments = self._resolve_function_arguments(self.condition, predecessor_outputs)
+            condition_result = self.condition(**arguments)
+            if not isinstance(condition_result, bool):
+                raise ValueError(f"Condition for node {self.name} returned a non-boolean value: {condition_result}")
+            return condition_result
+        
+        except Exception as e:
+            raise ValueError(f"Error evaluating condition for node {self.name}: {str(e)}")
+    
+    def _execute(self):
+        """Execute the decision logic and control flow to downstream nodes"""
+        
+
+        # Validate that all successors are classified
+        self.validate_branches()
+
+        # executing the passthrough function merges all predecessor outputs into a single result
+        self.output = Result(super()._execute_action_function())
+        
+        # Evaluate the condition
+        condition_result = self.condition_satisfied()
+
+        # Log the decision outcome
+        self.logger.info(
+            f"Decision node '{self.name}': condition evaluated to {condition_result}"
+        )
+        
+        # Set traversability based on condition outcome, 
+        for successor in self.graph.successors(self):
+            edge = self.graph.edges[self, successor]
+            
+            if condition_result:
+                if successor in self._ewt_nodes:
+                    edge['traversable'] = True # this is not strictly necessary, since edges are traversable by default
+                    self.logger.info(f"Edge to '{successor.name}' is traversable (condition is TRUE)")
+                else:
+                    edge['traversable'] = False
+                    self.logger.info(f"Edge to '{successor.name}' is NOT traversable (condition is TRUE)")
+            elif not condition_result:
+                if successor in self._ewf_nodes:
+                    edge['traversable'] = True
+                    self.logger.info(f"Edge to '{successor.name}' is traversable (condition is FALSE)")
+                else:
+                    edge['traversable'] = False
+                    self.logger.info(f"Edge to '{successor.name}' is NOT traversable (condition is FALSE)")
+            else:
+                raise ValueError(f"Decision node '{self.name}' received an unexpected condition result: {condition_result}")
+
+class InputNode(Node):
     """A node that accepts external input and passes it to its successors."""
     
     def __init__(self, name: str, input_dtype: type = Any):
-        self.state = NodeState.PENDING
-        self.output = None
         self.input_dtype = input_dtype
-        super().__init__(name)
-
-
+        super().__init__(name, action_function=lambda: None)
+        self.input_set = False
     
     def set_input(self, value: Any):
         """Set the input value that will be passed to successor nodes"""
+        if self.input_set:
+            raise ValueError(f"Input value for node '{self.name}' has already been set")
+        
         if self.input_dtype is not Any and not isinstance(value, self.input_dtype):
             raise TypeError(f"Input value for node '{self.name}' must be of type {self.input_dtype.__name__}, got {type(value).__name__}")
-        self.output = value
-        self.state = NodeState.COMPLETED
+        
+        # set the action function in the superclass
+        self.action_function = lambda: value
+        self.input_set = True
 
-    def is_skipped(self) -> bool:
-        return False # Input nodes are never skipped
-
-    def is_running(self) -> bool:
-        return False
-    
-    def is_completed(self) -> bool:
-        return self.state == NodeState.COMPLETED
-    
-    def execute(self) -> None:
-        pass  # Input nodes don't execute; they just pass through their input
+    def _execute(self):
+        if not self.input_set:
+            raise ValueError(f"Input value for node '{self.name}' has not been set")
+        super()._execute()
 
 

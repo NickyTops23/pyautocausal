@@ -4,7 +4,6 @@ import pandas as pd
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.pipelines.example import condition_nObs_DoubleML, condition_nObs_OLS
-from pyautocausal.orchestration.condition import Condition
 
 def preprocess_lalonde_data() -> str:
     """
@@ -28,33 +27,32 @@ def output_dir(tmp_path):
     return tmp_path / "test_outputs"
 
 # Create reusable conditions
-doubleml_condition = Condition(
-    condition_nObs_DoubleML,
-    "Sample size is greater than 100 observations"
-)
+doubleml_condition = condition_nObs_DoubleML
 
-ols_condition = Condition(
-    condition_nObs_OLS,
-    "Sample size is less than or equal to 100 observations"
-)
+ols_condition = condition_nObs_OLS
 
 def causal_graph(output_dir):
     graph = (ExecutableGraph(output_path=output_dir)
-        .add_input_node("df")
+        .create_input_node("df", input_dtype=pd.DataFrame )
+        .create_decision_node(
+            "doubleml_condition",
+            doubleml_condition,
+            predecessors=["df"],
+        )
         .create_node(
             "doubleml",
             DoubleMLNode.action,
-            predecessors={"df": "df"},
-            condition=doubleml_condition,
+            predecessors=["doubleml_condition"],
             save_node=True,
         )
         .create_node(
-            "ols",
+            "ols",  
             OLSNode.action,
-            predecessors={"df": "df"},
-            condition=ols_condition,
+            predecessors=["doubleml_condition"],
             save_node=True,
         )
+        .when_true("doubleml_condition", "doubleml")
+        .when_false("doubleml_condition", "ols")
         )
     
     return graph

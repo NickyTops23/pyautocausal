@@ -5,21 +5,17 @@ from typing import Callable, Optional
 from abc import abstractmethod
 from ..orchestration.nodes import Node, ExecutableGraph, OutputConfig
 from ..persistence.output_config import OutputType
-from ..orchestration.condition import Condition
 
 class LibraryNode(Node):
     """Base class for standardized nodes with configurable output and conditions."""
     
     def __init__(self, 
                  name: str = None,
-                 condition: Optional[Condition] = None,
+                 condition: Callable | None = None,
                  save_node: bool = True,
                  output_filename: str = "", 
                  output_type: OutputType = OutputType.TEXT,
                  graph: Optional[ExecutableGraph] = None):
-        
-        if condition is None:
-            condition = self.condition()
             
         super().__init__(
             name=name or self.__class__.__name__,
@@ -39,9 +35,9 @@ class LibraryNode(Node):
         pass
     
     @abstractmethod
-    def condition(self) -> Condition:
+    def condition(self) -> Callable | None:
         """Define the default condition for this node."""
-        pass
+        return None
 
 
 class OLSNode(LibraryNode):
@@ -50,7 +46,7 @@ class OLSNode(LibraryNode):
     def __init__(self, 
                  name: str = "OLS Treatment Effect", 
                  graph: Optional[ExecutableGraph] = None,
-                 condition: Optional[Condition] = None,
+                 condition: Optional[Callable] = None,
                  save_node: bool = True,
                  output_filename: str = "ols_treatment_effect"):
         super().__init__(
@@ -83,12 +79,9 @@ class OLSNode(LibraryNode):
         return buffer.getvalue()
         
     @staticmethod
-    def condition() -> Condition:
+    def condition() -> Callable | None:
         """Default condition checking if sample size is appropriate for OLS."""
-        return Condition(
-            lambda df: len(df) <= 100,
-            "Sample size is less than or equal to 100 observations"
-        )
+        return lambda df: len(df) <= 100
 
 
 class DoubleMLNode(LibraryNode):
@@ -97,7 +90,7 @@ class DoubleMLNode(LibraryNode):
     def __init__(self, 
                  name: str = "DoublesML Treatment Effect", 
                  graph: Optional[ExecutableGraph] = None,   
-                 condition: Optional[Condition] = None,
+                 condition: Optional[Callable] = None,
                  save_node: bool = True,
                  output_filename: str = "doubleML_treatment_effect"):
         super().__init__(
@@ -138,12 +131,9 @@ class DoubleMLNode(LibraryNode):
         return buffer.getvalue()
 
     @staticmethod
-    def condition() -> Condition:
+    def condition() -> Callable | None:
         """Default condition checking if sample size is appropriate for Double ML."""
-        return Condition(
-            lambda df: len(df) > 100,
-            "Sample size is greater than 100 observations"
-        )
+        return lambda df: len(df) > 100
 
 
 class PassthroughNode(LibraryNode):
@@ -151,7 +141,7 @@ class PassthroughNode(LibraryNode):
     def __init__(self, 
                  name: str = "Passthrough Data",
                  graph: Optional[ExecutableGraph] = None,
-                 condition: Optional[Condition] = None,
+                 condition: Optional[Callable] = None,
                  save_node: bool = False,
                  output_filename: str = "transform_data",
                  output_type: OutputType = OutputType.PARQUET):
@@ -169,12 +159,9 @@ class PassthroughNode(LibraryNode):
         return df
 
     @staticmethod
-    def condition() -> Condition:
+    def condition() -> Callable | None:
         """Default condition that always returns True."""
-        return Condition(
-            lambda df: True,
-            "Always execute passthrough node"
-        )
+        return lambda: True
 
 # Add function versions that use the node actions
 def doubleML_treatment_effect(df: pd.DataFrame) -> str:

@@ -25,11 +25,12 @@ def sample_graph():
         return f"Processed {len(transform)} rows"
     
     graph = (ExecutableGraph()
-        .add_input_node("data")
+        .create_input_node("data")
         .create_node(
             "transform",
             transform_func,
-            predecessors=["data"]
+            predecessors=["data"],
+            node_description = "Transform the data"
         )
         .create_node(
             "process",
@@ -100,3 +101,4 @@ def test_topological_order(sample_graph, output_path):
     # Verify order (data should come before transform, which comes before process)
     assert node_order.index('data') < node_order.index('transform')
     assert node_order.index('transform') < node_order.index('process')
+

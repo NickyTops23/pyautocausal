@@ -1,12 +1,12 @@
 from pathlib import Path
 from typing import Callable, Optional
-import pandas as pd
+import pandas as pd 
 import statsmodels.api as sm
 from pyautocausal.orchestration.nodes import Node
+from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.local_output_handler import LocalOutputHandler
 from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-from pyautocausal.orchestration.condition import Condition   
 from pyautocausal.persistence.visualizer import visualize_graph
 
 condition_nObs_DoubleML = lambda df: len(df) > 100
@@ -25,42 +25,35 @@ def preprocess_lalonde_data() -> pd.DataFrame:
 def create_causal_graph(output_path: Path):
     """Create the causal graph using GraphBuilder."""
     
-    # Define reusable conditions
-    doubleml_condition = Condition(
-        condition_nObs_DoubleML,
-        "Sample size is greater than 100 observations"
-    )
-
-    ols_condition = Condition(
-        condition_nObs_OLS,
-        "Sample size is less than or equal to 100 observations"
-    )
 
     # Build graph using builder pattern
-    graph = (GraphBuilder(output_path=output_path)
-        .add_input_node("df")
+    graph = (ExecutableGraph(output_path=output_path)
+        .create_input_node("df", input_dtype=pd.DataFrame)
+        .create_decision_node(
+            "doubleml_condition",
+            condition_nObs_DoubleML,
+            predecessors=["df"],
+        )
         .create_node(
             "doubleml",
             DoubleMLNode.action,
             predecessors=["df"],
-            condition=doubleml_condition,
-            save_node=True,
-            output_config=OutputConfig(
                 output_filename="doubleml_results",
-                output_type=OutputType.TEXT
+            output_config=OutputConfig(
+                output_type=OutputType.TEXT 
             )
         )
         .create_node(
             "ols",
             OLSNode.action,
             predecessors=["df"],
-            condition=ols_condition,
-            save_node=True,
+            output_filename="ols_results",
             output_config=OutputConfig(
-                output_filename="ols_results",
-                output_type=OutputType.TEXT
+                output_type=OutputType.TEXT 
             )
         )
+        .when_true("doubleml_condition", "doubleml")
+        .when_false("doubleml_condition", "ols")
         .build())
     
     return graph

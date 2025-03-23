@@ -100,7 +100,7 @@ def test_data_node_output(executed_pipeline):
     # Get data node
     data_node = [n for n in graph.nodes() if n.name == "create_data"][0]
     
-    df = data_node.output
+    df = data_node.get_result_value()
     assert isinstance(df, pd.DataFrame)
     assert list(df.columns) == ['category', 'value']
     assert len(df) == 6
@@ -112,7 +112,7 @@ def test_average_node_output(executed_pipeline):
     # Get average node
     average_node = [n for n in graph.nodes() if n.name == "compute_average"][0]
     
-    averages = average_node.output
+    averages = average_node.get_result_value()
     assert isinstance(averages, pd.Series)
     assert len(averages) == 2
     assert all(averages.index == ['A', 'B'])
@@ -125,7 +125,7 @@ def test_plot_node_output(executed_pipeline):
     # Get plot node
     plot_node = [n for n in graph.nodes() if n.name == "create_plot"][0]
     
-    plot = plot_node.output
+    plot = plot_node.get_result_value()
     assert isinstance(plot, Figure)
     assert isinstance(plot, Figure)
 

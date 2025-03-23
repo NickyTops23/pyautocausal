@@ -90,8 +90,6 @@ class NotebookExporter:
         """Create cells for a single node's execution."""
         # Add markdown cell with node info
         info = f"## Node: {node.name}\n"
-        if hasattr(node, 'condition') and node.condition:
-            info += f"\nCondition: {node.condition.description}\n"
         self.nb.cells.append(new_markdown_cell(info))
         
         # Add function definition if not an input node

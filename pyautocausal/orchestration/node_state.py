@@ -6,11 +6,10 @@ class NodeState(Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-    SKIPPED = "skipped"
     
     @classmethod
     def terminal_states(cls) -> Set['NodeState']:
-        return {cls.COMPLETED, cls.FAILED, cls.SKIPPED}
+        return {cls.COMPLETED, cls.FAILED}
     
     def is_terminal(self) -> bool:
         return self in self.terminal_states()

@@ -90,13 +90,13 @@ def test_default_parameters(basic_graph):
     """Test that default parameter values are used when not overridden"""
     graph, _, process_node = basic_graph
     graph.execute_graph()
-    assert process_node.output == "Processed 0 rows with 1 jobs, verbose=False, model_type=basic"
+    assert process_node.get_result_value() == "Processed 0 rows with 1 jobs, verbose=False, model_type=basic"
 
 def test_run_context_override(graph_with_context):
     """Test that run context values override default parameters"""
     graph, _, process_node = graph_with_context
     graph.execute_graph()
-    assert process_node.output == "Processed 0 rows with 4 jobs, verbose=False, model_type=advanced"
+    assert process_node.get_result_value() == "Processed 0 rows with 4 jobs, verbose=False, model_type=advanced"
 
 def test_missing_required_argument():
     """Test that missing required parameters raise appropriate error"""
