@@ -75,13 +75,14 @@ class NotebookExporter:
             target_name = target_func.__name__
             
             # Create imports if the target function is from an external module
+            # TODO: This doesn't work for functions defined in pyautocausal
             module_name = target_func.__module__
             if module_name != '__main__':
                 import_statement = f"from {module_name} import {target_name}\n\n"
-                comment += import_statement
+                target_source = import_statement + target_source
             
             # Add both the target and wrapper
-            return comment + target_source + "\n\n" + wrapper_source
+            return target_source
         
         # Handle lambdas
         source = inspect.getsource(func)
@@ -91,7 +92,7 @@ class NotebookExporter:
             # Create a proper function definition
             source = f"def {node.name}_func(*args, **kwargs):\n    return {lambda_body}"
         
-        return source
+        return source.strip()
     
     def _get_function_name_from_string(self, function_string: str) -> str:
         """Get the function name from a string."""
@@ -105,20 +106,32 @@ class NotebookExporter:
         func = node.action_function
         is_wrapper = self._is_exposed_wrapper(func)
         
-        arguments = dict()
+        # Get default arguments from the wrapper function
+        default_args = {}
+        if is_wrapper:
+            signature = inspect.signature(func)
+            default_args = {
+                k: v.default for k, v in signature.parameters.items()
+                if v.default is not inspect.Parameter.empty
+            }
+        
+        arguments = dict(default_args)  # Start with defaults
         # Get predecessor outputs dictionary
         predecessors = self.graph.get_node_predecessors(node)
         if predecessors:
             for predecessor in predecessors:
-                edge = self.graph.edges[predecessor, node]
-                argument_name = edge.get('argument_name')
-                if argument_name:
-                    arguments[argument_name] = f"{predecessor.name}_output"
+                # if is_wrapper, use the argument name from the arg_mapping
+                if is_wrapper:
+                    _, arg_mapping = self._get_exposed_target_info(func)
+                    if predecessor.name in arg_mapping:
+                        arguments[arg_mapping[predecessor.name]] = f"{predecessor.name}_output"
                 else:
                     arguments[predecessor.name] = f"{predecessor.name}_output"
+
+        repr_string_noop = lambda x: repr(x) if not isinstance(x, str) else x
         
         # Format argument string
-        args_str = ", ".join(f"{k}={v}" for k, v in arguments.items()) if arguments else ""
+        args_str = ", ".join(f"{k}={repr_string_noop(v)}" for k, v in arguments.items()) if arguments else ""
         
         # For wrapped functions, add a comment showing how to call the target directly
         if is_wrapper:
@@ -130,7 +143,7 @@ class NotebookExporter:
                 target_arg = arg_mapping.get(wrapper_arg, wrapper_arg)
                 target_args[target_arg] = wrapper_value
             
-            target_args_str = ", ".join(f"{k}={v}" for k, v in target_args.items()) if target_args else ""
+            target_args_str = ", ".join(f"{k}={repr(v)}" for k, v in target_args.items()) if target_args else ""
             
             # Get the target function's name
             target_func = func._notebook_export_info['target_function']
