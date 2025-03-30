@@ -2,12 +2,7 @@ import pytest
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
-from matplotlib.figure import Figure
-from io import BytesIO
-from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph import ExecutableGraph
-from pyautocausal.persistence.local_output_handler import LocalOutputHandler
-from pyautocausal.orchestration.graph_builder import GraphBuilder
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 def create_sample_data() -> pd.DataFrame:
@@ -38,10 +33,14 @@ def sample_data():
 @pytest.fixture
 def pipeline_graph(tmp_path):
     """Create a configured pipeline graph with all nodes"""
-    builder = GraphBuilder(output_path=tmp_path / 'outputs')
     
-    # Create nodes using builder pattern
-    graph = (builder
+    def compute_average_action(create_data: pd.DataFrame) -> pd.Series:
+        return compute_average(create_data)
+    
+    def create_plot_action(compute_average: pd.Series) -> Figure:
+        return create_plot(compute_average)
+
+    graph = (ExecutableGraph(output_path=tmp_path / 'outputs')
         .create_node(
             "create_data", 
             create_sample_data,
@@ -53,8 +52,8 @@ def pipeline_graph(tmp_path):
         )
         .create_node(
             "compute_average",
-            compute_average,
-            predecessors={"df": "create_data"},  # Connect to data node
+            compute_average_action,
+            predecessors=["create_data"],  # Connect to data node
             save_node=True,
             output_config=OutputConfig(
                 output_filename="compute_average",
@@ -63,15 +62,15 @@ def pipeline_graph(tmp_path):
         )
         .create_node(
             "create_plot",
-            create_plot,
-            predecessors={"avg_data": "compute_average"},  # Connect to average node
+            create_plot_action,
+            predecessors=["compute_average"],  # Connect to average node
             save_node=True,
             output_config=OutputConfig(
                 output_filename="create_plot",
                 output_type=OutputType.PNG
             )
         )
-        .build())
+        )
     
     return graph
 
@@ -101,7 +100,7 @@ def test_data_node_output(executed_pipeline):
     # Get data node
     data_node = [n for n in graph.nodes() if n.name == "create_data"][0]
     
-    df = data_node.output
+    df = data_node.get_result_value()
     assert isinstance(df, pd.DataFrame)
     assert list(df.columns) == ['category', 'value']
     assert len(df) == 6
@@ -113,7 +112,7 @@ def test_average_node_output(executed_pipeline):
     # Get average node
     average_node = [n for n in graph.nodes() if n.name == "compute_average"][0]
     
-    averages = average_node.output
+    averages = average_node.get_result_value()
     assert isinstance(averages, pd.Series)
     assert len(averages) == 2
     assert all(averages.index == ['A', 'B'])
@@ -126,7 +125,7 @@ def test_plot_node_output(executed_pipeline):
     # Get plot node
     plot_node = [n for n in graph.nodes() if n.name == "create_plot"][0]
     
-    plot = plot_node.output
+    plot = plot_node.get_result_value()
     assert isinstance(plot, Figure)
     assert isinstance(plot, Figure)
 

@@ -3,7 +3,7 @@ import pandas as pd
 import nbformat
 from pathlib import Path
 from pyautocausal.persistence.notebook_export import NotebookExporter
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph import ExecutableGraph
 
 def simple_func(x: pd.DataFrame) -> pd.DataFrame:
     """A simple function that adds a column"""
@@ -17,19 +17,27 @@ def process_func(df: pd.DataFrame) -> str:
 @pytest.fixture
 def sample_graph():
     """Create a simple graph for testing"""
-    graph = (GraphBuilder()
-        .add_input_node("data")
+
+    def transform_func(data: pd.DataFrame) -> pd.DataFrame:
+        return data
+    
+    def process_func_action(transform: pd.DataFrame) -> str:
+        return f"Processed {len(transform)} rows"
+    
+    graph = (ExecutableGraph()
+        .create_input_node("data")
         .create_node(
             "transform",
-            simple_func,
-            predecessors={"x": "data"}
+            transform_func,
+            predecessors=["data"],
+            node_description = "Transform the data"
         )
         .create_node(
             "process",
-            process_func,
-            predecessors={"df": "transform"}
+            process_func_action,
+            predecessors=["transform"]
         )
-        .build())
+        )
     
     # Set input data
     input_data = pd.DataFrame({'value': [1, 2, 3]})
@@ -93,3 +101,4 @@ def test_topological_order(sample_graph, output_path):
     # Verify order (data should come before transform, which comes before process)
     assert node_order.index('data') < node_order.index('transform')
     assert node_order.index('transform') < node_order.index('process')
+

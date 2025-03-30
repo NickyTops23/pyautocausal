@@ -3,24 +3,24 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 from pyautocausal.persistence.visualizer import visualize_graph
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 @pytest.fixture
 def simple_graph(tmp_path):
     """Create a simple test graph with a few nodes"""
-    def node1_action(x: pd.DataFrame) -> pd.DataFrame:
-        return x
+    def node1_action(input: pd.DataFrame) -> pd.DataFrame:
+        return input
     
-    def node2_action(x: pd.DataFrame) -> pd.DataFrame:
-        return x
+    def node2_action(node1: pd.DataFrame) -> pd.DataFrame:
+        return node1
     
-    graph = (GraphBuilder(output_path=tmp_path)
-        .add_input_node("input")
+    graph = (ExecutableGraph(output_path=tmp_path)
+        .create_input_node("input")
         .create_node(
             "node1",
             node1_action,
-            predecessors={"x": "input"},
+            predecessors=["input"],
             save_node=True,
             output_config=OutputConfig(
                 output_filename="node1_output",
@@ -30,14 +30,14 @@ def simple_graph(tmp_path):
         .create_node(
             "node2",
             node2_action,
-            predecessors={"x": "input"},
+            predecessors=["node1"],
             save_node=True,
             output_config=OutputConfig(
                 output_filename="node2_output",
                 output_type=OutputType.PARQUET
             )
         )
-        .build())
+        )
     return graph
 
 def test_visualize_graph_creates_file(simple_graph, tmp_path):

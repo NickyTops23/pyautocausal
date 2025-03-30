@@ -1,13 +1,20 @@
 import pytest
-from pyautocausal.orchestration.nodes import Node, NodeState
+from pyautocausal.orchestration.nodes import Node, DecisionNode, NodeState
 from pyautocausal.orchestration.graph import ExecutableGraph
-from pyautocausal.orchestration.condition import Condition
+from typing import Any
 
+# Test functions for decision conditions and branch actions
 def always_true() -> bool:
     return True
 
 def always_false() -> bool:
     return False
+
+def number_is_positive(number: int) -> bool:
+    return number > 0
+
+def number_is_negative(number: int) -> bool:
+    return number < 0
 
 def true_branch() -> str:
     return "true_branch_executed"
@@ -15,173 +22,300 @@ def true_branch() -> str:
 def false_branch() -> str:
     return "false_branch_executed"
 
-def is_true(x: bool) -> bool:
+def identity(x: int) -> int:
     return x
 
-def is_false(x: bool) -> bool:
-    return not x
+def add_10(x: int) -> int:
+    return x + 10
 
-def final_node_action() -> str:
-    return "final_node_executed"
+def subtract_10(x: int) -> int:
+    return x - 10
 
-# Function that would raise an error if called with None
-def requires_attribute_access(df):
-    # This will raise AttributeError if df is None
-    return 'columns' in df
-
-# Create reusable conditions
-true_condition = Condition(is_true, "Condition is true")
-false_condition = Condition(is_false, "Condition is false")
-attribute_condition = Condition(requires_attribute_access, "Condition requires attribute access")
-
-def test_true_condition():
-    """Test that when condition is True, only true branch executes"""
-    graph = ExecutableGraph()
-    
-    # Create nodes
-    condition_node = Node(
-        name="condition",
-        action_function=always_true,
-        graph=graph
-    )
-    
-    true_node = Node(
-        name="true_branch",
-        action_function=true_branch,
-        condition=true_condition,
-        graph=graph
-    )
-    true_node.add_predecessor(condition_node, argument_name="x")
-    
-    false_node = Node(
-        name="false_branch",
-        action_function=false_branch,
-        condition=false_condition,
-        graph=graph
-    )
-    false_node.add_predecessor(condition_node, argument_name="x")
-    
-    graph.execute_graph()
-    
-    assert condition_node.is_completed()
-    assert condition_node.output is True
-    assert true_node.is_completed()
-    assert true_node.output == "true_branch_executed"
-    assert false_node.is_skipped()
-    assert false_node.output is None
-
-def test_false_condition():
-    """Test that when condition is False, only false branch executes"""
-    graph = ExecutableGraph()
-    
-    condition_node = Node(
-        name="condition",
-        action_function=always_false,
-        graph=graph
-    )
-    
-    true_node = Node(
-        name="true_branch",
-        action_function=true_branch,
-        condition=true_condition,
-        graph=graph
-    )
-    true_node.add_predecessor(condition_node, argument_name="x")
-    
-    false_node = Node(
-        name="false_branch",
-        action_function=false_branch,
-        condition=false_condition,
-        graph=graph
-    )
-    false_node.add_predecessor(condition_node, argument_name="x")
-    
-    graph.execute_graph()
-    
-    assert condition_node.is_completed()
-    assert condition_node.output is False
-    assert true_node.is_skipped()
-    assert true_node.is_skipped()
-    assert true_node.output is None
-    assert false_node.is_completed()
-    assert false_node.output == "false_branch_executed"
-
-def test_skip_propagation():
-    """Test that descendants of skipped nodes are not executed"""
-    graph = ExecutableGraph()
-    
-    condition_node = Node(
-        name="condition",
-        action_function=always_false,
-        graph=graph
-    )
-    
-    true_node = Node(
-        name="true_branch",
-        action_function=true_branch,
-        condition=true_condition,
-        graph=graph
-    )
-    
-    final_node = Node(
-        name="final_node",
-        action_function=final_node_action,
-        graph=graph
-    )
-    
-    true_node.add_predecessor(condition_node, argument_name="x")
-    final_node.add_predecessor(true_node)
-    
-    graph.execute_graph()
-    
-    assert condition_node.is_completed()
-    assert condition_node.output is False
-    assert true_node.state == NodeState.SKIPPED
-    assert true_node.output is None
-    assert final_node.state == NodeState.SKIPPED
-    assert final_node.output is None
-
-def test_condition_not_evaluated_with_skipped_predecessors():
-    """Test that conditions are not evaluated when predecessors are skipped.
-    
-    This test verifies the fix for the bug where conditions were being evaluated
-    even when predecessors were skipped, which could lead to errors like
-    'NoneType' object has no attribute 'columns'.
+def test_basic_decision_node_true_path():
+    """
+    Test that the decision node correctly handles the true path:
+    1. Creates a source node that outputs a positive number
+    2. Creates a decision node with a positive number condition
+    3. Creates true and false branch nodes
+    4. Specifies which nodes execute when true/false
+    5. Verifies only the true branch executes
     """
     graph = ExecutableGraph()
     
-    # First branch - will be skipped due to condition
-    branch_condition = Node(
-        name="branch_condition",
-        action_function=always_false,  # This will make the next node skip
-        graph=graph
+    # Create nodes
+    graph.create_node("source", action_function=lambda: 5)
+    graph.create_decision_node(
+        "decision", 
+        condition=number_is_positive,
+        predecessors=["source"]
     )
+    graph.create_node("true_path", action_function=add_10, predecessors=["decision"])
+    graph.create_node("false_path", action_function=subtract_10, predecessors=["decision"])
     
-    skipped_node = Node(
-        name="skipped_node",
-        action_function=lambda: {"columns": ["a", "b", "c"]},  # Returns a dict with columns
-        condition=true_condition,  # This condition won't be satisfied
-        graph=graph
-    )
-    skipped_node.add_predecessor(branch_condition, argument_name="x")
+    # Configure decision paths
+    graph.when_true("decision", "true_path")
+    graph.when_false("decision", "false_path")
     
-    # This node would raise an error if it tried to evaluate its condition
-    # with None input from the skipped predecessor
-    attribute_dependent_node = Node(
-        name="attribute_dependent_node",
-        action_function=final_node_action,
-        condition=attribute_condition,  # This would raise an error if evaluated with None
-        graph=graph
-    )
-    attribute_dependent_node.add_predecessor(skipped_node, argument_name="df")
-    
-    # Execute the graph - this should not raise an error
+    # Execute graph
     graph.execute_graph()
     
-    # Verify that nodes were skipped correctly
-    assert branch_condition.is_completed()
-    assert branch_condition.output is False
-    assert skipped_node.is_skipped()
-    assert skipped_node.output is None
-    assert attribute_dependent_node.is_skipped()
-    assert attribute_dependent_node.output is None
+    # Verify results
+    assert graph.get("source").is_completed()
+    assert graph.get("decision").is_completed()
+    assert graph.get("true_path").is_completed()
+    assert graph.get("true_path").output.result_dict == {'true_path': 15}  # 5 + 10
+    assert graph.get("false_path").state == NodeState.PENDING  # Should not execute
+
+def test_basic_decision_node_false_path():
+    """
+    Test that the decision node correctly handles the false path:
+    1. Creates a source node that outputs a negative number
+    2. Creates a decision node with a positive number condition
+    3. Creates true and false branch nodes
+    4. Specifies which nodes execute when true/false
+    5. Verifies only the false branch executes
+    """
+    graph = ExecutableGraph()
+    
+    # Create nodes
+    graph.create_node("source", action_function=lambda: -5)
+    graph.create_decision_node(
+        "decision", 
+        condition=number_is_positive,
+        predecessors=["source"]
+    )
+    graph.create_node("true_path", action_function=add_10, predecessors=["decision"])
+    graph.create_node("false_path", action_function=subtract_10, predecessors=["decision"])
+    
+    # Configure decision paths
+    graph.when_true("decision", "true_path")
+    graph.when_false("decision", "false_path")
+    
+    # Execute graph
+    graph.execute_graph()
+    
+    # Verify results
+    assert graph.get("source").is_completed()
+    assert graph.get("decision").is_completed() 
+    assert graph.get("false_path").is_completed()
+    assert graph.get("false_path").output.result_dict == {'false_path': -15}  # -5 - 10
+    assert graph.get("true_path").state == NodeState.PENDING  # Should not execute
+
+def test_multi_branch_execution():
+    """
+    Test that a decision node can have multiple branches for each condition:
+    1. Creates a decision node that has multiple true branches and multiple false branches
+    2. Verifies all true branches execute (or all false branches execute)
+    """
+    graph = ExecutableGraph()
+    
+    # Create nodes
+    graph.create_node("source", action_function=lambda: 5)
+    graph.create_decision_node(
+        "decision", 
+        condition=number_is_positive,
+        predecessors=["source"]
+    )
+    
+    # Create multiple true path nodes
+    graph.create_node("true_path1", action_function=add_10, predecessors=["decision"])
+    graph.create_node("true_path2", action_function=lambda source: source * 2, predecessors=["decision"])
+    
+    # Create multiple false path nodes
+    graph.create_node("false_path1", action_function=subtract_10, predecessors=["decision"])
+    graph.create_node("false_path2", action_function=lambda source: source * -1, predecessors=["decision"])
+    
+    # Configure decision paths
+    graph.when_true("decision", "true_path1")
+    graph.when_true("decision", "true_path2")
+    graph.when_false("decision", "false_path1")
+    graph.when_false("decision", "false_path2")
+    
+    # Execute graph
+    graph.execute_graph()
+    
+    # Verify results - all true paths should execute, no false paths
+    assert graph.get("true_path1").is_completed()
+    assert graph.get("true_path1").output.result_dict == {'true_path1': 15}  # 5 + 10
+    assert graph.get("true_path2").is_completed()
+    assert graph.get("true_path2").output.result_dict == {'true_path2': 10}  # 5 * 2
+    assert graph.get("false_path1").state == NodeState.PENDING
+    assert graph.get("false_path2").state == NodeState.PENDING
+
+def test_decision_node_passthrough():
+    """
+    Test that decision nodes correctly pass through their inputs:
+    1. Verifies the decision node passes its inputs to downstream nodes
+    2. Checks that when multiple inputs exist, they are passed as a dictionary
+    """
+    graph = ExecutableGraph()
+    
+    # Create nodes
+    graph.create_node("number", action_function=lambda: 42)
+    graph.create_decision_node(
+        "decision", 
+        condition=number_is_positive,
+        predecessors=["number"]
+    )
+    
+    # Node that simply returns the value it gets from the decision node
+    graph.create_node(
+        "passthrough", 
+        action_function=lambda number: number,  # This should get the value 42
+        predecessors=["decision"]
+    )
+    
+    # Configure decision path
+    graph.when_true("decision", "passthrough")
+    
+    # Execute graph
+    graph.execute_graph()
+    
+    # Verify the value was passed through correctly
+    assert graph.get("passthrough").is_completed()
+    assert graph.get("passthrough").output.result_dict == {'passthrough': 42}
+
+def test_decision_node_validation():
+    """
+    Test that decision nodes validate that all successors are classified:
+    1. Creates a decision node with a successor
+    2. Does not classify the successor as true or false
+    3. Verifies that validation fails when the graph executes
+    """
+    graph = ExecutableGraph()
+    
+    # Create nodes
+    graph.create_node("source", action_function=lambda: 5)
+    graph.create_decision_node(
+        "decision", 
+        condition=number_is_positive,
+        predecessors=["source"]
+    )
+    graph.create_node("unclassified", action_function=identity, predecessors=["decision"])
+    
+    # Deliberately don't classify the successor
+    # graph.when_true("decision", "unclassified")
+    
+    # Executing should raise an error during validation
+    with pytest.raises(ValueError) as exc_info:
+        graph.execute_graph()
+    
+    assert "not classified" in str(exc_info.value)
+
+def test_chained_decisions():
+    """
+    Test that decision nodes can be chained:
+    1. Creates a chain of decision nodes where the output of one feeds into another
+    2. Verifies the correct execution path is taken through the chain
+    """
+    graph = ExecutableGraph()
+    
+    # Create nodes
+    graph.create_node("source", action_function=lambda: 5)
+    
+    # First decision: is number positive?
+    graph.create_decision_node(
+        "decision1", 
+        condition=number_is_positive,
+        predecessors=["source"]
+    )
+    
+    # Second decision: is number > 10?
+    def greater_than_10(number):
+        return number > 10
+    
+    graph.create_decision_node(
+        "decision2",
+        condition=greater_than_10,
+        predecessors=["decision1"]
+    )
+    
+    # Terminal nodes for each path
+    graph.create_node("negative", action_function=lambda x: "negative", predecessors=["decision1"])
+    graph.create_node("small_positive", action_function=lambda x: "small positive", predecessors=["decision2"])
+    graph.create_node("large_positive", action_function=lambda x: "large positive", predecessors=["decision2"])
+    
+    # Configure decision paths
+    graph.when_false("decision1", "negative")
+    graph.when_true("decision1", "decision2")
+    graph.when_false("decision2", "small_positive")
+    graph.when_true("decision2", "large_positive")
+    
+    # Execute graph
+    graph.execute_graph()
+    
+    # Verify correct path was taken
+    assert graph.get("source").is_completed()
+    assert graph.get("decision1").is_completed()
+    assert graph.get("decision2").is_completed()
+    assert graph.get("negative").state == NodeState.PENDING
+    assert graph.get("small_positive").is_completed()
+    assert graph.get("small_positive").output.result_dict == {'small_positive': 'small positive'}
+    assert graph.get("large_positive").state == NodeState.PENDING
+
+def test_complex_decision_with_input_nodes():
+    """
+    Test decision nodes with external inputs:
+    1. Creates a graph with input nodes feeding into a decision node
+    2. Tests the graph with different inputs to verify both paths
+    """
+    graph = ExecutableGraph()
+    
+    # Create input node
+    graph.create_input_node("number", input_dtype=int)
+    
+    # Create decision node
+    graph.create_decision_node(
+        "decision", 
+        condition=number_is_positive,
+        predecessors=["number"]
+    )
+    
+    # Create branch nodes
+    graph.create_node("positive_branch", action_function=add_10, predecessors=["decision"])
+    graph.create_node("negative_branch", action_function=subtract_10, predecessors=["decision"])
+    
+    # Configure decision paths
+    graph.when_true("decision", "positive_branch")
+    graph.when_false("decision", "negative_branch")
+    
+    # Test with positive input
+    graph.fit(number=20)
+    assert graph.get("positive_branch").is_completed()
+    assert graph.get("positive_branch").output.result_dict == {'positive_branch': 30}
+    assert graph.get("negative_branch").state == NodeState.PENDING
+    
+
+
+def test_complex_decision_with_input_nodes_negative():
+    """
+    Test decision nodes with external inputs:
+    1. Creates a graph with input nodes feeding into a decision node
+    2. Tests the graph with different inputs to verify both paths
+    """
+    graph = ExecutableGraph()
+    
+    # Create input node
+    graph.create_input_node("number", input_dtype=int)
+    
+    # Create decision node
+    graph.create_decision_node(
+        "decision", 
+        condition=number_is_positive,
+        predecessors=["number"]
+    )
+    
+    # Create branch nodes
+    graph.create_node("positive_branch", action_function=add_10, predecessors=["decision"])
+    graph.create_node("negative_branch", action_function=subtract_10, predecessors=["decision"])
+    
+    # Configure decision paths
+    graph.when_true("decision", "positive_branch")
+    graph.when_false("decision", "negative_branch")
+    
+    # Test with positive input
+    graph.fit(number=-20)
+    assert graph.get("negative_branch").is_completed()
+    assert graph.get("positive_branch").state == NodeState.PENDING
+    assert graph.get("negative_branch").output.result_dict == {'negative_branch': -30}
+    

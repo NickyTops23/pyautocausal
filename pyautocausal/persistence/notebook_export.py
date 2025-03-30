@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import networkx as nx
 import nbformat
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
@@ -39,23 +39,60 @@ class NotebookExporter:
         # TODO: Collect imports from node functions
         self.nb.cells.append(new_code_cell(imports))
     
+    def _is_exposed_wrapper(self, func) -> bool:
+        """Check if a function is decorated with expose_in_notebook."""
+        return hasattr(func, '_notebook_export_info') and func._notebook_export_info.get('is_wrapper', False)
+    
+    def _get_exposed_target_info(self, func) -> Tuple[Any, Dict[str, str]]:
+        """Get the target function and argument mapping from an exposed wrapper."""
+        if not self._is_exposed_wrapper(func):
+            return None, {}
+        
+        info = func._notebook_export_info
+        return info.get('target_function'), info.get('arg_mapping', {})
+    
     def _format_function_definition(self, node: Node) -> str:
         """Format the function definition for a node."""
         if isinstance(node, InputNode):
             return ""
             
         func = node.action_function
-        source = inspect.getsource(func)
         
-        # If it's a lambda, we need to convert it to a named function
+        # Check if this is an exposed wrapper function
+        if self._is_exposed_wrapper(func):
+            target_func, arg_mapping = self._get_exposed_target_info(func)
+            
+            # Get the source of both functions
+            wrapper_source = inspect.getsource(func)
+            target_source = inspect.getsource(target_func)
+            
+            # Format a comment explaining the wrapper relationship
+            mapping_str = ", ".join([f"'{wrapper}' → '{target}'" for wrapper, target in arg_mapping.items()])
+            comment = f"# This node uses a wrapper function that calls a target function with adapted arguments\n"
+            comment += f"# Argument mapping: {mapping_str}\n\n"
+            
+            # Get the target function's name
+            target_name = target_func.__name__
+            
+            # Create imports if the target function is from an external module
+            # TODO: This doesn't work for functions defined in pyautocausal
+            module_name = target_func.__module__
+            if module_name != '__main__':
+                import_statement = f"from {module_name} import {target_name}\n\n"
+                target_source = import_statement + target_source
+            
+            # Add both the target and wrapper
+            return target_source
+        
+        # Handle lambdas
+        source = inspect.getsource(func)
         if source.strip().startswith('lambda'):
             # Get the lambda body
             lambda_body = source.split(':')[1].strip()
             # Create a proper function definition
             source = f"def {node.name}_func(*args, **kwargs):\n    return {lambda_body}"
         
-        
-        return source
+        return source.strip()
     
     def _get_function_name_from_string(self, function_string: str) -> str:
         """Get the function name from a string."""
@@ -65,33 +102,70 @@ class NotebookExporter:
         """Format the function execution statement."""
         if isinstance(node, InputNode):
             return f"{node.name}_output = input_data['{node.name}']"
-            
-        arguments = dict()
+        
+        func = node.action_function
+        is_wrapper = self._is_exposed_wrapper(func)
+        
+        # Get default arguments from the wrapper function
+        default_args = {}
+        if is_wrapper:
+            signature = inspect.signature(func)
+            default_args = {
+                k: v.default for k, v in signature.parameters.items()
+                if v.default is not inspect.Parameter.empty
+            }
+        
+        arguments = dict(default_args)  # Start with defaults
         # Get predecessor outputs dictionary
-        predecessors = node.get_predecessors()
+        predecessors = self.graph.get_node_predecessors(node)
         if predecessors:
             for predecessor in predecessors:
-                edge = self.graph.edges[predecessor, node]
-                argument_name = edge.get('argument_name')
-                if argument_name:
-                    arguments[argument_name] = f"{predecessor.name}_output"
+                # if is_wrapper, use the argument name from the arg_mapping
+                if is_wrapper:
+                    _, arg_mapping = self._get_exposed_target_info(func)
+                    if predecessor.name in arg_mapping:
+                        arguments[arg_mapping[predecessor.name]] = f"{predecessor.name}_output"
                 else:
                     arguments[predecessor.name] = f"{predecessor.name}_output"
-        
+
+        repr_string_noop = lambda x: repr(x) if not isinstance(x, str) else x
         
         # Format argument string
-        args_str = ", ".join(f"{k}={v}" for k, v in arguments.items()) if arguments else ""
-
-        function_name = self._get_function_name_from_string(function_string)
+        args_str = ", ".join(f"{k}={repr_string_noop(v)}" for k, v in arguments.items()) if arguments else ""
         
+        # For wrapped functions, add a comment showing how to call the target directly
+        if is_wrapper:
+            _, arg_mapping = self._get_exposed_target_info(func)
+            
+            # For target function call, map the arguments according to the mapping
+            target_args = {}
+            for wrapper_arg, wrapper_value in arguments.items():
+                target_arg = arg_mapping.get(wrapper_arg, wrapper_arg)
+                target_args[target_arg] = wrapper_value
+            
+            target_args_str = ", ".join(f"{k}={repr(v)}" for k, v in target_args.items()) if target_args else ""
+            
+            # Get the target function's name
+            target_func = func._notebook_export_info['target_function']
+            target_name = target_func.__name__
+            
+            # Create both function calls, with the direct call commented out
+            function_name = self._get_function_name_from_string(function_string)
+            wrapper_call = f"{node.name}_output = {function_name}({args_str})"
+            target_call = f"# Alternatively, call the target function directly:\n# {node.name}_output = {target_name}({target_args_str})"
+            
+            return wrapper_call + "\n" + target_call
+        
+        # Normal case - just call the function
+        function_name = self._get_function_name_from_string(function_string)
         return f"{node.name}_output = {function_name}({args_str})"
     
     def _create_node_cells(self, node: Node) -> None:
         """Create cells for a single node's execution."""
         # Add markdown cell with node info
         info = f"## Node: {node.name}\n"
-        if hasattr(node, 'condition') and node.condition:
-            info += f"\nCondition: {node.condition.description}\n"
+        if node.node_description:
+            info += f"{node.node_description}\n"
         self.nb.cells.append(new_markdown_cell(info))
         
         # Add function definition if not an input node
@@ -107,6 +181,8 @@ class NotebookExporter:
         """Create cells for a single input node's execution."""
         # Add markdown cell with node info
         info = f"## Node: {node.name}\n"
+        if node.node_description:
+            info += f"{node.node_description}\n"
         self.nb.cells.append(new_markdown_cell(info))
         
         # Add execution cell which is just a comment telling the user to provide the input
