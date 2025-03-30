@@ -1,38 +1,55 @@
-# Descriptive Analysis Graph Requirements
+# Design document of stock Causal Inference Graph
 
 ## Overview
-The descriptive analysis graph serves as a precursor to causal inference methods, providing essential data exploration and validation steps within the PyAutoCausal framework.
+
+This document outlines the design of a causal inference pipeline that automates data validation, method selection, and analysis based on data characteristics. The pipeline implements standard causal inference workflows while enforcing best practices.
 
 ## Purpose
 1. Perform systematic exploratory data analysis (EDA) prior to causal modeling
 2. Validate assumptions required for causal inference methods
-3. Identify potential data quality issues or confounding factors
-4. Guide method selection based on data characteristics
+3. Guide method selection based on data characteristics
 
 ## Data Schema Requirements
 
 ### Input Requirements
-- Dataset file formats: csv, parquet, dataframe
-- Required columns:
-  - Outcome variable(s): prefix 'y', 'y_1', 'y_2', etc.
-  - Unit identifier: 'id_unit'
-  - Time variable: 'period'
-  - Treatment variable(s): prefix 'treat', 'treat_1', 'treat_2', etc.
-    - Binary treatment: coded as 0/1
-    - Continuous treatment: more than two values
-    - Other formats: return error
 
-- Optional columns:
-  - Covariates/controls: prefix 'x', 'x_1', 'x_2', etc.
-    - Continuous covariates: prefix 'x_cont', 'x_cont_1', etc.
-    - Categorical covariates: prefix 'x_cat', 'x_cat_1', etc.
-  - Treatment timing: 'treat_time'
-  - Additional unit-level identifiers: prefix 'id_', 'id_county', etc.
+#### Supported File Formats
+- CSV
+- Parquet 
+- Pandas DataFrame
+
+#### Required Columns
+| Column Type | Naming Convention | Description |
+|------------|------------------|-------------|
+| Outcome Variables | `y`, `y_1`, `y_2`, etc. | Target variables to measure causal effects |
+| Unit Identifier | `id_unit` | Unique identifier for each observational unit |
+| Time Variable | `period` | Time period indicator |
+| Treatment Variables | `treat`, `treat_1`, `treat_2`, etc. | Treatment indicators with formats: |
+|                    |                                      | • Binary: 0/1 coding |
+|                    |                                      | • Continuous: Multiple values |
+|                    |                                      | • Other formats will raise error |
+
+#### Optional Columns  
+| Column Type | Naming Convention | Description |
+|------------|------------------|-------------|
+| Covariates/Controls | `x`, `x_1`, `x_2`, etc. | Control variables |
+| Continuous Covariates | `x_cont`, `x_cont_1`, etc. | Numeric control variables |
+| Categorical Covariates | `x_cat`, `x_cat_1`, etc. | Categorical control variables |
+| Treatment Timing | `treat_time` | When treatment occurred |
+| Additional Unit IDs | `id_*` (e.g. `id_county`) | Secondary unit identifiers |
 
 ### Data Quality Requirements
-- Missing values: explicitly marked as NaN
-- Duplicates: removed or explicitly handled
-- Variable types: appropriate (e.g., dates as datetime)
+
+| Requirement | Description |
+|------------|-------------|
+| Missing Values | Must be explicitly marked as NaN/null values |
+| Duplicate Records | Must be either removed or explicitly handled with documented rationale |
+| Variable Types | Must match their semantic meaning: |
+|               | • Dates as datetime objects |
+|               | • Categories as categorical/factor types |
+|               | • Numeric values as appropriate numeric types |
+| Data Consistency | Values must be consistent within columns (e.g., consistent units) |
+| Data Range | Values must fall within valid/expected ranges for each variable |
 
 ## Primary Decision Points
 1. Data type (cross-sectional vs. panel/longitudinal)
@@ -42,22 +59,45 @@ The descriptive analysis graph serves as a precursor to causal inference methods
 5. Covariate balance between treatment groups
 6. Sample size adequacy for statistical power
 
-## Graph Flow
+# Graph Flow
+
+The graph proceeds in five main steps: (1) Preprocessing: validating and describing the data, (2) Specification Selection: determining the appropriate causal inference framework based on data characteristics, (3) Estimator Selection: choosing optimal estimation methods within the selected specification, (4) Model Estimation: fitting the selected models to the data, and (5) Post-estimation Analysis: generating model diagnostics, robustness checks, and interpretable outputs.
+
+
+```mermaid
+graph TD
+    A[Input Data] --> B[Preprocessing]
+    B --> C[Specification Selection]
+    C --> D[Estimator Selection]
+    D --> E[Post-estimation Output]
+
+    %% All nodes in this graph are action nodes
+    classDef actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black;
+    class A,B,C,D,E actionNode;
+
+```
+
+
+
+## Preprocessing
 
 This initial graph shows the basic data flow from input through validation, preprocessing, and descriptive analysis before entering the main analysis pipeline. It ensures data quality and prepares the dataset for causal analysis.
 
 ```mermaid
 graph TD
-    A[Input Data] --> B[Data Validation]
-    B --> B1[Schema Validation]
+    A[Input Data] --> B[Schema Validation]
     
-    B1 --> C[Preprocessing]
+    B --> C[Preprocessing]
     
     C --> D[Descriptives]
     D --> D1[Summary Statistics]
     D --> D2[Balancing Tables]
     
-    C --> E[Analysis Input]
+    C --> E[Analysis]
+    
+    %% All nodes in this graph are action nodes
+    classDef actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black;
+    class A,B,C,D,D1,D2,E actionNode;
 ```
 
 ## Analysis Graph Flow
@@ -70,28 +110,38 @@ Possible specifications are:
 - Staggered DiD
 - Santana DiD Specification
 
-
 ```mermaid
 graph TD
     E[Analysis Input] --> F[Analysis]
-    F --> F1[Check Multiple Periods]
+    F --> F1[Multiple Periods]
     
-    F1 -->|"No"| F3[Check Balance]
-    F3 -->|"Balanced"| F4[Stand. Specif.]
+    F1 -->|"False"| F4[Stand. Specif.]
      
-    F1 -->|"Yes"| F7[Check Treated Units]
-    F7 -->|"Equal 1"| F8[Stand. Specif]
-    F7 -->|"More than 1"| F10[Check Pre-periods]
+    F1 -->|"True"| F7[Multiple Treated Units]
+    F7 -->|"False"| F8[Stand. Specif]
+    F7 -->|"More than 1"| F10[Multiple Pre-periods]
     
-    F10 -->|"Only 1"| F13[Check Treatment Timing]
-    F10 -->|"More than 1"| F12[Test Parallel Trends]
-    
-    F12 --> F13[Check Treatment Timing]
-    
-    F13 -->|"Simultaneous"| F15[DiD Specif]
-    F13 -->|"Staggered"| F16[Staggered DiD]
-    F16 --> F17[DiD Spefic]
+    F10 -->|"False"| F13[Multiple Post Periods]
+    F10 -->|"True"| F12[Test Parallel Trends]
+
+    F12 --> F13
+
+    F13 -->|"False"| F15[DiD Specif]
+    F13 -->|"True"| F14[Staggered Treatment]
+
+    F14 -->|"False"| F15[DiD Specif]
+    F14 -->|"True"| F16[Staggered DiD]
+
+    F16 --> F17[DiD Specif]
     F16 --> F18[Santana DiD Specif]
+    
+    %% Node styling
+    classDef decisionNode fill:#ffe0b0,stroke:#e09040,stroke-width:2px,color:black;
+    classDef actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black;
+    
+    class F1,F3,F7,F10,F12,F14 decisionNode;
+    class E,F,F4,F8,F13,F15,F16,F17,F18 actionNode;
+
   ```
 
 ## Post-Specification Analysis Flow
@@ -100,19 +150,27 @@ After selecting a specification, the model refinements determines whether standa
 
 ```mermaid
 graph TD
-    S[Selected Specification] --> C1[Number of covariates]
-    S[Selected Specification] --> S1[Number of treated units]
+    S[Selected Specification] --> C1[High Dimensionality]
+    S[Selected Specification] --> S1[Single treated units]
 
-      C1 --> |"High Dim"| C2["DS Lasso"]
+    C1 --> |"True"| C2[DS Lasso]
     
-    C1 --> |"Low Dim"| B1[Check Balance]
+    C1 --> |"False"| B1[Balanced]
     
-    B1 -->|"Well Balanced"| M1[Standard OLS]
-    B1 -->|"Imbalanced"| W1[Apply weighting]
-    S1 -->|"One"| W1
+    B1 -->|"True"| M1[Standard OLS]
+    B1 -->|"False"| W1[Apply Weighting]
+    S1 -->|"True"| W1
 
     W1 --> M1[Standard OLS]
     W1 --> P1[Weighted OLS]
+    
+    %% Node styling
+    classDef decisionNode fill:#ffe0b0,stroke:#e09040,stroke-width:2px,color:black;
+    classDef actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black;
+    
+    class S1,C1,B1 decisionNode;
+    class S,C2,M1,W1,P1 actionNode;
+
 ```
 
 ## Post-Estimation Analysis Flow
@@ -127,65 +185,43 @@ graph TD
 
     S--> A1[Rest of Graph]
 
-   A1[Rest of Graph] --> A2[...]
+    A1[Rest of Graph] --> A2[...]
+    
+    %% All nodes in this graph are action nodes
+    classDef actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black;
+    class S,B1,B2,A1,A2 actionNode;
 
 ```
 
+## Node Color Legend
+
+- <span style="background-color:#ffe0b0; color:black; padding:2px 6px; border:2px solid #e09040;">Decision Nodes</span>: Points where the pipeline branches based on data characteristics
+- <span style="background-color:#d0e0ff; color:black; padding:2px 6px; border:2px solid #3080cf;">Action Nodes</span>: Processing steps, transformations, and outputs
+
 ## Node Overview
 
-### Data Processing Nodes
-- Input Data Node
-- Data Validation Node
-- Schema Validation Node
-- Preprocessing Node
-- Analysis Input Node
 
-### Descriptive Analysis Nodes
-- Summary Statistics Table Node
-- Balancing Tables Node
-- Missing Data Table Node
-- Outlier Table Node
+### Decision Nodes
 
-### Analysis Decision Nodes
-- Multiple Periods Check Node
-- Balance Check Node
-- Treated Units Check Node
-- Pre-periods Check Node
-- Parallel Trends Test Node
-- Treatment Timing Check Node
-- Covariates Count Check Node
+Decision nodes test a condition and allow conditional execution of downstream nodes when true or false
 
-### Specification Nodes
-- Standard Specification Node
-- DiD Specification Node
-- Staggered DiD Specification Node
-- Synthetic Control Specification Node
+### Action Nodes
 
-### Modeling Nodes
-- Standard OLS Node
-- Weighted OLS Node
-- Double Selection Lasso Node
-- Propensity Score Matching Node
-- DiD Node
-- Event Study Node
+Action nodes represent concrete processing steps and transformations in the pipeline:
 
-### Weighting Nodes
-- Propensity Score Matching Node
-- Synthetic Control Weighting Node
+#### Model Nodes
 
-### Output Nodes
-- Results Generation Node
-- Coefficient Table Node
-- Effect Plots Node
-- Diagnostic Tests Node
-- Model Output Node
-- Plot Output Node
+Model nodes implement specific estimation approaches wrapping packages like statsmodels or scikit and return baseestimator object
 
-### Post-Estimation Nodes
-These nodes will have to be model specific
-- Save Output Node
-- Save Plots Node
+#### Model Output Nodes
 
-## Node Requirements
+Model output nodes take as input some Baseestimator and return string that can be save to txt file
+
+
+#### Model Plot Nodes
+
+Model plot nodes take as input some Baseestimator and save image or pdf file. 
+
+
 
 
