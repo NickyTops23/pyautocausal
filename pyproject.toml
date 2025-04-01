@@ -14,6 +14,7 @@ matplotlib = "^3.8.3"
 pyarrow = "^18.1.0"
 statsmodels = "^0.14.1"
 nbformat = "^5.10.4"
+scikit-learn = "^1.6.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.2"
