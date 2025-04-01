@@ -1,198 +1,117 @@
 from pathlib import Path
 import pandas as pd
-from pyautocausal.pipelines.library.models import OLSNode, PSMNode, DiDNode
-from pyautocausal.pipelines.library.conditions import (
-    TimeConditions, TreatmentConditions, PeriodConditions
+from pyautocausal.pipelines.library.estimators import OLS, WOLS, DoubleLasso
+from pyautocausal.pipelines.library.balancing import SyntheticControl
+from pyautocausal.pipelines.library.specifications import (
+    StandardSpecification, DiDSpecification
 )
-from pyautocausal.orchestration.graph_builder import GraphBuilder
+from pyautocausal.pipelines.library.conditions import (
+    TimeConditions, TreatmentConditions
+)
 from pyautocausal.persistence.visualizer import visualize_graph
 from pyautocausal.persistence.notebook_export import NotebookExporter
 from pyautocausal.pipelines.mock_data import generate_mock_data
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-"""
-Heuristics for Selecting Causal Inference Methods:
-
-- **One Period:**
-  - Use OLS if groups are balanced.
-  - For unbalanced samples, apply balancing methods before estimation.
-
-- **Multiple Periods:**
-  - If there is a single treated unit, use Synthetic Control.
-  - With multiple treated units, use Difference-in-Differences (DiD).
-
-- **Multiple Pre-treatment Periods:**
-  - Check for parallel trends to validate the DiD approach.
-
-- **Multiple Pre and Post-treatment Periods:**
-  - Run an Event Study to analyze the dynamics of treatment effects.
-
-- **Staggered Treatment Adoption:**
-  - Adjust using advanced DiD techniques (e.g., based on Hautefeuille's work) to account for varying timings.
+from pyautocausal.orchestration.graph import ExecutableGraph
+from pyautocausal.orchestration.nodes import Node, DecisionNode, InputNode
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+import numpy as np
 
 
-Things to add:
-
-No pure control group?
-PSM Matching for DiD
-
-"""
-
-
-
-def create_causal_graph(output_path: Path):
-    """Create the causal graph using GraphBuilder."""
+def simple_graph(output_path: Path):
+    """Create a simplified causal graph without complex decision logic"""
     
-    # First create graph with condition nodes
-    graph = (GraphBuilder(output_path=output_path)
-                .add_input_node("df")
-                
-                # Single period branch
-                .create_node(
-                    name="single_period_true", 
-                    action_function=lambda df: df,
-                    condition=TimeConditions.multiple_periods(expected=False),
-                    predecessors={'df': 'df'}
-                )
-                
-                # Multiple periods branch
-                .create_node(
-                    name="single_period_false", 
-                    action_function=lambda df: df,
-                    condition=TimeConditions.multiple_periods(expected=True),
-                    predecessors={'df': 'df'}
-                )
-                
-                # Check number of treated units
-                .create_node(
-                    name="single_treated_true", 
-                    action_function=lambda df: df,
-                    condition=TreatmentConditions.multiple_treated_units(expected=False),
-                    predecessors={'df': 'single_period_false'}
-                )
-                .create_node(
-                    name="single_treated_false", 
-                    action_function=lambda df: df,
-                    condition=TreatmentConditions.multiple_treated_units(expected=True),
-                    predecessors={'df': 'single_period_false'}
-                )          
-                # Check if there are sufficient pre-periods
-                .create_node(
-                    name="multiple_pre_periods_true", 
-                    action_function=lambda df: df,
-                    condition=PeriodConditions.sufficient_pre_periods(expected=True, min_periods=2),
-                    predecessors={'df': 'single_treated_false'}
-                )
-                
-                # Check if there are sufficient post-periods
-                .create_node(
-                    name="multiple_post_periods_true", 
-                    action_function=lambda df: df,
-                    condition=PeriodConditions.sufficient_post_periods(expected=True, min_periods=2),
-                    predecessors={'df': 'multiple_pre_periods_true'}
-                )
-    )
+    # Create the main executable graph
+    graph = ExecutableGraph(output_path=output_path)
     
-    # Single Period Models
-    graph = (graph
-                .create_node(
-                    name="naive_ols",
-                    action_function=OLSNode.action,
-                    predecessors={'df': 'single_period_true'}
-                )
-                .create_node(
-                    name="output_naive_ols",
-                    action_function=OLSNode.output,
-                    predecessors={'model': 'naive_ols'},
-                    output_config=OutputConfig(
-                        output_filename="naive_ols_output",
-                        output_type=OutputType.TEXT
-                    ),
-                    save_node=True
-                )
-    )
+    # Add the input node for the dataframe
+    input_node = InputNode(name="df", input_dtype=pd.DataFrame)
+    graph.add_node(input_node)
 
-    graph = (graph
-                .create_node(
-                    name = 'psm_matching',
-                    action_function=lambda df: PSMNode.action(df, n_neighbors=PSMNode.n_neighbors, caliper=PSMNode.caliper),
-                    predecessors={'df': 'multiple_post_periods_true'}
-                )
-                .create_node(
-                    name = 'output_psm_matching',
-                    action_function=PSMNode.output,
-                    predecessors={'psm_output': 'psm_matching'},
-                    output_config=OutputConfig(
-                        output_filename="psm_matching_output",
-                        output_type=OutputType.TEXT
-                    ),
-                    save_node=True
-                )
-    )
+    # Register this node as an input node in the graph's input_nodes dictionary
+    graph._input_nodes["df"] = input_node
+
+    # Create decision nodes
+    graph.create_decision_node('multi_period', 
+                                condition= TimeConditions.has_multiple_periods.transform({'df': 'df_or_dict'}), 
+                                predecessors=["df"])
     
-    graph = (graph
-                .create_node(
-                    name="run_ols",
-                    action_function=OLSNode.action,
-                    condition=TreatmentConditions.imbalanced_covariates(expected=False),
-                    predecessors={'df': 'multiple_post_periods_true'}
-                )
-                .create_node(
-                    name = 'output_run_ols',
-                    action_function=OLSNode.output,
-                    predecessors={'model': 'run_ols'},
-                    output_config=OutputConfig(
-                        output_filename="run_ols_output",   
-                        output_type=OutputType.TEXT
-                    ),
-                    save_node=True
-                )
-    )
+    # First branch for standard specification using OLS
+    # Create specification nodes
+    graph.create_node('stand_spec', 
+                    action_function=StandardSpecification.action.transform({'df': 'df'}), 
+                    predecessors=["multi_period"])
 
-    # DiD Implementation
-    graph = (graph
-                .create_node(
-                    name="run_did",
-                    action_function=DiDNode.action,
-                    predecessors={'df': 'multiple_post_periods_true'}
-                )
-                .create_node(
-                    name = 'output_run_did',
-                    action_function=DiDNode.output,
-                    predecessors={'model': 'run_did'},
-                    output_config=OutputConfig(
-                        output_filename="run_did_output",
-                        output_type=OutputType.TEXT
-                    ),
-                    save_node=True
-                )
-    )
+
+    # Create OLS nodes with transformed parameter names - transform mapping: {'node_output': 'func_param'}
+    graph.create_node('ols_stand', 
+                     action_function=OLS.action.transform({'stand_spec': 'inputs'}),
+                     predecessors=["stand_spec"])
+
+
+    # Add output formatting nodes with transformed parameter names
+    graph.create_node('ols_stand_output',
+                     action_function=OLS.output.transform({'ols_stand': 'model'}),
+                     output_config=OutputConfig(output_filename='ols_stand_output', output_type=OutputType.TEXT),
+                     save_node=True,
+                     predecessors=["ols_stand"])
     
-    return graph
+    # Second branch for DiD specification using OLS and potentially synthetic control
+    graph.create_node('did_spec', 
+                    action_function=DiDSpecification.action.transform({'df': 'df'}),           
+                    predecessors=["multi_period"])
 
+
+    # Check whether to use synthetic control for if there is only one treated unit
+    graph.create_decision_node('multi_treated_units', 
+                     condition= TreatmentConditions.has_multiple_treated_units.transform({'did_spec': 'df_or_dict'}),
+                     predecessors=["did_spec"])
+    # If True, use OLS
+    graph.create_node('ols_did', 
+                     action_function=OLS.action.transform({'did_spec': 'inputs'}),
+                     predecessors=["multi_treated_units"])
+    
+    graph.create_node('ols_did_output',
+                    action_function=OLS.output.transform({'ols_did': 'model'}),
+                    output_config=OutputConfig(output_filename='ols_did_output', output_type=OutputType.TEXT),
+                    save_node=True,
+                    predecessors=["ols_did"])
+    
+    # If False, use synthetic control
+    graph.create_node('synth_control', 
+                     action_function=SyntheticControl.compute_weights.transform({'did_spec': 'inputs'}),
+                     predecessors=["multi_treated_units"])
+
+    graph.create_node('wols_did_synth', 
+                     action_function=WOLS.action.transform({'synth_control': 'inputs'}),
+                     predecessors=["synth_control"])
+
+    graph.create_node('wols_did_synth_output',
+                     action_function=WOLS.output.transform({'wols_did_synth': 'model'}),
+                     output_config=OutputConfig(output_filename='wols_did_synth_output', output_type=OutputType.TEXT),
+                     save_node=True,
+                     predecessors=["wols_did_synth"])
+    
+    # Configure decision paths
+    graph.when_false("multi_period", "stand_spec")
+    graph.when_true("multi_period", "did_spec")
+    graph.when_false("multi_treated_units", "synth_control")
+    graph.when_true("multi_treated_units", "ols_did")
+    
+    return graph  # Return the graph object
 
 if __name__ == "__main__":
-    path = Path("output")
+    # Run the simple example without the graph structure
+    path = Path('output')
     path.mkdir(parents=True, exist_ok=True)
+    graph = simple_graph(path)
     
-    # Create graph
-    graph = create_causal_graph(path)
+    # Generate mock data with more units for proper synthetic control
+    data = generate_mock_data(n_units=5, n_periods=6, n_treated=1)
     
-    # Build and visualize the graph
-    graph = graph.build()  # Need to call build() to finalize the graph
+    graph.fit(df=data)
 
-    data = generate_mock_data(
-        n_units=200,
-        n_periods=4,
-        n_treated=100,
-        treatment_effect=2.0,
-        random_seed=42
-    )
-    
-    data.to_csv("data.csv", index=False)
-    # Fit graph
-    graph.fit(df= data)
-
-    # Visualize graph
-    visualize_graph(graph, path / "causal_graph.png")
+    visualize_graph(graph, save_path=str(path / "simple_graph.png"))
     exporter = NotebookExporter(graph)
-    exporter.export_notebook(str(path / "causal_graph.ipynb"))
+    exporter.export_notebook(path / "simple_graph.ipynb")

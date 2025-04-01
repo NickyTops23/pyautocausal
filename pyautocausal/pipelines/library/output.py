@@ -7,7 +7,37 @@ from sklearn.base import BaseEstimator
 
 def StatsmodelsOutputAction(model: BaseEstimator) -> str:
     buffer = io.StringIO()
-    buffer.write(str(model.summary()))
+    
+    try:
+        # First try to get the standard summary
+        buffer.write(str(model.summary()))
+    except Exception as e:
+        # If the standard summary fails, try to create a simplified summary
+        buffer.write(f"Error generating standard model summary: {str(e)}\n\n")
+        buffer.write(f"Model Type: {type(model).__name__}\n\n")
+        
+        # Basic model parameters that are likely to be available
+        buffer.write("Basic Model Information:\n")
+        if hasattr(model, 'params'):
+            buffer.write("\nParameters:\n")
+            buffer.write(str(model.params))
+            
+        if hasattr(model, 'pvalues'):
+            buffer.write("\n\nP-values:\n")
+            try:
+                buffer.write(str(model.pvalues))
+            except:
+                buffer.write("Unable to generate p-values")
+                
+        if hasattr(model, 'rsquared'):
+            try:
+                buffer.write(f"\n\nR-squared: {model.rsquared}")
+            except:
+                pass
+                
+        if hasattr(model, 'nobs'):
+            buffer.write(f"\n\nObservations: {model.nobs}")
+                
     return buffer.getvalue()
 
 def ScikitLearnOutputAction(model: BaseEstimator) -> str:
