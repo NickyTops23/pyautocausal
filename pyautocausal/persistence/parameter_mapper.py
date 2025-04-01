@@ -1,0 +1,96 @@
+from typing import Callable, Dict, Any, TypeVar, ParamSpec
+from functools import wraps
+import inspect
+from pyautocausal.persistence.notebook_decorators import expose_in_notebook
+
+P = ParamSpec('P')
+R = TypeVar('R')
+
+class TransformableFunction:
+    """Base class for functions that support method chaining for parameter renaming."""
+    
+    def __init__(self, func: Callable[P, R]):
+        self._func = func
+        # Store the original function's signature and return annotation
+        self._signature = inspect.signature(func)
+        self._return_annotation = self._signature.return_annotation
+    
+    def transform(self, arg_mapping: Dict[str, str]) -> Callable[P, R]:
+        """
+        Transform the function's parameter names using the provided mapping.
+        
+        Args:
+            arg_mapping: Dictionary mapping external parameter names to function parameter names
+                        e.g., {'node_output': 'func_param'} means node output named 'node_output' 
+                        maps to this function's parameter 'func_param'
+        
+        Returns:
+            A wrapped function with renamed parameters
+        """
+        # Create a reverse mapping for parameter inspection
+        reverse_mapping = {v: k for k, v in arg_mapping.items()}
+        
+        @wraps(self._func)
+        def wrapper(*args, **kwargs) -> R:
+            # Map the arguments according to the mapping
+            mapped_kwargs = {}
+            for external_name, func_param in arg_mapping.items():
+                if external_name in kwargs:
+                    mapped_kwargs[func_param] = kwargs.pop(external_name)
+            
+            # Pass all arguments including mapped ones
+            return self._func(*args, **{**kwargs, **mapped_kwargs})
+        
+        # Preserve the return type annotation
+        wrapper.__annotations__['return'] = self._return_annotation
+        
+        # Store the argument mapping on the wrapper function for debugging
+        wrapper._arg_mapping = arg_mapping
+        
+        # Create a customized inspect.signature for the wrapper function
+        original_sig = self._signature
+        parameters = list(original_sig.parameters.values())
+        
+        # Replace parameter names according to the reverse mapping
+        # This is critical for _resolve_function_arguments to work correctly
+        modified_parameters = []
+        for param in parameters:
+            if param.name in reverse_mapping:
+                # Create a new parameter with the external name
+                from inspect import Parameter
+                modified_param = Parameter(
+                    name=reverse_mapping[param.name],
+                    kind=param.kind,
+                    default=param.default,
+                    annotation=param.annotation
+                )
+                modified_parameters.append(modified_param)
+            else:
+                modified_parameters.append(param)
+        
+        # Create a new signature with the modified parameters
+        from inspect import Signature
+        modified_sig = Signature(
+            parameters=modified_parameters,
+            return_annotation=original_sig.return_annotation
+        )
+        
+        # Attach the modified signature to the wrapper function
+        wrapper.__signature__ = modified_sig
+        
+        # Apply expose_in_notebook to the wrapper
+        return expose_in_notebook(self._func, arg_mapping=arg_mapping)(wrapper)
+    
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        """Make the TransformableFunction callable, returning original function result"""
+        return self._func(*args, **kwargs)
+    
+    def __get__(self, obj: Any, objtype: Any = None) -> 'TransformableFunction':
+        """Support for method decorators."""
+        if obj is None:
+            return self
+        return TransformableFunction(self._func.__get__(obj, objtype))
+
+def make_transformable(func: Callable[P, R]) -> TransformableFunction:
+    """Decorator to make a function or method support parameter transformation."""
+    return TransformableFunction(func) 
