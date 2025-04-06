@@ -32,7 +32,7 @@ jobs:
       
       - name: Install dependencies
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction --no-root --only main,test
+        run: poetry install --no-interaction --no-root
       
       - name: Run tests
         run: poetry run pytest tests/
