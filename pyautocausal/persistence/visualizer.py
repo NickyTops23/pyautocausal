@@ -1,104 +1,198 @@
-import networkx as nx
-import matplotlib.pyplot as plt
-from collections import defaultdict
-from typing import Dict, Any, Optional
 import logging
+from typing import Dict, Optional, Set
+import os
+from enum import Enum
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def get_node_style(node) -> str:
+    """Get mermaid style for nodes based on their state"""
+    # Base style format string
+    style_format = "style {node_id} fill:{fill_color},stroke:{stroke_color},stroke-width:2px,color:black"
+    
+    # Default colors based on state
+    fill_color = "lightblue"  # Default color (PENDING)
+    stroke_color = "#3080cf"  # Default stroke color
+    
+    # Set colors based on state if available
+    if hasattr(node, 'state'):
+        state_name = node.state.name if isinstance(node.state, Enum) else str(node.state)
+        if state_name == 'COMPLETED':
+            fill_color = "lightgreen"
+        elif state_name == 'FAILED':
+            fill_color = "salmon"
+        elif state_name == 'RUNNING':
+            fill_color = "yellow"
+    
+    return style_format.format(node_id="{node_id}", fill_color=fill_color, stroke_color=stroke_color)
+
+def is_decision_node(node) -> bool:
+    """Check if a node is a decision node"""
+    # Check if the node is an instance of DecisionNode
+    if hasattr(node, '__class__') and hasattr(node.__class__, '__name__'):
+        if node.__class__.__name__ == 'DecisionNode':
+            return True
+    
+    # Also check for duck typing - if it has the key attributes of a decision node
+    if (hasattr(node, '_ewt_nodes') and 
+        hasattr(node, '_ewf_nodes') and 
+        hasattr(node, 'condition_satisfied')):
+        return True
+    
+    return False
+
 def visualize_graph(graph, save_path, return_positions=False, return_labels=False):
     """
-    Visualize the provided graph as a static image in a bottom-to-top (decision tree) layout.
+    Visualize the provided graph as a mermaid flowchart within a markdown file.
     
     Parameters:
         graph (nx.DiGraph): The directed graph (e.g., an instance of ExecutableGraph) to visualize.
-        save_path (str): The file path where the resulting image will be saved.
-        return_positions (bool): If True, return the node positions (for testing).
-        return_labels (bool): If True, return the node labels (for testing).
-        
+        save_path (str): The file path where the resulting markdown file will be saved.
+                         Should end with .md extension.
+        return_positions (bool): Not used with mermaid, kept for backward compatibility.
+        return_labels (bool): Not used with mermaid, kept for backward compatibility.
+    
     Returns:
-        dict: Node positions if return_positions is True
-        dict: Node labels if return_labels is True
+        None
     """
     try:
         # Validate input
-        if not isinstance(graph, nx.DiGraph):
-            raise ValueError("Input must be a NetworkX DiGraph")
-        
         if len(graph) == 0:
             raise ValueError("Graph is empty")
+        
+        # Ensure the file extension is .md
+        file_path, ext = os.path.splitext(save_path)
+        if not ext or ext.lower() != '.md':
+            save_path = file_path + '.md'
+            logger.info(f"Changed save path to {save_path} to ensure markdown format")
             
-        # Close all existing figures
-        plt.close('all')
+        # Start building the mermaid diagram
+        markdown_lines = ["# Graph Visualization", "", "## Executable Graph"]
+        mermaid_lines = ["```mermaid", "graph TD"]
         
-        # Get input nodes (nodes with no predecessors)
-        input_nodes = [n for n in graph.nodes() if len(list(graph.predecessors(n))) == 0]
-        if not input_nodes:
-            raise ValueError("Graph must have at least one input node")
+        # Add node definitions
+        node_styles = []
+        node_ids = {}
         
-        # Group nodes by their level
-        levels = defaultdict(list)
-        for node in graph.nodes():
-            paths = []
-            for input_node in input_nodes:
-                try:
-                    node_paths = list(nx.all_simple_paths(graph, input_node, node))
-                    paths.extend([len(p) for p in node_paths])
-                except nx.NetworkXNoPath:
-                    continue
+        # Track if we have any decision nodes
+        has_decision_nodes = False
+        
+        # Create unique, safe IDs for each node
+        for i, node in enumerate(graph.nodes()):
+            # Create a safe ID without special characters
+            safe_id = f"node{i}"
+            node_ids[node] = safe_id
             
-            level = max(paths) if paths else 0
-            levels[level].append(node)
+            # Add node with label
+            node_label = node.name if hasattr(node, 'name') else str(node)
+            
+            # Use diamond shape for decision nodes, rectangle for action nodes
+            if is_decision_node(node):
+                has_decision_nodes = True
+                mermaid_lines.append(f"    {safe_id}{{{node_label}}}")  # Diamond shape for decision nodes
+            else:
+                mermaid_lines.append(f"    {safe_id}[{node_label}]")  # Rectangle for action nodes
+            
+            # Get node style based on state
+            style_template = get_node_style(node)
+            node_styles.append(style_template.format(node_id=safe_id))
         
-        if not levels:
-            raise ValueError("Failed to calculate node levels")
+        # Add edges with conditional labels for decision nodes
+        for src, dst in graph.edges():
+            edge_label = ""
+            
+            # Check if it's a decision node with execute-when-true/false edges
+            if is_decision_node(src):
+                if hasattr(src, '_ewt_nodes') and dst in src._ewt_nodes:
+                    edge_label = "|True|"
+                elif hasattr(src, '_ewf_nodes') and dst in src._ewf_nodes:
+                    edge_label = "|False|"
+            
+            mermaid_lines.append(f"    {node_ids[src]} -->{edge_label} {node_ids[dst]}")
         
-        # Calculate positions
-        pos = {}
-        max_level = max(levels.keys()) if levels else 0
+        # Add class definitions
+        mermaid_lines.extend([
+            "",
+            "    %% Node styling",
+            "    classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;",
+            "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;",
+            "    classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;",
+            "    classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;",
+        ])
         
-        for level, nodes in levels.items():
-            width = len(nodes)
-            for i, node in enumerate(nodes):
-                x = (i - (width - 1) / 2) / max(width - 1, 1)
-                y = -level / max(max_level, 1)
-                pos[node] = (x, y)
+        # Add individual node styles
+        for style in node_styles:
+            mermaid_lines.append(f"    {style}")
         
-        # Create labels dictionary using just the node names
-        labels = {node: node.name for node in graph.nodes()}
+        # End the mermaid diagram
+        mermaid_lines.append("```")
         
-        # Create the figure and draw
-        plt.figure(figsize=(12, 8))
-        nx.draw(
-            graph,
-            pos,
-            labels=labels,
-            with_labels=True,
-            arrows=True,
-            node_size=2000,
-            node_color='lightblue',
-            font_size=10,
-            font_weight='bold',
-            edge_color='gray',
-            arrowsize=20
-        )
-        plt.title("Executable Graph Visualization")
+        # Add legend as a separate section after the diagram
+        legend_lines = [
+            "",
+            "## Node Legend",
+            "",
+            "### Node Types"
+        ]
         
-        # Save the static image
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        # Use mermaid to display node shapes correctly
+        legend_lines.extend([
+            "```mermaid",
+            "graph LR",
+            "    actionNode[Action Node]",
+            "    style actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black"
+        ])
         
-        # Return values for testing if requested
+        if has_decision_nodes:
+            legend_lines.extend([
+                "    decisionNode{Decision Node}",
+                "    style decisionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black"
+            ])
+        
+        legend_lines.append("```")
+        
+        # Add node state legend
+        legend_lines.extend([
+            "",
+            "### Node States",
+            "```mermaid",
+            "graph LR",
+            "    pendingNode[Pending]:::pendingNode",
+            "    runningNode[Running]:::runningNode",
+            "    completedNode[Completed]:::completedNode",
+            "    failedNode[Failed]:::failedNode",
+            "",
+            "    classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;",
+            "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;", 
+            "    classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;",
+            "    classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;",
+            "```",
+            "",
+            "Node state coloring indicates the execution status of each node in the graph.",
+            ""
+        ])
+        
+        # Combine markdown, mermaid, and legend content
+        markdown_content = '\n'.join(markdown_lines + [''] + mermaid_lines + legend_lines)
+        
+        # Write to markdown file
+        with open(save_path, 'w') as f:
+            f.write(markdown_content)
+        
+        logger.info(f"Graph visualization saved as markdown to {save_path}")
+        
+        # These parameters are ignored but kept for backward compatibility
         if return_positions and return_labels:
-            return pos, labels
+            return {}, {}
         elif return_positions:
-            return pos
+            return {}
         elif return_labels:
-            return labels
+            return {}
         
     except Exception as e:
-        logger.error(f"Error visualizing graph: {str(e)}")
+        logger.error(f"Error visualizing graph with mermaid: {str(e)}")
         raise
 
 # For convenience, if someone runs this module directly
