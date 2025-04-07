@@ -1,12 +1,13 @@
 from pathlib import Path
 import pandas as pd
-from pyautocausal.pipelines.library.estimators import OLS, WOLS, DoubleLasso
-from pyautocausal.pipelines.library.balancing import SyntheticControl
+from pyautocausal.pipelines.library.estimators import fit_ols, fit_weighted_ols, fit_double_lasso
+from pyautocausal.pipelines.library.output import write_statsmodels_summary
+from pyautocausal.pipelines.library.balancing import compute_synethetic_control_weights
 from pyautocausal.pipelines.library.specifications import (
-    StandardSpecification, DiDSpecification
+    create_cross_sectional_specification, create_did_specification
 )
 from pyautocausal.pipelines.library.conditions import (
-    TimeConditions, TreatmentConditions
+    has_multiple_periods, has_multiple_treated_units,
 )
 from pyautocausal.persistence.visualizer import visualize_graph
 from pyautocausal.persistence.notebook_export import NotebookExporter
@@ -26,21 +27,18 @@ def simple_graph(output_path: Path):
     graph = ExecutableGraph(output_path=output_path)
     
     # Add the input node for the dataframe
-    input_node = InputNode(name="df", input_dtype=pd.DataFrame)
-    graph.add_node(input_node)
-
-    # Register this node as an input node in the graph's input_nodes dictionary
-    graph._input_nodes["df"] = input_node
+    
+    graph.create_input_node("df", input_dtype=pd.DataFrame)
 
     # Create decision nodes
     graph.create_decision_node('multi_period', 
-                                condition= TimeConditions.has_multiple_periods.transform({'df': 'df_or_dict'}), 
+                                condition= has_multiple_periods.get_function(), 
                                 predecessors=["df"])
     
     # First branch for standard specification using OLS
     # Create specification nodes
     graph.create_node('stand_spec', 
-                    action_function=StandardSpecification.validate_and_describe_data.transform({'df': 'df'}), 
+                    action_function=create_cross_sectional_specification.transform({'df': 'data'}), 
                     predecessors=["multi_period"])
 
 
@@ -52,20 +50,20 @@ def simple_graph(output_path: Path):
 
     # Add output formatting nodes with transformed parameter names
     graph.create_node('ols_stand_output',
-                     action_function=OLS.output.transform({'ols_stand': 'model'}),
+                     action_function=write_statsmodels_summary.transform({'ols_stand': 'res'}),
                      output_config=OutputConfig(output_filename='ols_stand_output', output_type=OutputType.TEXT),
                      save_node=True,
                      predecessors=["ols_stand"])
     
     # Second branch for DiD specification using OLS and potentially synthetic control
     graph.create_node('did_spec', 
-                    action_function=DiDSpecification.action.transform({'df': 'df'}),           
+                    action_function=create_did_specification.transform({'df': 'data'}),           
                     predecessors=["multi_period"])
 
 
     # Check whether to use synthetic control for if there is only one treated unit
     graph.create_decision_node('multi_treated_units', 
-                     condition= TreatmentConditions.has_multiple_treated_units.transform({'did_spec': 'df_or_dict'}),
+                     condition= lambda x: has_multiple_treated_units.get_function()(x.data),
                      predecessors=["did_spec"])
     # If True, use OLS
     graph.create_node('ols_did', 
@@ -73,22 +71,22 @@ def simple_graph(output_path: Path):
                      predecessors=["multi_treated_units"])
     
     graph.create_node('ols_did_output',
-                    action_function=OLS.output.transform({'ols_did': 'model'}),
+                    action_function=write_statsmodels_summary.transform({'ols_did': 'res'}),
                     output_config=OutputConfig(output_filename='ols_did_output', output_type=OutputType.TEXT),
                     save_node=True,
                     predecessors=["ols_did"])
     
     # If False, use synthetic control
     graph.create_node('synth_control', 
-                     action_function=SyntheticControl.compute_weights.transform({'did_spec': 'inputs'}),
+                     action_function=compute_synethetic_control_weights.get_function(),
                      predecessors=["multi_treated_units"])
 
     graph.create_node('wols_did_synth', 
-                     action_function=Wfit_ols.transform({'synth_control': 'inputs'}),
+                     action_function=fit_weighted_ols.transform({'synth_control': 'inputs'}),
                      predecessors=["synth_control"])
 
     graph.create_node('wols_did_synth_output',
-                     action_function=WOLS.output.transform({'wols_did_synth': 'model'}),
+                     action_function=write_statsmodels_summary.transform({'wols_did_synth': 'res'}),
                      output_config=OutputConfig(output_filename='wols_did_synth_output', output_type=OutputType.TEXT),
                      save_node=True,
                      predecessors=["wols_did_synth"])

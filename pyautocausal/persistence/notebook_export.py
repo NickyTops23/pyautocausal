@@ -82,7 +82,7 @@ class NotebookExporter:
                 target_source = import_statement + target_source
             
             # Add both the target and wrapper
-            return comment + target_source + "\n\n" + wrapper_source
+            return target_source
         
         # Handle lambdas
         source = inspect.getsource(func)
