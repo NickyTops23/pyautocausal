@@ -1,66 +1,68 @@
 from typing import Optional
 import io
 import statsmodels.api as sm
+from statsmodels.base.model import Results
 from sklearn.base import BaseEstimator
+from pyautocausal.persistence.parameter_mapper import make_transformable
 
-
-
-def StatsmodelsOutputAction(model: BaseEstimator) -> str:
+@make_transformable
+def write_statsmodels_summary(res: Results ) -> str:
     buffer = io.StringIO()
     
     try:
         # First try to get the standard summary
-        buffer.write(str(model.summary()))
+        buffer.write(str(res.summary()))
     except Exception as e:
         # If the standard summary fails, try to create a simplified summary
         buffer.write(f"Error generating standard model summary: {str(e)}\n\n")
-        buffer.write(f"Model Type: {type(model).__name__}\n\n")
+        buffer.write(f"Model Type: {type(res).__name__}\n\n")
         
         # Basic model parameters that are likely to be available
         buffer.write("Basic Model Information:\n")
-        if hasattr(model, 'params'):
+        if hasattr(res, 'params'):
             buffer.write("\nParameters:\n")
-            buffer.write(str(model.params))
+            buffer.write(str(res.params))
             
-        if hasattr(model, 'pvalues'):
+        if hasattr(res, 'pvalues'):
             buffer.write("\n\nP-values:\n")
             try:
-                buffer.write(str(model.pvalues))
+                buffer.write(str(res.pvalues))
             except:
                 buffer.write("Unable to generate p-values")
                 
-        if hasattr(model, 'rsquared'):
+        if hasattr(res, 'rsquared'):
             try:
-                buffer.write(f"\n\nR-squared: {model.rsquared}")
+                buffer.write(f"\n\nR-squared: {res.rsquared}")
             except:
                 pass
                 
-        if hasattr(model, 'nobs'):
-            buffer.write(f"\n\nObservations: {model.nobs}")
+        if hasattr(res, 'nobs'):
+            buffer.write(f"\n\nObservations: {res.nobs}")
                 
     return buffer.getvalue()
 
-def ScikitLearnOutputAction(model: BaseEstimator) -> str:
+@make_transformable
+def write_sklearn_summary(res: BaseEstimator) -> str:
     output = []
-    output.append(f"Model Type: {type(model).__name__}")
+    output.append(f"Model Type: {type(res).__name__}")
     output.append("\nModel Parameters:")
-    output.append(str(model.get_params()))
+    output.append(str(res.get_params()))
     
-    if hasattr(model, 'classes_'):
+    if hasattr(res, 'classes_'):
         output.append("\nClasses:")
-        output.append(str(model.classes_))
+        output.append(str(res.classes_))
         
-    if hasattr(model, 'feature_importances_'):
+    if hasattr(res, 'feature_importances_'):
         output.append("\nFeature Importances:")
-        output.append(str(model.feature_importances_))
+        output.append(str(res.feature_importances_))
         
-    if hasattr(model, 'coef_'):
+    if hasattr(res, 'coef_'):
         output.append("\nCoefficients:")
-        output.append(str(model.coef_))
+        output.append(str(res.coef_))
         
-    if hasattr(model, 'score'):
+    if hasattr(res, 'score'):
         output.append("\nModel Score:")
-        output.append(str(model.score))
+        output.append(str(res.score))
         
     return '\n'.join(output)
 

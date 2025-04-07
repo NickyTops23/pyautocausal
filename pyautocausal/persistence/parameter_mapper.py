@@ -2,6 +2,7 @@ from typing import Callable, Dict, Any, TypeVar, ParamSpec
 from functools import wraps
 import inspect
 from pyautocausal.persistence.notebook_decorators import expose_in_notebook
+from inspect import Signature
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -15,6 +16,9 @@ class TransformableFunction:
         self._signature = inspect.signature(func)
         self._return_annotation = self._signature.return_annotation
     
+    def get_function(self) -> Callable[P, R]:
+        return self._func
+
     def transform(self, arg_mapping: Dict[str, str]) -> Callable[P, R]:
         """
         Transform the function's parameter names using the provided mapping.
@@ -69,7 +73,7 @@ class TransformableFunction:
                 modified_parameters.append(param)
         
         # Create a new signature with the modified parameters
-        from inspect import Signature
+        
         modified_sig = Signature(
             parameters=modified_parameters,
             return_annotation=original_sig.return_annotation

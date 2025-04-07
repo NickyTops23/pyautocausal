@@ -40,13 +40,13 @@ def simple_graph(output_path: Path):
     # First branch for standard specification using OLS
     # Create specification nodes
     graph.create_node('stand_spec', 
-                    action_function=StandardSpecification.action.transform({'df': 'df'}), 
+                    action_function=StandardSpecification.validate_and_describe_data.transform({'df': 'df'}), 
                     predecessors=["multi_period"])
 
 
     # Create OLS nodes with transformed parameter names - transform mapping: {'node_output': 'func_param'}
     graph.create_node('ols_stand', 
-                     action_function=OLS.action.transform({'stand_spec': 'inputs'}),
+                     action_function=fit_ols.transform({'stand_spec': 'inputs'}),
                      predecessors=["stand_spec"])
 
 
@@ -69,7 +69,7 @@ def simple_graph(output_path: Path):
                      predecessors=["did_spec"])
     # If True, use OLS
     graph.create_node('ols_did', 
-                     action_function=OLS.action.transform({'did_spec': 'inputs'}),
+                     action_function=fit_ols.transform({'did_spec': 'inputs'}),
                      predecessors=["multi_treated_units"])
     
     graph.create_node('ols_did_output',
@@ -84,7 +84,7 @@ def simple_graph(output_path: Path):
                      predecessors=["multi_treated_units"])
 
     graph.create_node('wols_did_synth', 
-                     action_function=WOLS.action.transform({'synth_control': 'inputs'}),
+                     action_function=Wfit_ols.transform({'synth_control': 'inputs'}),
                      predecessors=["synth_control"])
 
     graph.create_node('wols_did_synth_output',

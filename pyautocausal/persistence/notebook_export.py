@@ -152,9 +152,8 @@ class NotebookExporter:
             # Create both function calls, with the direct call commented out
             function_name = self._get_function_name_from_string(function_string)
             wrapper_call = f"{node.name}_output = {function_name}({args_str})"
-            target_call = f"# Alternatively, call the target function directly:\n# {node.name}_output = {target_name}({target_args_str})"
             
-            return wrapper_call + "\n" + target_call
+            return wrapper_call
         
         # Normal case - just call the function
         function_name = self._get_function_name_from_string(function_string)

@@ -9,11 +9,6 @@ from pyautocausal.persistence.output_config import OutputConfig, OutputType
 @pytest.fixture
 def simple_graph(tmp_path):
     """Create a simple test graph with a few nodes"""
-    def node1_action(input: pd.DataFrame) -> pd.DataFrame:
-        return input
-    
-    def node2_action(node1: pd.DataFrame) -> pd.DataFrame:
-        return node1
     
     graph = (ExecutableGraph(output_path=tmp_path)
         .create_input_node("input")
@@ -42,20 +37,18 @@ def simple_graph(tmp_path):
 
 def test_visualize_graph_creates_file(simple_graph, tmp_path):
     """Test that visualize_graph creates an output file"""
-    output_file = tmp_path / "test_graph.png"
+    output_file = tmp_path / "test_graph.md"
     visualize_graph(simple_graph, save_path=str(output_file))
-    plt.close()  # Close the plot to clean up
     
     assert output_file.exists()
     assert output_file.stat().st_size > 0
 
 def test_visualize_graph_node_positions(simple_graph, tmp_path):
     """Test that nodes are positioned correctly (input at bottom, others above)"""
-    output_file = tmp_path / "test_graph.png"
+    output_file = tmp_path / "test_graph.md"
     
     # Get node positions by accessing the internal state
-    pos = visualize_graph(simple_graph, save_path=str(output_file), return_positions=True)
-    plt.close()
+    pos = visualize_graph(simple_graph, save_path=str(output_file))
     
     # Get input node and other nodes
     input_node = [n for n in simple_graph.nodes() if n.name == "input"][0]
@@ -73,7 +66,7 @@ def test_visualize_graph_node_labels(simple_graph, tmp_path):
     output_file = tmp_path / "test_graph.png"
     
     # Get labels by accessing the internal state
-    labels = visualize_graph(simple_graph, save_path=str(output_file), return_labels=True)
+    labels = visualize_graph(simple_graph, save_path=str(output_file))
     plt.close()
     
     # Check that each node's label matches its name
