@@ -110,7 +110,6 @@ def test_notebook_export_with_wrapper(sample_graph, tmp_path):
     found_target_function = False
     found_wrapper_function = False
     found_arg_mapping = False
-    found_direct_call = False
     
     for cell in notebook.cells:
         if cell.cell_type == 'code':
@@ -120,11 +119,8 @@ def test_notebook_export_with_wrapper(sample_graph, tmp_path):
                 found_wrapper_function = True
             if "Argument mapping: 'data' → 'df'" in cell.source:
                 found_arg_mapping = True
-            if "Alternatively, call the target function directly" in cell.source:
-                found_direct_call = True
     
     # Verify we found all the expected elements
     assert found_target_function, "Target function not found in notebook"
     assert found_wrapper_function, "Wrapper function not found in notebook"
     assert found_arg_mapping, "Argument mapping not found in notebook"
-    assert found_direct_call, "Direct call alternative not found in notebook" 
