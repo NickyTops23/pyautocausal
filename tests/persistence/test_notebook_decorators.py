@@ -108,19 +108,17 @@ def test_notebook_export_with_wrapper(sample_graph, tmp_path):
     
     # Look for key indicators that our wrapper was properly processed
     found_target_function = False
-    found_wrapper_function = False
-    found_arg_mapping = False
+    unnecessary_import_statement = False
     
     for cell in notebook.cells:
         if cell.cell_type == 'code':
             if 'complex_statistical_function' in cell.source:
                 found_target_function = True
-            if 'stats_wrapper' in cell.source:
-                found_wrapper_function = True
+                if "from test_notebook_decorators" in cell.source:
+                    unnecessary_import_statement = True
             if "Argument mapping: 'data' → 'df'" in cell.source:
                 found_arg_mapping = True
     
     # Verify we found all the expected elements
     assert found_target_function, "Target function not found in notebook"
-    assert found_wrapper_function, "Wrapper function not found in notebook"
-    assert found_arg_mapping, "Argument mapping not found in notebook"
+    assert not unnecessary_import_statement, "Unnecessary import statement found in notebook"

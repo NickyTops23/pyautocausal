@@ -18,6 +18,8 @@ class NotebookExporter:
         self.graph = graph
         self.nb = new_notebook()
         self._var_names: Dict[str, str] = {}  # Maps node names to variable names
+        # get module this is run from
+        self.this_module = inspect.getmodule(inspect.getouterframes(inspect.currentframe())[1][0])
         
     def _get_topological_order(self) -> List[Node]:
         """Get a valid sequential order of nodes for the notebook."""
@@ -77,7 +79,7 @@ class NotebookExporter:
             # Create imports if the target function is from an external module
             # TODO: This doesn't work for functions defined in pyautocausal
             module_name = target_func.__module__
-            if module_name != '__main__':
+            if module_name != self.this_module.__dict__['__name__']:
                 import_statement = f"from {module_name} import {target_name}\n\n"
                 target_source = import_statement + target_source
             
