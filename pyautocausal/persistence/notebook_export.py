@@ -64,8 +64,6 @@ class NotebookExporter:
         if self._is_exposed_wrapper(func):
             target_func, arg_mapping = self._get_exposed_target_info(func)
             
-            # Get the source of both functions
-            wrapper_source = inspect.getsource(func)
             target_source = inspect.getsource(target_func)
             
             # Format a comment explaining the wrapper relationship
@@ -94,7 +92,17 @@ class NotebookExporter:
             # Create a proper function definition
             source = f"def {node.name}_func(*args, **kwargs):\n    return {lambda_body}"
         
-        return source.strip()
+        # Handle annotations before function definition
+        annotations = []
+        non_annotation_lines = []
+        func_lines = source.split('\n')
+        for line in func_lines:
+            if line.strip().startswith('@'):
+                annotations.append(line.strip())
+            else:
+                non_annotation_lines.append(line.strip())
+        
+        return '\n'.join(annotations) + '\n' + '\n'.join(non_annotation_lines)
     
     def _get_function_name_from_string(self, function_string: str) -> str:
         """Get the function name from a string."""
