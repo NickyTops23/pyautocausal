@@ -18,6 +18,8 @@ class NotebookExporter:
         self.graph = graph
         self.nb = new_notebook()
         self._var_names: Dict[str, str] = {}  # Maps node names to variable names
+        # get module this is run from
+        self.this_module = inspect.getmodule(inspect.getouterframes(inspect.currentframe())[1][0])
         
     def _get_topological_order(self) -> List[Node]:
         """Get a valid sequential order of nodes for the notebook."""
@@ -62,8 +64,6 @@ class NotebookExporter:
         if self._is_exposed_wrapper(func):
             target_func, arg_mapping = self._get_exposed_target_info(func)
             
-            # Get the source of both functions
-            wrapper_source = inspect.getsource(func)
             target_source = inspect.getsource(target_func)
             
             # Format a comment explaining the wrapper relationship
@@ -77,7 +77,7 @@ class NotebookExporter:
             # Create imports if the target function is from an external module
             # TODO: This doesn't work for functions defined in pyautocausal
             module_name = target_func.__module__
-            if module_name != '__main__':
+            if module_name != self.this_module.__dict__['__name__']:
                 import_statement = f"from {module_name} import {target_name}\n\n"
                 target_source = import_statement + target_source
             
@@ -92,7 +92,17 @@ class NotebookExporter:
             # Create a proper function definition
             source = f"def {node.name}_func(*args, **kwargs):\n    return {lambda_body}"
         
-        return source.strip()
+        # Handle annotations before function definition
+        annotations = []
+        non_annotation_lines = []
+        func_lines = source.split('\n')
+        for line in func_lines:
+            if line.strip().startswith('@'):
+                annotations.append(line.strip())
+            else:
+                non_annotation_lines.append(line.strip())
+        
+        return '\n'.join(annotations) + '\n' + '\n'.join(non_annotation_lines)
     
     def _get_function_name_from_string(self, function_string: str) -> str:
         """Get the function name from a string."""
@@ -152,9 +162,8 @@ class NotebookExporter:
             # Create both function calls, with the direct call commented out
             function_name = self._get_function_name_from_string(function_string)
             wrapper_call = f"{node.name}_output = {function_name}({args_str})"
-            target_call = f"# Alternatively, call the target function directly:\n# {node.name}_output = {target_name}({target_args_str})"
             
-            return wrapper_call + "\n" + target_call
+            return wrapper_call
         
         # Normal case - just call the function
         function_name = self._get_function_name_from_string(function_string)

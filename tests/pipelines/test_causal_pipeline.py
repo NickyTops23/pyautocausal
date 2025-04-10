@@ -1,9 +1,9 @@
 import pytest
-from pathlib import Path
 import pandas as pd
 from pyautocausal.orchestration.graph import ExecutableGraph
-from pyautocausal.pipelines.library import DoubleMLNode, OLSNode
-from pyautocausal.pipelines.example import condition_nObs_DoubleML, condition_nObs_OLS
+from pyautocausal.pipelines.library.estimators import fit_double_lasso, fit_ols
+from pyautocausal.pipelines.library.specifications import create_cross_sectional_specification
+from pyautocausal.pipelines.library.output import write_statsmodels_summary
 
 def preprocess_lalonde_data() -> str:
     """
@@ -21,51 +21,15 @@ def preprocess_lalonde_data() -> str:
     df = pd.DataFrame({'y': y, 'treat': t, **X})
     return df
 
-@pytest.fixture
-def output_dir(tmp_path):
-    """Create temporary directory for test outputs"""
-    return tmp_path / "test_outputs"
+# The causal_graph function is now imported from conftest.py
 
-# Create reusable conditions
-doubleml_condition = condition_nObs_DoubleML
-
-ols_condition = condition_nObs_OLS
-
-def causal_graph(output_dir):
-    graph = (ExecutableGraph(output_path=output_dir)
-        .create_input_node("df", input_dtype=pd.DataFrame )
-        .create_decision_node(
-            "doubleml_condition",
-            doubleml_condition,
-            predecessors=["df"],
-        )
-        .create_node(
-            "doubleml",
-            DoubleMLNode.action,
-            predecessors=["doubleml_condition"],
-            save_node=True,
-        )
-        .create_node(
-            "ols",  
-            OLSNode.action,
-            predecessors=["doubleml_condition"],
-            save_node=True,
-        )
-        .when_true("doubleml_condition", "doubleml")
-        .when_false("doubleml_condition", "ols")
-        )
-    
-    return graph
-
-def test_causal_pipeline_execution(output_dir):
+def test_causal_pipeline_execution(causal_graph):
     """Test that the pipeline executes successfully"""
     
-    graph = causal_graph(output_dir)
-    
     # Execute with input data
-    graph.fit(df=preprocess_lalonde_data())
+    causal_graph.fit(data=preprocess_lalonde_data())
 
-def test_causal_pipeline_large_dataset(output_dir):
+def test_causal_pipeline_large_dataset(causal_graph, tmp_path):
     """Test pipeline with large dataset (should use DoubleML)"""
     # Create mock large dataset
     large_df = pd.DataFrame({
@@ -75,14 +39,16 @@ def test_causal_pipeline_large_dataset(output_dir):
         'educ': [12] * 150,
     })
     
-    graph = causal_graph(output_dir)
-    graph.fit(df=large_df)
+    causal_graph.fit(data=large_df)
+    
+    # Get the output directory from the graph
+    output_dir = tmp_path / "causal_output"
     
     # Check that DoubleML results exist
-    assert (output_dir / 'doubleml.txt').exists()
-    assert not (output_dir / 'ols.txt').exists()
+    assert (output_dir / 'doubleml_summary.txt').exists()
+    assert not (output_dir / 'ols_summary.txt').exists()
 
-def test_causal_pipeline_small_dataset(output_dir):
+def test_causal_pipeline_small_dataset(causal_graph, tmp_path):
     """Test pipeline with small dataset (should use OLS)"""
     # Create mock small dataset
     small_df = pd.DataFrame({
@@ -92,9 +58,11 @@ def test_causal_pipeline_small_dataset(output_dir):
         'educ': [12] * 50,
     })
     
-    graph = causal_graph(output_dir)
-    graph.fit(df=small_df)
+    causal_graph.fit(data=small_df)
+    
+    # Get the output directory from the graph
+    output_dir = tmp_path / "causal_output"
     
     # Check that OLS results exist
-    assert (output_dir / 'ols.txt').exists()
-    assert not (output_dir / 'doubleml.txt').exists()
+    assert (output_dir / 'ols_summary.txt').exists()
+    assert not (output_dir / 'doubleml_summary.txt').exists()

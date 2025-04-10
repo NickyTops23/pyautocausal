@@ -43,7 +43,7 @@ def is_decision_node(node) -> bool:
     
     return False
 
-def visualize_graph(graph, save_path, return_positions=False, return_labels=False):
+def visualize_graph(graph, save_path):
     """
     Visualize the provided graph as a mermaid flowchart within a markdown file.
     
@@ -57,144 +57,131 @@ def visualize_graph(graph, save_path, return_positions=False, return_labels=Fals
     Returns:
         None
     """
-    try:
-        # Validate input
-        if len(graph) == 0:
-            raise ValueError("Graph is empty")
+    # Validate input
+    if len(graph) == 0:
+        raise ValueError("Graph is empty")
+    
+    # Ensure the file extension is .md
+    file_path, ext = os.path.splitext(save_path)
+    if not ext or ext.lower() != '.md':
+        save_path = file_path + '.md'
+        logger.info(f"Changed save path to {save_path} to ensure markdown format")
         
-        # Ensure the file extension is .md
-        file_path, ext = os.path.splitext(save_path)
-        if not ext or ext.lower() != '.md':
-            save_path = file_path + '.md'
-            logger.info(f"Changed save path to {save_path} to ensure markdown format")
-            
-        # Start building the mermaid diagram
-        markdown_lines = ["# Graph Visualization", "", "## Executable Graph"]
-        mermaid_lines = ["```mermaid", "graph TD"]
+    # Start building the mermaid diagram
+    markdown_lines = ["# Graph Visualization", "", "## Executable Graph"]
+    mermaid_lines = ["```mermaid", "graph TD"]
+    
+    # Add node definitions
+    node_styles = []
+    node_ids = {}
+    
+    # Track if we have any decision nodes
+    has_decision_nodes = False
+    
+    # Create unique, safe IDs for each node
+    for i, node in enumerate(graph.nodes()):
+        # Create a safe ID without special characters
+        safe_id = f"node{i}"
+        node_ids[node] = safe_id
         
-        # Add node definitions
-        node_styles = []
-        node_ids = {}
+        # Add node with label
+        node_label = node.name if hasattr(node, 'name') else str(node)
         
-        # Track if we have any decision nodes
-        has_decision_nodes = False
+        # Use diamond shape for decision nodes, rectangle for action nodes
+        if is_decision_node(node):
+            has_decision_nodes = True
+            mermaid_lines.append(f"    {safe_id}{{{node_label}}}")  # Diamond shape for decision nodes
+        else:
+            mermaid_lines.append(f"    {safe_id}[{node_label}]")  # Rectangle for action nodes
         
-        # Create unique, safe IDs for each node
-        for i, node in enumerate(graph.nodes()):
-            # Create a safe ID without special characters
-            safe_id = f"node{i}"
-            node_ids[node] = safe_id
-            
-            # Add node with label
-            node_label = node.name if hasattr(node, 'name') else str(node)
-            
-            # Use diamond shape for decision nodes, rectangle for action nodes
-            if is_decision_node(node):
-                has_decision_nodes = True
-                mermaid_lines.append(f"    {safe_id}{{{node_label}}}")  # Diamond shape for decision nodes
-            else:
-                mermaid_lines.append(f"    {safe_id}[{node_label}]")  # Rectangle for action nodes
-            
-            # Get node style based on state
-            style_template = get_node_style(node)
-            node_styles.append(style_template.format(node_id=safe_id))
+        # Get node style based on state
+        style_template = get_node_style(node)
+        node_styles.append(style_template.format(node_id=safe_id))
+    
+    # Add edges with conditional labels for decision nodes
+    for src, dst in graph.edges():
+        edge_label = ""
         
-        # Add edges with conditional labels for decision nodes
-        for src, dst in graph.edges():
-            edge_label = ""
-            
-            # Check if it's a decision node with execute-when-true/false edges
-            if is_decision_node(src):
-                if hasattr(src, '_ewt_nodes') and dst in src._ewt_nodes:
-                    edge_label = "|True|"
-                elif hasattr(src, '_ewf_nodes') and dst in src._ewf_nodes:
-                    edge_label = "|False|"
-            
-            mermaid_lines.append(f"    {node_ids[src]} -->{edge_label} {node_ids[dst]}")
+        # Check if it's a decision node with execute-when-true/false edges
+        if is_decision_node(src):
+            if hasattr(src, '_ewt_nodes') and dst in src._ewt_nodes:
+                edge_label = "|True|"
+            elif hasattr(src, '_ewf_nodes') and dst in src._ewf_nodes:
+                edge_label = "|False|"
         
-        # Add class definitions
-        mermaid_lines.extend([
-            "",
-            "    %% Node styling",
-            "    classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;",
-            "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;",
-            "    classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;",
-            "    classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;",
-        ])
-        
-        # Add individual node styles
-        for style in node_styles:
-            mermaid_lines.append(f"    {style}")
-        
-        # End the mermaid diagram
-        mermaid_lines.append("```")
-        
-        # Add legend as a separate section after the diagram
-        legend_lines = [
-            "",
-            "## Node Legend",
-            "",
-            "### Node Types"
-        ]
-        
-        # Use mermaid to display node shapes correctly
+        mermaid_lines.append(f"    {node_ids[src]} -->{edge_label} {node_ids[dst]}")
+    
+    # Add class definitions
+    mermaid_lines.extend([
+        "",
+        "    %% Node styling",
+        "    classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;",
+        "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;",
+        "    classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;",
+        "    classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;",
+    ])
+    
+    # Add individual node styles
+    for style in node_styles:
+        mermaid_lines.append(f"    {style}")
+    
+    # End the mermaid diagram
+    mermaid_lines.append("```")
+    
+    # Add legend as a separate section after the diagram
+    legend_lines = [
+        "",
+        "## Node Legend",
+        "",
+        "### Node Types"
+    ]
+    
+    # Use mermaid to display node shapes correctly
+    legend_lines.extend([
+        "```mermaid",
+        "graph LR",
+        "    actionNode[Action Node]",
+        "    style actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black"
+    ])
+    
+    if has_decision_nodes:
         legend_lines.extend([
-            "```mermaid",
-            "graph LR",
-            "    actionNode[Action Node]",
-            "    style actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black"
+            "    decisionNode{Decision Node}",
+            "    style decisionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black"
         ])
+    
+    legend_lines.append("```")
+    
+    # Add node state legend
+    legend_lines.extend([
+        "",
+        "### Node States",
+        "```mermaid",
+        "graph LR",
+        "    pendingNode[Pending]:::pendingNode",
+        "    runningNode[Running]:::runningNode",
+        "    completedNode[Completed]:::completedNode",
+        "    failedNode[Failed]:::failedNode",
+        "",
+        "    classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;",
+        "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;", 
+        "    classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;",
+        "    classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;",
+        "```",
+        "",
+        "Node state coloring indicates the execution status of each node in the graph.",
+        ""
+    ])
+    
+    # Combine markdown, mermaid, and legend content
+    markdown_content = '\n'.join(markdown_lines + [''] + mermaid_lines + legend_lines)
+    
+    # Write to markdown file
+    with open(save_path, 'w') as f:
+        f.write(markdown_content)
+    
+    logger.info(f"Graph visualization saved as markdown to {save_path}")
         
-        if has_decision_nodes:
-            legend_lines.extend([
-                "    decisionNode{Decision Node}",
-                "    style decisionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black"
-            ])
-        
-        legend_lines.append("```")
-        
-        # Add node state legend
-        legend_lines.extend([
-            "",
-            "### Node States",
-            "```mermaid",
-            "graph LR",
-            "    pendingNode[Pending]:::pendingNode",
-            "    runningNode[Running]:::runningNode",
-            "    completedNode[Completed]:::completedNode",
-            "    failedNode[Failed]:::failedNode",
-            "",
-            "    classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;",
-            "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;", 
-            "    classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;",
-            "    classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;",
-            "```",
-            "",
-            "Node state coloring indicates the execution status of each node in the graph.",
-            ""
-        ])
-        
-        # Combine markdown, mermaid, and legend content
-        markdown_content = '\n'.join(markdown_lines + [''] + mermaid_lines + legend_lines)
-        
-        # Write to markdown file
-        with open(save_path, 'w') as f:
-            f.write(markdown_content)
-        
-        logger.info(f"Graph visualization saved as markdown to {save_path}")
-        
-        # These parameters are ignored but kept for backward compatibility
-        if return_positions and return_labels:
-            return {}, {}
-        elif return_positions:
-            return {}
-        elif return_labels:
-            return {}
-        
-    except Exception as e:
-        logger.error(f"Error visualizing graph with mermaid: {str(e)}")
-        raise
-
 # For convenience, if someone runs this module directly
 
    
