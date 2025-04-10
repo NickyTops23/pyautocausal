@@ -101,7 +101,7 @@ def fit_ols(specification: BaseSpec, weights: Optional[np.ndarray] = None) -> Re
     formula = specification.formula
     
     if weights is not None:
-        model = sm.fit_weighted_ols.from_formula(formula, data=data, weights=weights).fit(cov_type='HC1')
+        model = sm.WLS.from_formula(formula, data=data, weights=weights).fit(cov_type='HC1')
     else:
         model = sm.OLS.from_formula(formula, data=data).fit(cov_type='HC1')
             
