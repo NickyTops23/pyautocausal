@@ -1,190 +1,216 @@
+"""
+Estimator functions for causal inference models.
+"""
 import pandas as pd
 import statsmodels.api as sm
 import numpy as np
-from typing import Optional, Any, Union, Dict, List, Tuple
+from typing import Optional, List, Union, Dict, Tuple
 from sklearn.linear_model import Lasso
 from sklearn.model_selection import KFold
+import patsy
+from statsmodels.base.model import Results
 
-from .output import StatsmodelsOutputAction
-from .base_estimator import BaseEstimator
-from .specifications import (
-    StandardSpecification, 
-    DiDSpecification, 
-    EventStudySpecification,
-    StaggeredDiDSpecification,
-    TreatmentType
-)
-from .specifications import ContinuousTreatmentSpecification
+
 from pyautocausal.persistence.parameter_mapper import make_transformable
+from .specifications import (
+    BaseSpec,
+    DiDSpec,
+    EventStudySpec,
+    StaggeredDiDSpec,
+)
+from .base_estimator import format_statsmodels_result
 
 
-class OLS(BaseEstimator):
-    """Ordinary Least Squares regression analysis for treatment effect estimation."""
+def create_model_matrices(specification: BaseSpec) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Create model matrices from a specification using patsy.
     
-    @classmethod
-    @make_transformable
-    def action(cls, inputs: Dict[str, Any], **kwargs) -> sm.OLS:
-        """
-        Estimate treatment effect using OLS regression.
+    Args:
+        specification: A specification dataclass with data and formula
         
-        Args:
-            inputs: Dictionary containing:
-                - data: DataFrame with outcome and treatment variables
-                - specification: Model specification dictionary
-            **kwargs: Additional arguments passed to statsmodels OLS
-            
-        Returns:
-            Fitted statsmodels OLS model object
-        """
-        # Extract data and specification from inputs
-        data = inputs.get('data')
-        weights = kwargs.get('weights')
+    Returns:
+        Tuple of (y, X) arrays for modeling
+    """
+    data = specification.data
+    formula = specification.formula
+    
+    # Parse the formula into outcome and predictors
+    outcome_expr, predictors_expr = formula.split('~', 1)
+    outcome_expr = outcome_expr.strip()
+    predictors_expr = predictors_expr.strip()
+    
+    # Create design matrices
+    y, X = patsy.dmatrices(formula, data=data, return_type='dataframe')
+    
+    return y, X
+
+
+def extract_treatment_from_design(X: pd.DataFrame, treatment_col: str) -> Tuple[np.ndarray, pd.DataFrame]:
+    """
+    Extract treatment variable from design matrix and return treatment and controls separately.
+    
+    Args:
+        X: Design matrix containing treatment and control variables
+        treatment_col: Name of the treatment column (in original data)
         
-        
-        # Get data from specification
-        formula = inputs.get('formula')
-                
-        # Fit the model
-        if weights is not None:
-            model = sm.WLS.from_formula(formula, data=data, weights=weights).fit(cov_type='HC1')
+    Returns:
+        Tuple of (treatment array, control design matrix)
+    """
+    # Look for columns that start with the treatment column name
+    # This handles Patsy's transformations while avoiding partial matches
+    treatment_cols = [col for col in X.columns if col.startswith(treatment_col)]
+    
+    if not treatment_cols:
+        raise ValueError(f"Treatment column '{treatment_col}' not found in design matrix")
+    
+    # If there are multiple matching columns (e.g., interaction terms)
+    if len(treatment_cols) > 1:
+        # Prefer exact match if available
+        exact_matches = [col for col in treatment_cols if col == treatment_col]
+        if exact_matches:
+            treatment_col_name = exact_matches[0]
         else:
-            model = sm.OLS.from_formula(formula, data=data).fit(cov_type='HC1')
-                
-        return model
+            # Otherwise use the first match
+            treatment_col_name = treatment_cols[0]
+    else:
+        treatment_col_name = treatment_cols[0]
     
-    @classmethod
-    @make_transformable
-    def output(cls, model: sm.OLS) -> str:
-        """Format the OLS model results."""
-        return StatsmodelsOutputAction(model)
-
-
-class WOLS(OLS):
-    """Weighted Ordinary Least Squares regression."""
+    # Extract treatment
+    d = X[treatment_col_name].values
     
-    @classmethod
-    @make_transformable
-    def action(cls, inputs: Dict[str, Any], **kwargs) -> sm.WLS:
-        """
-        Estimate treatment effect using Weighted OLS regression.
-        
-        Args:
-            inputs: Dictionary containing:
-                - data: DataFrame with outcome and treatment variables
-                - specification: Model specification dictionary
-                - weights: sample weights
-        Returns:
-            Fitted statsmodels WLS model object
-        """
-        weights = inputs.get('weights')
-        if weights is None:
-            raise ValueError("Weights must be provided for WOLS")
-        
-        # Ensure weights are valid (no NaN, inf, or zero sum)
-        if np.isnan(weights).any() or np.isinf(weights).any() or np.sum(weights) == 0:
-            # In case of invalid weights, use uniform weights as fallback
-            weights = np.ones_like(weights) / len(weights)
-            inputs['weights'] = weights
-            
-        # Ensure weights are properly scaled
-        if np.sum(weights) != 1.0 and np.sum(weights) != 0.0:
-            weights = weights / np.sum(weights)
-            inputs['weights'] = weights
-            
-        return super().action(inputs, **kwargs)
-
-
-
-
-
-class DoubleLasso(BaseEstimator):
-    """Double/Debiased Lasso estimation following Chernozhukov et al. (2018)."""
+    # Create control matrix without the treatment
+    X_controls = X.drop(columns=treatment_col_name)
     
-    @classmethod
-    @make_transformable
-    def action(cls, inputs: Dict[str, Any], **kwargs) -> sm.OLS:
-        """
-        Estimate treatment effect using Double/Debiased Lasso.
-        
-        Implementation follows the algorithm from:
-        Chernozhukov et al. (2018) - Double/Debiased Machine Learning
-        
-        Args:
-            inputs: Dictionary containing:
-                - data: DataFrame with outcome and treatment variables
-                - specification: Model specification dictionary
-            **kwargs: Additional arguments including:
-                - weights: Optional sample weights
-                - alpha: Regularization strength for Lasso
-                - cv_folds: Number of cross-validation folds
-                
-        Returns:
-            Fitted OLS model for the final stage regression
-        """
-        # Extract data and specification from inputs
-        data = inputs.get('data')
-        specification = inputs.get('specification')
-        
-        # Extract optional parameters from kwargs
-        alpha = kwargs.get('alpha', 0.1)
-        cv_folds = kwargs.get('cv_folds', 5)
-        
-        # If specification isn't provided, create a standard specification
-        if specification is None:
-            specification = StandardSpecification.create(data)
-        
-        # Get information from specification
-        outcome_col = specification.get('outcome_col', 'y')
-        treatment_col = specification.get('treatment_col', 'treat')
-        control_cols = specification.get('control_cols', [])
-        
-        # Prepare data
-        y = data[outcome_col]
-        d = data[treatment_col]
-        
-        if not control_cols:
-            # If no controls are specified, can't do double lasso
-            raise ValueError("Control variables are required for double lasso")
-            
-        X = data[control_cols]
-        
-        # Initialize cross-validation
-        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
-        
-        # Arrays to store residuals
-        y_resid = np.zeros_like(y)
-        d_resid = np.zeros_like(d)
-        
-        # Cross-fitting
-        for train_idx, test_idx in kf.split(X):
-            # Split data
-            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-            y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
-            d_train, d_test = d.iloc[train_idx], d.iloc[test_idx]
-            
-            # First stage: outcome equation
-            lasso_y = Lasso(alpha=alpha, random_state=42)
-            lasso_y.fit(X_train, y_train)
-            y_pred = lasso_y.predict(X_test)
-            y_resid[test_idx] = y_test - y_pred
-            
-            # First stage: treatment equation
-            lasso_d = Lasso(alpha=alpha, random_state=42)
-            lasso_d.fit(X_train, d_train)
-            d_pred = lasso_d.predict(X_test)
-            d_resid[test_idx] = d_test - d_pred
-        
-        # Second stage: treatment effect estimation
-        final_model = sm.OLS(
-            y_resid,
-            sm.add_constant(pd.Series(d_resid, name=treatment_col))
-        ).fit(cov_type='HC1')
-        
-        return final_model
+    return d, X_controls
+
+
+@make_transformable
+def fit_ols(specification: BaseSpec, weights: Optional[np.ndarray] = None) -> Results:
+    """
+    Estimate treatment effect using OLS regression.
     
-    @classmethod
-    @make_transformable
-    def output(cls, model: sm.OLS) -> str:
-        """Format the Double Lasso model results."""
-        return StatsmodelsOutputAction(model)
+    Args:
+        specification: A specification dataclass with data and formula
+        weights: Optional sample weights for weighted regression
+        
+    Returns:
+        Fitted statsmodels regression results
+    """
+    # We can still use the formula interface directly for OLS
+    data = specification.data
+    formula = specification.formula
+    
+    if weights is not None:
+        model = sm.WLS.from_formula(formula, data=data, weights=weights).fit(cov_type='HC1')
+    else:
+        model = sm.OLS.from_formula(formula, data=data).fit(cov_type='HC1')
+            
+    return model
+
+
+@make_transformable
+def format_regression_results(model_result: Results) -> str:
+    """
+    Format regression model results as a readable string.
+    
+    Args:
+        model_result: Statsmodels regression results object
+        
+    Returns:
+        Formatted string with model summary
+    """
+    return format_statsmodels_result(model_result)
+
+
+@make_transformable
+def fit_weighted_ols(specification: BaseSpec, weights: np.ndarray) -> Results:
+    """
+    Estimate treatment effect using Weighted OLS regression.
+    
+    Args:
+        specification: A specification dataclass with data and formula
+        weights: Sample weights for the regression
+        
+    Returns:
+        Fitted statsmodels fit_weighted_ols model results
+    """
+    if weights is None:
+        raise ValueError("Weights must be provided for weighted OLS")
+    
+    # Ensure weights are valid (no NaN, inf, or zero sum)
+    if np.isnan(weights).any() or np.isinf(weights).any() or np.sum(weights) == 0:
+        # In case of invalid weights, use uniform weights as fallback
+        weights = np.ones_like(weights) / len(weights)
+        
+    # Ensure weights are properly scaled
+    if np.sum(weights) != 1.0 and np.sum(weights) != 0.0:
+        weights = weights / np.sum(weights)
+        
+    return fit_ols(specification, weights)
+
+
+@make_transformable
+def fit_double_lasso(
+    specification: BaseSpec,
+    alpha: float = 0.1,
+    cv_folds: int = 5
+) -> Results:
+    """
+    Estimate treatment effect using Double/Debiased Lasso.
+    
+    Implementation follows the algorithm from:
+    Chernozhukov et al. (2018) - Double/Debiased Machine Learning
+    
+    Args:
+        specification: A specification dataclass with data and column information
+        alpha: Regularization strength for Lasso
+        cv_folds: Number of cross-validation folds
+            
+    Returns:
+        Fitted OLS model for the final stage regression
+    """
+    # Use patsy to create design matrices
+    y_df, X_df = create_model_matrices(specification)
+    y = y_df.values.ravel()  # Convert to 1D array
+    
+    # Extract treatment and controls
+    d, X_controls = extract_treatment_from_design(X_df, specification.treatment_col)
+    
+    # Check if we have control variables
+    if X_controls.shape[1] == 0:
+        raise ValueError("Control variables are required for double lasso")
+    
+    # Initialize cross-validation
+    kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    
+    # Arrays to store residuals
+    y_resid = np.zeros_like(y)
+    d_resid = np.zeros_like(d)
+    
+    # Cross-fitting
+    for train_idx, test_idx in kf.split(X_controls):
+        # Split data
+        X_train, X_test = X_controls.iloc[train_idx], X_controls.iloc[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        d_train, d_test = d[train_idx], d[test_idx]
+        
+        # First stage: outcome equation
+        lasso_y = Lasso(alpha=alpha, random_state=42)
+        lasso_y.fit(X_train, y_train)
+        y_pred = lasso_y.predict(X_test)
+        y_resid[test_idx] = y_test - y_pred
+        
+        # First stage: treatment equation
+        lasso_d = Lasso(alpha=alpha, random_state=42)
+        lasso_d.fit(X_train, d_train)
+        d_pred = lasso_d.predict(X_test)
+        d_resid[test_idx] = d_test - d_pred
+    
+    # Second stage: treatment effect estimation
+    final_model = sm.OLS(
+        y_resid,
+        sm.add_constant(d_resid)
+    ).fit(cov_type='HC1')
+    
+    return final_model
 

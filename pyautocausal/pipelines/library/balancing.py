@@ -6,17 +6,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import NearestNeighbors
 from .base_weighter import BaseWeighter
 from pyautocausal.persistence.parameter_mapper import make_transformable
+from .specifications import DiDSpec
 
-class SyntheticControl(BaseWeighter):
-    """Synthetic Control method for causal inference with a single treated unit."""
-    
-    @classmethod
-    @make_transformable
-    def compute_weights(cls, 
-                        inputs: Dict[str, Any], 
-                        unit_col: str = 'id_unit', 
-                        time_col: str = 't',
-                        outcome_col: str = 'y',
+
+@make_transformable
+def compute_synethetic_control_weights(spec: DiDSpec,
+                    unit_col: str = 'id_unit', 
+                    time_col: str = 't',
+                    outcome_col: str = 'y',
                         treatment_col: str = 'treat',
                         covariates: Optional[List[str]] = None,
                         pre_treatment_periods: Optional[List] = None,
@@ -38,10 +35,17 @@ class SyntheticControl(BaseWeighter):
             Dictionary with synthetic control information including data and weights
         """
         # Extract data from inputs
-        if isinstance(inputs, dict) and 'data' in inputs:
-            df = inputs['data']
+        if isinstance(spec, DiDSpec) and 'data' in spec:
+            df = spec.data
         else:
             raise ValueError("Inputs must contain a 'data' field with a DataFrame")
+        
+        unit_col = spec.unit_col
+        time_col = spec.time_col
+        outcome_col = spec.outcome_col
+        
+        # sort of hacky, think about how to elegantly handle multiple vs one treatment column
+        treatment_col = spec.treatment_cols[0] 
 
         required_columns = [unit_col, time_col, outcome_col, treatment_col]
         if not all(col in df.columns for col in required_columns):
@@ -135,8 +139,3 @@ class SyntheticControl(BaseWeighter):
         }
         
         return result
-    
-    @classmethod
-    @make_transformable
-    def output(cls, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        return inputs
