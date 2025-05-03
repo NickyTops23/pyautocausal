@@ -38,7 +38,8 @@ class Node(BaseNode):
             action_function: Callable,
             output_config: Optional[OutputConfig] = None,
             save_node: bool = False,
-            node_description: str | None = None
+            node_description: str | None = None,
+            notebook_function: Optional[Callable] = None
         ):
         super().__init__(name)
         self.logger = get_class_logger(f"{self.__class__.__name__}_{name}")
@@ -56,6 +57,7 @@ class Node(BaseNode):
         self.action_function = action_function
         self.execution_count = 0
         self.node_description = node_description
+        self.notebook_function = notebook_function
     
     def _get_return_annotation(self, action_function: Callable) -> Any:
         """Get the return type annotation from the action function"""

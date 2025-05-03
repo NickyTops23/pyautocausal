@@ -180,7 +180,8 @@ class ExecutableGraph(nx.DiGraph):
         predecessors: Optional[Dict[str, str]] = None,
         output_config: Optional[OutputConfig] = None,
         save_node: bool = False,
-        node_description: str | None = None
+        node_description: str | None = None,
+        notebook_function: Optional[Callable] = None
     ):
         """
         Add a node to the graph.
@@ -203,7 +204,8 @@ class ExecutableGraph(nx.DiGraph):
             name=name,
             action_function=action_function,
             output_config=output_config,
-            save_node=save_node
+            save_node=save_node,
+            notebook_function=notebook_function
         )
         
         # Use add_node to handle the rest

@@ -485,6 +485,53 @@ def create_staggered_did_specification(
     )
 
 
+def spec_constructor(spec: Any) -> str:
+    """Convert any specification object to a constructor string representation.
+    
+    Args:
+        spec: Any specification object (DiDSpec, CrossSectionalSpec, etc.)
+        
+    Returns:
+        A string representation calling the constructor with appropriate arguments
+    """
+    # Get the class name for the constructor call
+    class_name = spec.__class__.__name__
+    
+    # Gather attributes excluding DataFrame objects
+    attrs = []
+    for key, value in spec.__dict__.items():
+        if isinstance(value, pd.DataFrame):
+            # Just reference the data variable
+            attrs.append(f"    {key}=data_argument")
+        elif isinstance(value, list) and value and all(isinstance(x, str) for x in value):
+            # Format list of strings more cleanly
+            items = ", ".join([repr(x) for x in value])
+            attrs.append(f"    {key}=[{items}]")
+        elif isinstance(value, str):
+            # Add quotes around string values
+            attrs.append(f'    {key}="{value}"')
+        elif value is None:
+            # Handle None values
+            attrs.append(f"    {key}=None")
+        else:
+            # For other types (booleans, numbers, etc.)
+            attrs.append(f"    {key}={value}")
+
+    # Return the constructor call as a string with proper indentation
+    return f"{class_name}(\n" + ",\n".join(attrs) + "\n)"
+
+
+
+
+
+
+
+
+
+
+
+
+
 # def create_continuous_treatment_specification(
 #     df: pd.DataFrame, 
 #     outcome_col: str = 'y', 

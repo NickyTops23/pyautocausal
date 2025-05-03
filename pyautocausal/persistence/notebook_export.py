@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Callable
 import networkx as nx
 import nbformat
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
@@ -58,6 +58,9 @@ class NotebookExporter:
         if isinstance(node, InputNode):
             return ""
         
+        if hasattr(node, 'notebook_function') and node.notebook_function is not None and node.is_completed():
+            return ""
+
         if isinstance(node, DecisionNode):
             func = node.condition
         else:
@@ -150,56 +153,72 @@ class NotebookExporter:
 
         return source_nodes
 
-
-    def _format_function_execution(self, node: Node, function_string: str) -> str:
-        """Format the function execution statement."""
-        if isinstance(node, InputNode):
-            return f"{node.name}_output = input_data['{node.name}']"
-        
-        
-        if isinstance(node, DecisionNode):
-            func = node.condition
-        else:
-            func = node.action_function
+    def _resolve_function_arguments(self, node: Node, func: Callable) -> Dict[str, str]:
+        """Resolve the arguments for a node's function."""
 
         is_wrapper = self._is_exposed_wrapper(func)
         
-        # Get default arguments from the wrapper function
-        default_args = {}
-        if is_wrapper:
-            signature = inspect.signature(func)
-            default_args = {
-                k: v.default for k, v in signature.parameters.items()
-                if v.default is not inspect.Parameter.empty
-            }
-        
-        arguments = dict(default_args)  # Start with defaults
+        arguments = dict()  
         #TODO: Handle default arguments for non-wrapper functions
         
-        print("Node: ", node.name)
+
+        # For wrapper functions, use the argument mapping to map the arguments to the predecessor node names
         if is_wrapper:
             _, arg_mapping = self._get_exposed_target_info(func)
             for predecessor_name, func_param in arg_mapping.items():
                 arguments[func_param] = f"{predecessor_name}_output"
         else:
             arg_mapping = dict()
-        print("Arg mapping: ", arg_mapping)
-        print("Arguments: ", arguments)
-        
+
         # Get predecessor nodes that provide data, ignoring decision nodes in between
         arg_source_nodes = self._find_argument_source_nodes(node)        
 
         # Handle the arguments that are not transformed
-        for arg_source_node in arg_source_nodes:
-            if arg_source_node not in arg_mapping:
-                arguments[arg_source_node.name] = f"{arg_source_node.name}_output"
+        for arg_name, arg_source_node in arg_source_nodes.items():
+            if arg_name not in arg_mapping:
+                arguments[arg_name] = f"{arg_name}_output"
 
         #TODO: Add check that all required arguments are present and all provided arguments are part of arguments
+        #TODO: Handle run-context arguments
+
+        return arguments
+
+    def _format_notebook_function(self, node: Node) -> str:
+        """Format the notebook function for a node.
+        Notebook functions return string representations of the function definition,
+        where arguments are denoted by the argument name followed by "[argument_name]_argument"
+
+        This function takes the string representation of the notebook function and
+        resolves the arguments to the actual node names.
+        """
+        
+        arguments = self._resolve_function_arguments(node, node.action_function)
+
+        notebook_display_string = node.notebook_function(node.get_result_value())
+        # Get the string representation of the notebook function
+        # Replace the argument placeholders with the actual node names
+        for arg_name, predecessor_name in arguments.items():
+            notebook_display_string = notebook_display_string.replace(f"{arg_name}_argument", f"{predecessor_name}_output")
+
+        return notebook_display_string
+    
+    def _format_function_execution(self, node: Node, function_string: str) -> str:
+        """Format the function execution statement."""
+        if isinstance(node, InputNode):
+            return f"{node.name}_output = input_data['{node.name}']"
+
+        # TODO: Handle cases where we want to show condition functions
+        func = node.action_function
+
+        arguments = self._resolve_function_arguments(node, func)
         
         repr_string_noop = lambda x: repr(x) if not isinstance(x, str) else x
         
         # Format argument string
         args_str = ", ".join(f"{k}={repr_string_noop(v)}" for k, v in arguments.items()) if arguments else ""
+        
+        
+        is_wrapper = self._is_exposed_wrapper(func)
         
         # For wrapped functions, add a comment showing how to call the target directly
         if is_wrapper:
@@ -235,8 +254,14 @@ class NotebookExporter:
             info += f"{node.node_description}\n"
         self.nb.cells.append(new_markdown_cell(info))
         
-        # Add function definition if not an input node
-        if not isinstance(node, InputNode):
+        # Add function definition if not an input node and no notebook function is defined
+        if hasattr(node, 'notebook_function') and node.notebook_function is not None and node.is_completed():
+            # Add execution cell
+            notebook_display_code = self._format_notebook_function(node)
+            self.nb.cells.append(new_code_cell(notebook_display_code))
+    
+        elif not isinstance(node, InputNode):
+   
             func_def = self._format_function_definition(node)
             self.nb.cells.append(new_code_cell(func_def))
         
