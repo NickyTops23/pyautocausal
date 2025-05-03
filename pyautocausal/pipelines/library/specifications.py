@@ -39,7 +39,6 @@ class DiDSpec(BaseSpec):
     post_col: str
     include_unit_fe: bool
     include_time_fe: bool
-    interaction_col: str
 @dataclass
 class EventStudySpec(BaseSpec):
     """Event Study specification."""
@@ -256,7 +255,7 @@ def create_did_specification(
     # Create and return specification
     return DiDSpec(
         outcome_col=outcome_col,
-        treatment_col=treatment_col,
+        treatment_cols=treatment_cols,
         time_col=time_col,
         unit_col=unit_col,
         post_col=post_col,
@@ -472,7 +471,7 @@ def create_staggered_did_specification(
     # Create and return specification
     return StaggeredDiDSpec(
         outcome_col=outcome_col,
-        treatment_col=treatment_col,
+        treatment_cols=treatment_cols,
         time_col=time_col,
         unit_col=unit_col,
         treatment_time_col=treatment_time_col,
