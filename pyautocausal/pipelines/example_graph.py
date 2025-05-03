@@ -78,7 +78,7 @@ def simple_graph(output_path: Path):
     
     # If False, use synthetic control
     graph.create_node('synth_control', 
-                     action_function=compute_synethetic_control_weights.get_function(),
+                     action_function=compute_synethetic_control_weights.transform({'did_spec': 'spec'}),
                      predecessors=["multi_treated_units"])
 
     graph.create_node('wols_did_synth', 
