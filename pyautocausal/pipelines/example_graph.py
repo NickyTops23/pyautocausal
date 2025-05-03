@@ -2,7 +2,7 @@ from pathlib import Path
 import pandas as pd
 from pyautocausal.pipelines.library.estimators import fit_ols, fit_weighted_ols, fit_double_lasso
 from pyautocausal.pipelines.library.output import write_statsmodels_summary
-from pyautocausal.pipelines.library.balancing import compute_synethetic_control_weights
+from pyautocausal.pipelines.library.balancing import compute_synthetic_control_weights
 from pyautocausal.pipelines.library.specifications import (
     create_cross_sectional_specification, create_did_specification
 )
@@ -44,7 +44,7 @@ def simple_graph(output_path: Path):
 
     # Create OLS nodes with transformed parameter names - transform mapping: {'node_output': 'func_param'}
     graph.create_node('ols_stand', 
-                     action_function=fit_ols.transform({'stand_spec': 'inputs'}),
+                     action_function=fit_ols.transform({'stand_spec': 'spec'}),
                      predecessors=["stand_spec"])
 
 
@@ -67,7 +67,7 @@ def simple_graph(output_path: Path):
                      predecessors=["did_spec"])
     # If True, use OLS
     graph.create_node('ols_did', 
-                     action_function=fit_ols.transform({'did_spec': 'inputs'}),
+                     action_function=fit_ols.transform({'did_spec': 'spec'}),
                      predecessors=["multi_treated_units"])
     
     graph.create_node('ols_did_output',
@@ -78,11 +78,15 @@ def simple_graph(output_path: Path):
     
     # If False, use synthetic control
     graph.create_node('synth_control', 
-                     action_function=compute_synethetic_control_weights.transform({'did_spec': 'spec'}),
+                     action_function=compute_synthetic_control_weights.transform({'did_spec': 'spec'}),
                      predecessors=["multi_treated_units"])
 
+    # Fix: The output of synth_control has the data with weights, so we need to map it correctly
+    # Transform the result dictionary to the correct parameters for fit_weighted_ols
     graph.create_node('wols_did_synth', 
-                     action_function=fit_weighted_ols.transform({'synth_control': 'inputs'}),
+                     action_function=fit_weighted_ols.transform({
+                         'synth_control': 'spec'
+                     }),
                      predecessors=["synth_control"])
 
     graph.create_node('wols_did_synth_output',
@@ -106,10 +110,25 @@ if __name__ == "__main__":
     graph = simple_graph(path)
     
     # Generate mock data with more units for proper synthetic control
-    data = generate_mock_data(n_units=5, n_periods=6, n_treated=1)
-    
-    graph.fit(df=data)
+    data = generate_mock_data(n_units=10000, n_periods=2, n_treated=500)
+    data.to_csv(path / "simple_graph_data.csv", index=False)
+    try:
+        graph.fit(df=data)
+        
+    except Exception as e:
+        print(f"Error fitting graph: {e}")
 
-    visualize_graph(graph, save_path=str(path / "simple_graph.png"))
+    # Get all nodes that are instances of Node
+    for node in graph.nodes():
+        if hasattr(node, 'state'):
+            name = getattr(node, 'name', 'Unknown')
+            state = node.state.name if hasattr(node.state, 'name') else str(node.state)
+            exec_count = getattr(node, 'execution_count', 'N/A')
+            print(f"{name:<30} {state:<15} {exec_count}")
+    print("-" * 50)
+
+
+
+    visualize_graph(graph, save_path=str(path / "simple_graph.md"))
     exporter = NotebookExporter(graph)
     exporter.export_notebook(path / "simple_graph.ipynb")

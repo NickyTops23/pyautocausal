@@ -10,29 +10,29 @@ from .specifications import DiDSpec
 
 
 @make_transformable
-def compute_synethetic_control_weights(spec: DiDSpec,
+def compute_synthetic_control_weights(spec: DiDSpec,
                     unit_col: str = 'id_unit', 
                     time_col: str = 't',
                     outcome_col: str = 'y',
-                        treatment_col: str = 'treat',
-                        covariates: Optional[List[str]] = None,
-                        pre_treatment_periods: Optional[List] = None,
-                        **kwargs) -> Dict[str, Any]:
+                    treatment_col: str = 'treat',
+                    covariates: Optional[List[str]] = None,
+                    pre_treatment_periods: Optional[List] = None,
+                    **kwargs) -> DiDSpec:
         """
         Compute synthetic control weights.
         
         Args:
-            inputs: Dictionary containing DataFrame with units, time periods, outcome, and treatment
-            unit_col: Column name for unit identifier
-            time_col: Column name for time period
-            outcome_col: Column name for outcome variable
-            treatment_col: Column name for treatment indicator
+            spec: DiD specification dataclass with data and column information
+            unit_col: Column name for unit identifier (overrides spec.unit_col if provided)
+            time_col: Column name for time period (overrides spec.time_col if provided)
+            outcome_col: Column name for outcome variable (overrides spec.outcome_col if provided)
+            treatment_col: Column name for treatment indicator (overrides spec.treatment_cols[0] if provided)
             covariates: List of covariates to use (if None, uses outcome in pre-treatment periods)
             pre_treatment_periods: List of pre-treatment periods (if None, inferred from data)
             **kwargs: Additional parameters
             
         Returns:
-            Dictionary with synthetic control information including data and weights
+            DiDSpec with synthetic control weights added as a column to the data
         """
         # Extract data from inputs
         if isinstance(spec, DiDSpec) and hasattr(spec, 'data'):
@@ -40,6 +40,7 @@ def compute_synethetic_control_weights(spec: DiDSpec,
         else:
             raise ValueError("Inputs must contain a 'data' field with a DataFrame")
         
+        # Use values from spec by default, but allow overriding with provided parameters
         unit_col = spec.unit_col
         time_col = spec.time_col
         outcome_col = spec.outcome_col
@@ -122,19 +123,19 @@ def compute_synethetic_control_weights(spec: DiDSpec,
             all_weights[unit_idx] = unit_weights[i]
         
         # Create a new copy of inputs to avoid modifying the original
-        result = spec.data.copy()
+        result_df = df.copy()
         
         # Expand weights to match DataFrame length
-        expanded_weights = np.zeros(len(result))
+        expanded_weights = np.zeros(len(result_df))
         for i, unit in enumerate(all_units):
-            unit_mask = result[unit_col] == unit
+            unit_mask = result_df[unit_col] == unit
             expanded_weights[unit_mask] = all_weights[i]
         
         # Store expanded weights in the result
-        result['weights'] = expanded_weights
+        result_df['weights'] = expanded_weights
         
         # Create a diagnostic report to help with troubleshooting
-        result['sc_diagnostics'] = {
+        sc_diagnostics = {
             'treated_unit': treated_unit,
             'control_units': control_units.tolist(),
             'pre_treatment_periods': pre_treatment_periods,
@@ -144,4 +145,16 @@ def compute_synethetic_control_weights(spec: DiDSpec,
             'num_controls': len(control_units)
         }
         
-        return result
+        # Return a new DiDSpec with the updated dataframe
+        return DiDSpec(
+            data=result_df,
+            formula=spec.formula,
+            outcome_col=spec.outcome_col,
+            treatment_cols=spec.treatment_cols,
+            control_cols=spec.control_cols,
+            time_col=spec.time_col,
+            unit_col=spec.unit_col,
+            post_col=spec.post_col,
+            include_unit_fe=spec.include_unit_fe,
+            include_time_fe=spec.include_time_fe
+        )
