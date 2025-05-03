@@ -3,7 +3,7 @@ import networkx as nx
 import nbformat
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
 import inspect
-from ..orchestration.nodes import Node, InputNode
+from ..orchestration.nodes import Node, InputNode, DecisionNode
 from ..orchestration.graph import ExecutableGraph
 
 class NotebookExporter:
@@ -57,8 +57,11 @@ class NotebookExporter:
         """Format the function definition for a node."""
         if isinstance(node, InputNode):
             return ""
-            
-        func = node.action_function
+        
+        if isinstance(node, DecisionNode):
+            func = node.condition
+        else:
+            func = node.action_function
         
         # Check if this is an exposed wrapper function
         if self._is_exposed_wrapper(func):
@@ -108,12 +111,57 @@ class NotebookExporter:
         """Get the function name from a string."""
         return function_string.split('def')[1].split('(')[0].strip()
     
+    
+    def _find_argument_source_nodes(self, current_node: Node) -> Dict[str, str]:
+        """
+        Traces backwards from a node to find the non-decision-node ancestors
+        that provide data. Effectively finds the origins of data flowing into
+        the current_node, ignoring intermediate DecisionNodes.
+
+        Args:
+            current_node: The node to start tracing backwards from.
+
+        Returns:
+            A dictionary mapping the names of ancestor source node names to the nodes 
+            (e.g., {'df': Node, 'settings': Node}).
+            This indicates which data sources are potentially available.
+        """
+        source_nodes = {}
+        visited = set()
+        queue = list(self.graph.predecessors(current_node)) # Use list for queue behavior
+
+        while queue:
+            predecessor = queue.pop(0) # FIFO
+
+            if predecessor in visited:
+                continue
+            visited.add(predecessor)
+
+            if isinstance(predecessor, DecisionNode):
+                # If it's a decision node, add its predecessors to the queue
+                # to continue tracing backwards *through* it.
+                for decision_predecessor in self.graph.predecessors(predecessor):
+                    if decision_predecessor not in visited:
+                        queue.append(decision_predecessor)
+            else:
+                # If it's a regular node or an input node, it's a source.
+                # We store its name as an available data source.
+                source_nodes[predecessor.name] = predecessor
+
+        return source_nodes
+
+
     def _format_function_execution(self, node: Node, function_string: str) -> str:
         """Format the function execution statement."""
         if isinstance(node, InputNode):
             return f"{node.name}_output = input_data['{node.name}']"
         
-        func = node.action_function
+        
+        if isinstance(node, DecisionNode):
+            func = node.condition
+        else:
+            func = node.action_function
+
         is_wrapper = self._is_exposed_wrapper(func)
         
         # Get default arguments from the wrapper function
@@ -126,18 +174,28 @@ class NotebookExporter:
             }
         
         arguments = dict(default_args)  # Start with defaults
-        # Get predecessor outputs dictionary
-        predecessors = self.graph.get_node_predecessors(node)
-        if predecessors:
-            for predecessor in predecessors:
-                # if is_wrapper, use the argument name from the arg_mapping
-                if is_wrapper:
-                    _, arg_mapping = self._get_exposed_target_info(func)
-                    if predecessor.name in arg_mapping:
-                        arguments[arg_mapping[predecessor.name]] = f"{predecessor.name}_output"
-                else:
-                    arguments[predecessor.name] = f"{predecessor.name}_output"
+        #TODO: Handle default arguments for non-wrapper functions
+        
+        print("Node: ", node.name)
+        if is_wrapper:
+            _, arg_mapping = self._get_exposed_target_info(func)
+            for predecessor_name, func_param in arg_mapping.items():
+                arguments[func_param] = f"{predecessor_name}_output"
+        else:
+            arg_mapping = dict()
+        print("Arg mapping: ", arg_mapping)
+        print("Arguments: ", arguments)
+        
+        # Get predecessor nodes that provide data, ignoring decision nodes in between
+        arg_source_nodes = self._find_argument_source_nodes(node)        
 
+        # Handle the arguments that are not transformed
+        for arg_source_node in arg_source_nodes:
+            if arg_source_node not in arg_mapping:
+                arguments[arg_source_node.name] = f"{arg_source_node.name}_output"
+
+        #TODO: Add check that all required arguments are present and all provided arguments are part of arguments
+        
         repr_string_noop = lambda x: repr(x) if not isinstance(x, str) else x
         
         # Format argument string
@@ -213,6 +271,10 @@ class NotebookExporter:
         
         # Process nodes in topological order
         for node in self._get_topological_order():
+            # Skip decision nodes
+            if isinstance(node, DecisionNode):
+                continue
+                
             if node.is_completed():
                 if isinstance(node, InputNode):
                     self._create_input_node_cells(node)
