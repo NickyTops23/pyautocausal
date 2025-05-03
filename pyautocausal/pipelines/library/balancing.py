@@ -35,7 +35,7 @@ def compute_synethetic_control_weights(spec: DiDSpec,
             Dictionary with synthetic control information including data and weights
         """
         # Extract data from inputs
-        if isinstance(spec, DiDSpec) and 'data' in spec:
+        if isinstance(spec, DiDSpec) and hasattr(spec, 'data'):
             df = spec.data
         else:
             raise ValueError("Inputs must contain a 'data' field with a DataFrame")
@@ -122,10 +122,16 @@ def compute_synethetic_control_weights(spec: DiDSpec,
             all_weights[unit_idx] = unit_weights[i]
         
         # Create a new copy of inputs to avoid modifying the original
-        result = inputs.copy()
+        result = spec.data.copy()
         
-        # Store weights in the result
-        result['weights'] = all_weights
+        # Expand weights to match DataFrame length
+        expanded_weights = np.zeros(len(result))
+        for i, unit in enumerate(all_units):
+            unit_mask = result[unit_col] == unit
+            expanded_weights[unit_mask] = all_weights[i]
+        
+        # Store expanded weights in the result
+        result['weights'] = expanded_weights
         
         # Create a diagnostic report to help with troubleshooting
         result['sc_diagnostics'] = {
