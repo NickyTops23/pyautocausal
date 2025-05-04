@@ -72,6 +72,11 @@ class NotebookExporter:
             
             target_source = inspect.getsource(target_func)
             
+            # Remove the @make_transformable decorator lines
+            target_lines = target_source.split('\n')
+            filtered_lines = [line for line in target_lines if not line.strip().startswith('@make_transformable')]
+            target_source = '\n'.join(filtered_lines)
+
             # Format a comment explaining the wrapper relationship
             mapping_str = ", ".join([f"'{wrapper}' → '{target}'" for wrapper, target in arg_mapping.items()])
             comment = f"# This node uses a wrapper function that calls a target function with adapted arguments\n"
@@ -174,7 +179,7 @@ class NotebookExporter:
         arg_source_nodes = self._find_argument_source_nodes(node)        
 
         # Handle the arguments that are not transformed
-        for arg_name, arg_source_node in arg_source_nodes.items():
+        for arg_name, _ in arg_source_nodes.items():
             if arg_name not in arg_mapping:
                 arguments[arg_name] = f"{arg_name}_output"
 
@@ -197,10 +202,10 @@ class NotebookExporter:
         notebook_display_string = node.notebook_function(node.get_result_value())
         # Get the string representation of the notebook function
         # Replace the argument placeholders with the actual node names
-        for arg_name, predecessor_name in arguments.items():
-            notebook_display_string = notebook_display_string.replace(f"{arg_name}_argument", f"{predecessor_name}_output")
+        for arg_name, predecessor_output in arguments.items():
+            notebook_display_string = notebook_display_string.replace(f"{arg_name}_argument", f"{predecessor_output}")
 
-        return notebook_display_string
+        return f"{node.name}_output = {notebook_display_string}"
     
     def _format_function_execution(self, node: Node, function_string: str) -> str:
         """Format the function execution statement."""
@@ -261,7 +266,6 @@ class NotebookExporter:
             self.nb.cells.append(new_code_cell(notebook_display_code))
     
         elif not isinstance(node, InputNode):
-   
             func_def = self._format_function_definition(node)
             self.nb.cells.append(new_code_cell(func_def))
         
