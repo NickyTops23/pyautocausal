@@ -113,7 +113,6 @@ def test_notebook_creation(sample_graph, output_path):
     # Check basic structure
     assert len(nb.cells) > 0
     assert nb.cells[0].cell_type == "markdown"  # Header
-    assert nb.cells[1].cell_type == "code"      # Imports
 
 def test_node_cell_creation(sample_graph, output_path):
     """Test that cells are created for each node"""

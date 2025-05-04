@@ -23,14 +23,14 @@ def causal_graph(tmp_path):
     graph = (ExecutableGraph(output_path=str(output_dir))
         .create_input_node("data", input_dtype=pd.DataFrame)
         .create_node(
-            "specification",
+            "spec",
             action_function=create_cross_sectional_specification.get_function(),
             predecessors=["data"],
         )
         .create_decision_node(
             "doubleml_condition",
             condition=lambda x: len(x.data) > 100,
-            predecessors=["specification"],
+            predecessors=["spec"],
         )
         .create_node(
             "doubleml",
