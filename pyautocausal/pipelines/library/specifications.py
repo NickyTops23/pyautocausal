@@ -25,7 +25,7 @@ class BaseSpec:
 class CrossSectionalSpec(BaseSpec):
     """Univariate specification."""
     outcome_col: str
-    treatment_col: str
+    treatment_cols: List[str]
     control_cols: List[str]
 
 @dataclass
@@ -39,7 +39,6 @@ class DiDSpec(BaseSpec):
     post_col: str
     include_unit_fe: bool
     include_time_fe: bool
-    interaction_col: str
 @dataclass
 class EventStudySpec(BaseSpec):
     """Event Study specification."""
@@ -127,7 +126,7 @@ def validate_and_prepare_data(
 def create_cross_sectional_specification(
     data: pd.DataFrame, 
     outcome_col: str = 'y', 
-    treatment_col: str = 'treat',
+    treatment_cols: List[str] = ['treat'],
     control_cols: Optional[List[str]] = None
 ) -> BaseSpec:
     """
@@ -136,14 +135,15 @@ def create_cross_sectional_specification(
     Args:
         data: DataFrame with outcome, treatment, and controls
         outcome_col: Name of outcome column
-        treatment_col: Name of treatment column
+        treatment_cols: List of treatment column names (only first is used for now)
         control_cols: List of control variable columns
         
     Returns:
         BaseSpec object with specification information
     """
+    # TODO:Use first treatment column for now (may extend to multiple in future)
+    treatment_col = treatment_cols[0]
     
-    treatment_cols = [treatment_col]
     # Validate and prepare data
     data, control_cols = validate_and_prepare_data(
         data=data,
@@ -166,10 +166,10 @@ def create_cross_sectional_specification(
     formula = (f"{outcome_col} ~ {treatment_col} + " + " + ".join(control_cols) 
               if control_cols else f"{outcome_col} ~ {treatment_col}")
     
-    # return BaseSpec
+    # return CrossSectionalSpec with treatment_cols
     return CrossSectionalSpec(
         outcome_col=outcome_col,
-        treatment_col=treatment_col,
+        treatment_cols=treatment_cols,  # Use the list
         control_cols=control_cols,
         data=data,
         formula=formula
@@ -180,7 +180,7 @@ def create_cross_sectional_specification(
 def create_did_specification(
     data: pd.DataFrame, 
     outcome_col: str = 'y', 
-    treatment_col: str = 'treat',
+    treatment_cols: List[str] = ['treat'],
     time_col: str = 't',
     unit_col: str = 'id_unit',
     post_col: Optional[str] = None,
@@ -207,8 +207,8 @@ def create_did_specification(
     Returns:
         DiDSpec object with DiD specification information
     """
-    
-    treatment_cols = [treatment_col]
+    # TODO: Use first treatment column for now (may extend to multiple in future)
+    treatment_col = treatment_cols[0]
     # Validate and prepare data
     data, control_cols = validate_and_prepare_data(
         data=data,
@@ -256,7 +256,7 @@ def create_did_specification(
     # Create and return specification
     return DiDSpec(
         outcome_col=outcome_col,
-        treatment_col=treatment_col,
+        treatment_cols=treatment_cols,
         time_col=time_col,
         unit_col=unit_col,
         post_col=post_col,
@@ -472,7 +472,7 @@ def create_staggered_did_specification(
     # Create and return specification
     return StaggeredDiDSpec(
         outcome_col=outcome_col,
-        treatment_col=treatment_col,
+        treatment_cols=treatment_cols,
         time_col=time_col,
         unit_col=unit_col,
         treatment_time_col=treatment_time_col,
@@ -484,6 +484,53 @@ def create_staggered_did_specification(
         data=data,
         formula=formula
     )
+
+
+def spec_constructor(spec: Any) -> str:
+    """Convert any specification object to a constructor string representation.
+    
+    Args:
+        spec: Any specification object (DiDSpec, CrossSectionalSpec, etc.)
+        
+    Returns:
+        A string representation calling the constructor with appropriate arguments
+    """
+    # Get the class name for the constructor call
+    class_name = spec.__class__.__name__
+    
+    # Gather attributes excluding DataFrame objects
+    attrs = []
+    for key, value in spec.__dict__.items():
+        if isinstance(value, pd.DataFrame):
+            # Just reference the data variable
+            attrs.append(f"    {key}=data_PLACEHOLDER")
+        elif isinstance(value, list) and value and all(isinstance(x, str) for x in value):
+            # Format list of strings more cleanly
+            items = ", ".join([repr(x) for x in value])
+            attrs.append(f"    {key}=[{items}]")
+        elif isinstance(value, str):
+            # Add quotes around string values
+            attrs.append(f'    {key}="{value}"')
+        elif value is None:
+            # Handle None values
+            attrs.append(f"    {key}=None")
+        else:
+            # For other types (booleans, numbers, etc.)
+            attrs.append(f"    {key}={value}")
+
+    # Return the constructor call as a string with proper indentation
+    return f"{class_name}(\n" + ",\n".join(attrs) + "\n)"
+
+
+
+
+
+
+
+
+
+
+
 
 
 # def create_continuous_treatment_specification(

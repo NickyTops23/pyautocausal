@@ -43,7 +43,7 @@ def is_decision_node(node) -> bool:
     
     return False
 
-def visualize_graph(graph, save_path):
+def visualize_graph(graph, save_path = None):
     """
     Visualize the provided graph as a mermaid flowchart within a markdown file.
     
@@ -61,11 +61,7 @@ def visualize_graph(graph, save_path):
     if len(graph) == 0:
         raise ValueError("Graph is empty")
     
-    # Ensure the file extension is .md
-    file_path, ext = os.path.splitext(save_path)
-    if not ext or ext.lower() != '.md':
-        save_path = file_path + '.md'
-        logger.info(f"Changed save path to {save_path} to ensure markdown format")
+
         
     # Start building the mermaid diagram
     markdown_lines = ["# Graph Visualization", "", "## Executable Graph"]
@@ -140,17 +136,11 @@ def visualize_graph(graph, save_path):
     legend_lines.extend([
         "```mermaid",
         "graph LR",
-        "    actionNode[Action Node]",
-        "    style actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black"
+        "    actionNode[Action Node] ~~~ decisionNode{Decision Node}",
+        "    style actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black",
+        "    style decisionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black",
+        "```"
     ])
-    
-    if has_decision_nodes:
-        legend_lines.extend([
-            "    decisionNode{Decision Node}",
-            "    style decisionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black"
-        ])
-    
-    legend_lines.append("```")
     
     # Add node state legend
     legend_lines.extend([
@@ -158,10 +148,7 @@ def visualize_graph(graph, save_path):
         "### Node States",
         "```mermaid",
         "graph LR",
-        "    pendingNode[Pending]:::pendingNode",
-        "    runningNode[Running]:::runningNode",
-        "    completedNode[Completed]:::completedNode",
-        "    failedNode[Failed]:::failedNode",
+        "    pendingNode[Pending]:::pendingNode ~~~ runningNode[Running]:::runningNode ~~~ completedNode[Completed]:::completedNode ~~~ failedNode[Failed]:::failedNode",
         "",
         "    classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;",
         "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;", 
@@ -176,12 +163,24 @@ def visualize_graph(graph, save_path):
     # Combine markdown, mermaid, and legend content
     markdown_content = '\n'.join(markdown_lines + [''] + mermaid_lines + legend_lines)
     
-    # Write to markdown file
-    with open(save_path, 'w') as f:
-        f.write(markdown_content)
+
     
-    logger.info(f"Graph visualization saved as markdown to {save_path}")
+    
+
+    if save_path is None:
+        return markdown_content
+
+    else:
+        # Ensure the file extension is .md
+        file_path, ext = os.path.splitext(save_path)
+        if not ext or ext.lower() != '.md':
+            save_path = file_path + '.md'
+            logger.info(f"Changed save path to {save_path} to ensure markdown format")
+                # Write to markdown file
+        with open(save_path, 'w') as f:
+            f.write(markdown_content)
         
-# For convenience, if someone runs this module directly
+        logger.info(f"Graph visualization saved as markdown to {save_path}")
+    # For convenience, if someone runs this module directly
 
    

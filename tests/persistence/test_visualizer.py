@@ -94,17 +94,15 @@ def test_visualize_graph_node_labels(simple_graph, tmp_path):
         ### Node Types
         ```mermaid
         graph LR
-            actionNode[Action Node]
+            actionNode[Action Node] ~~~ decisionNode{Decision Node}
             style actionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black
+            style decisionNode fill:#d0e0ff,stroke:#3080cf,stroke-width:2px,color:black
         ```
 
         ### Node States
         ```mermaid
         graph LR
-            pendingNode[Pending]:::pendingNode
-            runningNode[Running]:::runningNode
-            completedNode[Completed]:::completedNode
-            failedNode[Failed]:::failedNode
+            pendingNode[Pending]:::pendingNode ~~~ runningNode[Running]:::runningNode ~~~ completedNode[Completed]:::completedNode ~~~ failedNode[Failed]:::failedNode
 
             classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;
             classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;

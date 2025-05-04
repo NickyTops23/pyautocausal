@@ -1,11 +1,11 @@
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Callable
 import networkx as nx
 import nbformat
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
 import inspect
-from ..orchestration.nodes import Node, InputNode
+from ..orchestration.nodes import Node, InputNode, DecisionNode
 from ..orchestration.graph import ExecutableGraph
-
+from .visualizer import visualize_graph
 class NotebookExporter:
     """
     Exports an executed graph to a Jupyter notebook format.
@@ -29,9 +29,6 @@ class NotebookExporter:
         """Create header cell with metadata about the graph execution."""
         header = "# Causal Analysis Pipeline\n\n"
         header += "This notebook was automatically generated from a PyAutoCausal pipeline execution.\n\n"
-        header += "## Graph Structure\n"
-        # Add basic graph info
-        header += f"- Number of nodes: {len(self.graph.nodes)}\n"
         
         self.nb.cells.append(new_markdown_cell(header))
     
@@ -57,8 +54,14 @@ class NotebookExporter:
         """Format the function definition for a node."""
         if isinstance(node, InputNode):
             return ""
-            
-        func = node.action_function
+        
+        if hasattr(node, 'notebook_function') and node.notebook_function is not None and node.is_completed():
+            return ""
+
+        if isinstance(node, DecisionNode):
+            func = node.condition
+        else:
+            func = node.action_function
         
         # Check if this is an exposed wrapper function
         if self._is_exposed_wrapper(func):
@@ -66,6 +69,11 @@ class NotebookExporter:
             
             target_source = inspect.getsource(target_func)
             
+            # Remove the @make_transformable decorator lines
+            target_lines = target_source.split('\n')
+            filtered_lines = [line for line in target_lines if not line.strip().startswith('@make_transformable')]
+            target_source = '\n'.join(filtered_lines)
+
             # Format a comment explaining the wrapper relationship
             mapping_str = ", ".join([f"'{wrapper}' → '{target}'" for wrapper, target in arg_mapping.items()])
             comment = f"# This node uses a wrapper function that calls a target function with adapted arguments\n"
@@ -108,40 +116,115 @@ class NotebookExporter:
         """Get the function name from a string."""
         return function_string.split('def')[1].split('(')[0].strip()
     
+    
+    def _find_argument_source_nodes(self, current_node: Node) -> Dict[str, str]:
+        """
+        Traces backwards from a node to find the non-decision-node ancestors
+        that provide data. Effectively finds the origins of data flowing into
+        the current_node, ignoring intermediate DecisionNodes.
+
+        Args:
+            current_node: The node to start tracing backwards from.
+
+        Returns:
+            A dictionary mapping the names of ancestor source node names to the nodes 
+            (e.g., {'df': Node, 'settings': Node}).
+            This indicates which data sources are potentially available.
+        """
+        source_nodes = {}
+        visited = set()
+        queue = list(self.graph.predecessors(current_node)) # Use list for queue behavior
+
+        while queue:
+            predecessor = queue.pop(0) # FIFO
+
+            if predecessor in visited:
+                continue
+            visited.add(predecessor)
+
+            if isinstance(predecessor, DecisionNode):
+                # If it's a decision node, add its predecessors to the queue
+                # to continue tracing backwards *through* it.
+                for decision_predecessor in self.graph.predecessors(predecessor):
+                    if decision_predecessor not in visited:
+                        queue.append(decision_predecessor)
+            else:
+                # If it's a regular node or an input node, it's a source.
+                # We store its name as an available data source.
+                source_nodes[predecessor.name] = predecessor
+
+        return source_nodes
+
+    def _resolve_function_arguments(self, node: Node, func: Callable) -> Dict[str, str]:
+        """Resolve the arguments for a node's function."""
+
+        is_wrapper = self._is_exposed_wrapper(func)
+        
+        arguments = dict()  
+        #TODO: Handle default arguments for non-wrapper functions
+        
+
+        # For wrapper functions, use the argument mapping to map the arguments to the predecessor node names
+        if is_wrapper:
+            _, arg_mapping = self._get_exposed_target_info(func)
+            for predecessor_name, func_param in arg_mapping.items():
+                arguments[func_param] = f"{predecessor_name}_output"
+        else:
+            arg_mapping = dict()
+
+        # Get predecessor nodes that provide data, ignoring decision nodes in between
+        arg_source_nodes = self._find_argument_source_nodes(node)        
+
+        # Handle the arguments that are not transformed
+        for arg_name, _ in arg_source_nodes.items():
+            if arg_name not in arg_mapping:
+                arguments[arg_name] = f"{arg_name}_output"
+
+        #TODO: Add check that all required arguments are present and all provided arguments are part of arguments
+        #TODO: Handle run-context arguments
+
+        return arguments
+
+    def _format_notebook_function(self, node: Node) -> str:
+        """Format the notebook function for a node.
+        Notebook functions return string representations of the function definition,
+        where arguments are denoted by the argument name followed by "[argument_name]_argument"
+
+        This function takes the string representation of the notebook function and
+        resolves the arguments to the actual node names.
+        """
+        
+        arguments = self._resolve_function_arguments(node, node.action_function)
+
+        node_result = node.output.result_dict[node.name]
+        notebook_display_string = node.notebook_function(node_result)
+
+        # Replace the argument placeholders with the actual node names
+        for arg_name, predecessor_output in arguments.items():
+            notebook_display_string = notebook_display_string.replace(f"{arg_name}_PLACEHOLDER", f"{predecessor_output}")
+
+        # Remove the title line and empty line after it
+        notebook_display_string = notebook_display_string.replace(f"node_name_PLACEHOLDER", f"{node.name}_output")
+
+        return f"{node.name}_output = {notebook_display_string}"
+    
     def _format_function_execution(self, node: Node, function_string: str) -> str:
         """Format the function execution statement."""
         if isinstance(node, InputNode):
             return f"{node.name}_output = input_data['{node.name}']"
-        
-        func = node.action_function
-        is_wrapper = self._is_exposed_wrapper(func)
-        
-        # Get default arguments from the wrapper function
-        default_args = {}
-        if is_wrapper:
-            signature = inspect.signature(func)
-            default_args = {
-                k: v.default for k, v in signature.parameters.items()
-                if v.default is not inspect.Parameter.empty
-            }
-        
-        arguments = dict(default_args)  # Start with defaults
-        # Get predecessor outputs dictionary
-        predecessors = self.graph.get_node_predecessors(node)
-        if predecessors:
-            for predecessor in predecessors:
-                # if is_wrapper, use the argument name from the arg_mapping
-                if is_wrapper:
-                    _, arg_mapping = self._get_exposed_target_info(func)
-                    if predecessor.name in arg_mapping:
-                        arguments[arg_mapping[predecessor.name]] = f"{predecessor.name}_output"
-                else:
-                    arguments[predecessor.name] = f"{predecessor.name}_output"
 
+        # TODO: Handle cases where we want to show condition functions
+        func = node.action_function
+
+        arguments = self._resolve_function_arguments(node, func)
+        
         repr_string_noop = lambda x: repr(x) if not isinstance(x, str) else x
         
         # Format argument string
         args_str = ", ".join(f"{k}={repr_string_noop(v)}" for k, v in arguments.items()) if arguments else ""
+        
+        
+        is_wrapper = self._is_exposed_wrapper(func)
         
         # For wrapped functions, add a comment showing how to call the target directly
         if is_wrapper:
@@ -177,8 +260,13 @@ class NotebookExporter:
             info += f"{node.node_description}\n"
         self.nb.cells.append(new_markdown_cell(info))
         
-        # Add function definition if not an input node
-        if not isinstance(node, InputNode):
+        # Add function definition if not an input node and no notebook function is defined
+        if hasattr(node, 'notebook_function') and node.notebook_function is not None and node.is_completed():
+            # Add execution cell
+            notebook_display_code = self._format_notebook_function(node)
+            self.nb.cells.append(new_code_cell(notebook_display_code))
+    
+        elif not isinstance(node, InputNode):
             func_def = self._format_function_definition(node)
             self.nb.cells.append(new_code_cell(func_def))
         
@@ -208,11 +296,21 @@ class NotebookExporter:
         # Create header
         self._create_header()
         
+        # Get graph visualization without title
+        markdown_content = visualize_graph(self.graph)
+        # Remove the title line and empty line after it
+        markdown_content = "\n".join(markdown_content.split("\n")[1:])
+        self.nb.cells.append(new_markdown_cell(markdown_content))
+
         # Create imports
         self._create_imports_cell()
-        
+
         # Process nodes in topological order
         for node in self._get_topological_order():
+            # Skip decision nodes
+            if isinstance(node, DecisionNode):
+                continue
+                
             if node.is_completed():
                 if isinstance(node, InputNode):
                     self._create_input_node_cells(node)

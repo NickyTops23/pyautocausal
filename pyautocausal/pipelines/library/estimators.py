@@ -21,18 +21,18 @@ from .specifications import (
 from .base_estimator import format_statsmodels_result
 
 
-def create_model_matrices(specification: BaseSpec) -> Tuple[np.ndarray, np.ndarray]:
+def create_model_matrices(spec: BaseSpec) -> Tuple[np.ndarray, np.ndarray]:
     """
     Create model matrices from a specification using patsy.
     
     Args:
-        specification: A specification dataclass with data and formula
+        spec: A specification dataclass with data and formula
         
     Returns:
         Tuple of (y, X) arrays for modeling
     """
-    data = specification.data
-    formula = specification.formula
+    data = spec.data
+    formula = spec.formula
     
     # Parse the formula into outcome and predictors
     outcome_expr, predictors_expr = formula.split('~', 1)
@@ -85,20 +85,20 @@ def extract_treatment_from_design(X: pd.DataFrame, treatment_col: str) -> Tuple[
 
 
 @make_transformable
-def fit_ols(specification: BaseSpec, weights: Optional[np.ndarray] = None) -> Results:
+def fit_ols(spec: BaseSpec, weights: Optional[np.ndarray] = None) -> Results:
     """
     Estimate treatment effect using OLS regression.
     
     Args:
-        specification: A specification dataclass with data and formula
+        spec: A specification dataclass with data and formula
         weights: Optional sample weights for weighted regression
         
     Returns:
         Fitted statsmodels regression results
     """
     # We can still use the formula interface directly for OLS
-    data = specification.data
-    formula = specification.formula
+    data = spec.data
+    formula = spec.formula
     
     if weights is not None:
         model = sm.WLS.from_formula(formula, data=data, weights=weights).fit(cov_type='HC1')
@@ -123,18 +123,20 @@ def format_regression_results(model_result: Results) -> str:
 
 
 @make_transformable
-def fit_weighted_ols(specification: BaseSpec, weights: np.ndarray) -> Results:
+def fit_weighted_ols(spec: BaseSpec) -> Results:
     """
     Estimate treatment effect using Weighted OLS regression.
     
     Args:
-        specification: A specification dataclass with data and formula
+        spec: A specification dataclass with data and formula
         weights: Sample weights for the regression
         
     Returns:
         Fitted statsmodels fit_weighted_ols model results
     """
-    if weights is None:
+    if "weights" in spec.data.columns:
+        weights = spec.data['weights']
+    else:
         raise ValueError("Weights must be provided for weighted OLS")
     
     # Ensure weights are valid (no NaN, inf, or zero sum)
@@ -146,12 +148,12 @@ def fit_weighted_ols(specification: BaseSpec, weights: np.ndarray) -> Results:
     if np.sum(weights) != 1.0 and np.sum(weights) != 0.0:
         weights = weights / np.sum(weights)
         
-    return fit_ols(specification, weights)
+    return fit_ols(spec, weights)
 
 
 @make_transformable
 def fit_double_lasso(
-    specification: BaseSpec,
+    spec: BaseSpec,
     alpha: float = 0.1,
     cv_folds: int = 5
 ) -> Results:
@@ -162,7 +164,7 @@ def fit_double_lasso(
     Chernozhukov et al. (2018) - Double/Debiased Machine Learning
     
     Args:
-        specification: A specification dataclass with data and column information
+        spec: A specification dataclass with data and column information
         alpha: Regularization strength for Lasso
         cv_folds: Number of cross-validation folds
             
@@ -170,11 +172,11 @@ def fit_double_lasso(
         Fitted OLS model for the final stage regression
     """
     # Use patsy to create design matrices
-    y_df, X_df = create_model_matrices(specification)
+    y_df, X_df = create_model_matrices(spec)
     y = y_df.values.ravel()  # Convert to 1D array
     
     # Extract treatment and controls
-    d, X_controls = extract_treatment_from_design(X_df, specification.treatment_col)
+    d, X_controls = extract_treatment_from_design(X_df, spec.treatment_cols[0])
     
     # Check if we have control variables
     if X_controls.shape[1] == 0:
