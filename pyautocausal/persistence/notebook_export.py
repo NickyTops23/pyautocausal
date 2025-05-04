@@ -5,7 +5,7 @@ from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
 import inspect
 from ..orchestration.nodes import Node, InputNode, DecisionNode
 from ..orchestration.graph import ExecutableGraph
-
+from .visualizer import visualize_graph
 class NotebookExporter:
     """
     Exports an executed graph to a Jupyter notebook format.
@@ -29,9 +29,6 @@ class NotebookExporter:
         """Create header cell with metadata about the graph execution."""
         header = "# Causal Analysis Pipeline\n\n"
         header += "This notebook was automatically generated from a PyAutoCausal pipeline execution.\n\n"
-        header += "## Graph Structure\n"
-        # Add basic graph info
-        header += f"- Number of nodes: {len(self.graph.nodes)}\n"
         
         self.nb.cells.append(new_markdown_cell(header))
     
@@ -296,9 +293,15 @@ class NotebookExporter:
         # Create header
         self._create_header()
         
+        # Get graph visualization without title
+        markdown_content = visualize_graph(self.graph)
+        # Remove the title line and empty line after it
+        markdown_content = "\n".join(markdown_content.split("\n")[1:])
+        self.nb.cells.append(new_markdown_cell(markdown_content))
+
         # Create imports
         self._create_imports_cell()
-        
+
         # Process nodes in topological order
         for node in self._get_topological_order():
             # Skip decision nodes
