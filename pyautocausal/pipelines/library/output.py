@@ -4,40 +4,13 @@ import statsmodels.api as sm
 from statsmodels.base.model import Results
 from sklearn.base import BaseEstimator
 from pyautocausal.persistence.parameter_mapper import make_transformable
+from typing import Any
 
 @make_transformable
 def write_statsmodels_summary(res: Results ) -> str:
     buffer = io.StringIO()
-    
-    try:
-        # First try to get the standard summary
-        buffer.write(str(res.summary()))
-    except Exception as e:
-        # If the standard summary fails, try to create a simplified summary
-        buffer.write(f"Error generating standard model summary: {str(e)}\n\n")
-        buffer.write(f"Model Type: {type(res).__name__}\n\n")
-        
-        # Basic model parameters that are likely to be available
-        buffer.write("Basic Model Information:\n")
-        if hasattr(res, 'params'):
-            buffer.write("\nParameters:\n")
-            buffer.write(str(res.params))
-            
-        if hasattr(res, 'pvalues'):
-            buffer.write("\n\nP-values:\n")
-            try:
-                buffer.write(str(res.pvalues))
-            except:
-                buffer.write("Unable to generate p-values")
-                
-        if hasattr(res, 'rsquared'):
-            try:
-                buffer.write(f"\n\nR-squared: {res.rsquared}")
-            except:
-                pass
-                
-        if hasattr(res, 'nobs'):
-            buffer.write(f"\n\nObservations: {res.nobs}")
+
+    buffer.write(str(res.summary()))
                 
     return buffer.getvalue()
 
@@ -67,4 +40,17 @@ def write_sklearn_summary(res: BaseEstimator) -> str:
     return '\n'.join(output)
 
 
+@make_transformable
+def write_statsmodels_summary_notebook(output: Any) -> str:
+    """Notebook-friendly version of write_statsmodels_summary that also saves results to a file"""    
 
+    notebook_display_string = f"""res_PLACEHOLDER.summary()
+
+with open('model_summary.txt', 'w') as f:
+    f.write(str(node_name_PLACEHOLDER))
+
+# Display the summary
+print(node_name_PLACEHOLDER)
+"""
+    
+    return notebook_display_string

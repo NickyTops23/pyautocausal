@@ -201,7 +201,10 @@ class NotebookExporter:
 
         # Replace the argument placeholders with the actual node names
         for arg_name, predecessor_output in arguments.items():
-            notebook_display_string = notebook_display_string.replace(f"{arg_name}_argument", f"{predecessor_output}")
+            notebook_display_string = notebook_display_string.replace(f"{arg_name}_PLACEHOLDER", f"{predecessor_output}")
+
+        # Remove the title line and empty line after it
+        notebook_display_string = notebook_display_string.replace(f"node_name_PLACEHOLDER", f"{node.name}_output")
 
         return f"{node.name}_output = {notebook_display_string}"
     
