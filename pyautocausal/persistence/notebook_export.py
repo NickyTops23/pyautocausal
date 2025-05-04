@@ -199,8 +199,9 @@ class NotebookExporter:
         
         arguments = self._resolve_function_arguments(node, node.action_function)
 
-        notebook_display_string = node.notebook_function(node.get_result_value())
-        # Get the string representation of the notebook function
+        node_result = node.output.result_dict[node.name]
+        notebook_display_string = node.notebook_function(node_result)
+
         # Replace the argument placeholders with the actual node names
         for arg_name, predecessor_output in arguments.items():
             notebook_display_string = notebook_display_string.replace(f"{arg_name}_argument", f"{predecessor_output}")
