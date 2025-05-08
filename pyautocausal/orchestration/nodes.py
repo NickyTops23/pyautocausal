@@ -39,7 +39,7 @@ class Node(BaseNode):
             output_config: Optional[OutputConfig] = None,
             save_node: bool = False,
             node_description: str | None = None,
-            notebook_function: Optional[Callable] = None
+            display_function: Optional[Callable] = None
         ):
         super().__init__(name)
         self.logger = get_class_logger(f"{self.__class__.__name__}_{name}")
@@ -60,7 +60,7 @@ class Node(BaseNode):
         self.action_function = action_function
         self.execution_count = 0
         self.node_description = node_description
-        self.notebook_function = notebook_function
+        self.display_function = display_function
 
     def validate_action_function_static(self, name, action_function):
         sig = inspect.signature(action_function)

@@ -61,7 +61,6 @@ def simple_graph(output_path: Path):
     # Second branch for DiD specification using OLS and potentially synthetic control
     graph.create_node('did_spec', 
                     action_function=create_did_specification.transform({'df': 'data'}), 
-                    #notebook_function = spec_constructor,          
                     predecessors=["multi_period"])
 
 
@@ -78,7 +77,7 @@ def simple_graph(output_path: Path):
                     action_function=write_statsmodels_summary.transform({'ols_did': 'res'}),
                     output_config=OutputConfig(output_filename='save_ols_did', output_type=OutputType.TEXT),
                     save_node=True,
-                    #notebook_function = write_statsmodels_summary_notebook,
+                    display_function = write_statsmodels_summary_notebook,
                     predecessors=["ols_did"])
     
     # If False, use synthetic control

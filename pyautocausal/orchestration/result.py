@@ -32,3 +32,10 @@ class Result:
     def update(self, other: dict) -> None:
         self.result_dict.update(other)
 
+    def get_only_item(self) -> Any:
+        """Get the only item in the result dictionary.
+        Raises a ValueError if the result dictionary is empty or has more than one item."""
+        if len(self.result_dict) != 1:
+            raise ValueError("Result dictionary must have exactly one item")
+        return list(self.result_dict.values())[0]
+
