@@ -49,6 +49,9 @@ class Node(BaseNode):
         self._validate_save_configuration(save_node, return_annotation, output_config)
         self.output_config = self._setup_output_config(save_node, return_annotation, output_config)
         
+        # Check if action_function is "static" (does not take self or cls as first argument)
+        self.validate_action_function_static(name, action_function)
+        
         # Initialize node state and attributes
         self.state = NodeState.PENDING
         self.output = Result()
@@ -58,6 +61,14 @@ class Node(BaseNode):
         self.execution_count = 0
         self.node_description = node_description
         self.notebook_function = notebook_function
+
+    def validate_action_function_static(self, name, action_function):
+        sig = inspect.signature(action_function)
+        params = list(sig.parameters.values())
+        if params and params[0].name in ("self", "cls"):
+            raise ValueError(
+                f"Node {name}: action_function must be a static function (not a method with 'self' or 'cls' as the first argument)."
+            )
     
     def _get_return_annotation(self, action_function: Callable) -> Any:
         """Get the return type annotation from the action function"""
