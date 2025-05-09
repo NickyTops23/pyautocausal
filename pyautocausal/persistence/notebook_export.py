@@ -322,7 +322,7 @@ class NotebookExporter:
     def _format_display_function_call(self, node: Node) -> str:
         """Format the display function call for a node. This simply
         calls the display function on the node's output."""
-        return f"{node.display_function.__name__}({node.name}_output)"
+        return f"# Display Result\n{node.display_function.__name__}({node.name}_output)"
 
     def _create_input_node_cells(self, node: InputNode) -> None:
         """Create cells for a single input node's execution."""
