@@ -4,6 +4,9 @@ from pydantic import BaseModel
 import uuid
 from pathlib import Path
 import shutil
+import os # For environment variables
+import boto3 # Add boto3 import
+from botocore.exceptions import NoCredentialsError, ClientError
 
 # Import the Celery app instance and the task definition from app.worker
 # This assumes main.py and worker.py are in the same 'app' directory.
@@ -17,17 +20,19 @@ app = FastAPI(
 
 # In-memory store for mapping our job_id to Celery's task_id
 # Key: our application-specific job_id (str)
-# Value: {"celery_task_id": str, "original_filename": str}
+# Value: {"celery_task_id": str, "original_filename": str, "input_s3_uri": str}
 # For a PoC, this is okay. For production, use a persistent store (e.g., Redis, DB).
 job_to_celery_map = {}
 
-# Define base paths for our local "blob storage" (inputs)
-# These paths are relative to where the main.py (FastAPI app) is run.
-# If you run uvicorn from `pyautocausal_api/`, these will be correct.
-BASE_INPUT_PATH = Path("./local_job_files/inputs").resolve()
+# Configuration from Environment Variables
+S3_INPUT_BUCKET = os.getenv("S3_INPUT_BUCKET")
+S3_REGION = os.getenv("AWS_REGION", "us-east-1") # Default region if not set
 
-# Ensure base input directory exists at startup (worker handles output dir)
-BASE_INPUT_PATH.mkdir(parents=True, exist_ok=True)
+s3_client = boto3.client("s3", region_name=S3_REGION)
+
+# Remove local BASE_INPUT_PATH, as we're using S3 now
+# BASE_INPUT_PATH = Path("./local_job_files/inputs").resolve()
+# BASE_INPUT_PATH.mkdir(parents=True, exist_ok=True)
 
 # --- Pydantic Models for API Request/Response ---
 class JobSubmissionResponse(BaseModel):
@@ -50,41 +55,49 @@ async def submit_job(
 ):
     """
     Submit a new job to process a data file with the PyAutoCausal simple_graph.
+    The file will be uploaded to S3, and its S3 URI will be passed to the worker.
     """
+    if not S3_INPUT_BUCKET:
+        logger.error("S3_INPUT_BUCKET environment variable is not set.")
+        raise HTTPException(status_code=500, detail="Server configuration error: S3 input bucket not specified.")
+
     job_id = str(uuid.uuid4())
-
-    # Create a subdirectory for this job's input file
-    job_input_dir = BASE_INPUT_PATH / job_id
-    job_input_dir.mkdir(parents=True, exist_ok=True)
-
-    input_file_path = job_input_dir / (file.filename or "uploaded_file") # Handle case with no filename
+    original_filename = file.filename or "uploaded_file"
+    s3_input_key = f"inputs/{job_id}/{original_filename}" # Example S3 key structure
 
     try:
-        # Save the uploaded file to the job-specific input directory
-        with open(input_file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        # Clean up job input directory if file save fails
-        if job_input_dir.exists():
-            shutil.rmtree(job_input_dir, ignore_errors=True)
-        logger.error(f"Error saving uploaded file for job {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Could not save uploaded file '{file.filename}': {e}")
+        # Upload the file to S3
+        s3_client.upload_fileobj(file.file, S3_INPUT_BUCKET, s3_input_key)
+        input_s3_uri = f"s3://{S3_INPUT_BUCKET}/{s3_input_key}"
+        logger.info(f"File for job {job_id} uploaded to {input_s3_uri}")
+
+    except NoCredentialsError:
+        logger.error("AWS credentials not found for S3 upload.")
+        raise HTTPException(status_code=500, detail="Server configuration error: AWS credentials not found.")
+    except ClientError as e:
+        logger.error(f"S3 upload failed for job {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Could not upload file to S3: {e}")
     finally:
-        await file.close() # Important to close the file stream
+        await file.close()
 
-    # Dispatch the Celery task
+    # Dispatch the Celery task with the S3 URI
     try:
-        # Pass our job_id and the original filename.
-        # The worker constructs the full path using BASE_INPUT_PATH.
-        task = run_graph_job.delay(job_id=job_id, original_filename=file.filename or "uploaded_file")
-    except Exception as e: # Catch potential issues with sending task to broker (e.g., Redis down)
-        if job_input_dir.exists(): # Clean up if task submission fails
-            shutil.rmtree(job_input_dir, ignore_errors=True)
+        task = run_graph_job.delay(job_id=job_id, input_s3_uri=input_s3_uri, original_filename=original_filename)
+    except Exception as e:
         logger.error(f"Failed to submit job {job_id} to Celery queue: {e}", exc_info=True)
+        # Attempt to delete the uploaded S3 object if task submission fails
+        try:
+            s3_client.delete_object(Bucket=S3_INPUT_BUCKET, Key=s3_input_key)
+            logger.info(f"Cleaned up S3 object {input_s3_uri} due to Celery submission failure.")
+        except Exception as s3_del_e:
+            logger.error(f"Failed to clean up S3 object {input_s3_uri}: {s3_del_e}")
         raise HTTPException(status_code=503, detail=f"Job queueing service unavailable: {e}")
 
-    # Store the mapping from our job_id to Celery's task.id
-    job_to_celery_map[job_id] = {"celery_task_id": task.id, "original_filename": file.filename or "uploaded_file"}
+    job_to_celery_map[job_id] = {
+        "celery_task_id": task.id,
+        "original_filename": original_filename,
+        "input_s3_uri": input_s3_uri
+    }
 
     # Construct the full status URL using the request object
     status_url = request.url_for("get_job_status", job_id=job_id)

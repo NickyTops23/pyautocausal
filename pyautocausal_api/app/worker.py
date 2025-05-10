@@ -3,6 +3,9 @@ from celery.utils.log import get_task_logger
 import pandas as pd
 from pathlib import Path
 import shutil
+import os # For environment variables
+import boto3 # Add boto3 import
+from botocore.exceptions import NoCredentialsError, ClientError
 
 # --- pyautocausal Import ---
 # This should work if pyautocausal is installed via poetry from the local path
@@ -17,10 +20,13 @@ from pyautocausal.persistence.notebook_export import NotebookExporter
 # Initialize Celery
 # The first argument 'tasks' is the conventional name for the main module of tasks.
 # We'll refer to this celery_app instance when running the worker.
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+
 celery_app = Celery(
     'tasks', # This is the name of the current module for Celery's purposes
-    broker='redis://localhost:6379/0',
-    backend='redis://localhost:6379/0',
+    broker=CELERY_BROKER_URL,
+    backend=CELERY_RESULT_BACKEND,
     # Set the include to ensure tasks are found if worker.py is not the main module
     # when celery worker is started. For simple cases like this, it might not be strictly
     # necessary if you start celery with `-A app.worker.celery_app`
@@ -37,84 +43,134 @@ celery_app.conf.update(
 
 logger = get_task_logger(__name__)
 
-# Define base paths for our local "blob storage"
-# These paths are relative to where the worker is run.
-# Assuming the worker is started from `pyautocausal_api/` root.
-# Using .resolve() makes them absolute paths.
-BASE_INPUT_PATH = Path("./local_job_files/inputs").resolve()
-BASE_OUTPUT_PATH = Path("./local_job_files/outputs").resolve()
+# Configuration from Environment Variables
+S3_OUTPUT_BUCKET = os.getenv("S3_OUTPUT_BUCKET")
+S3_REGION = os.getenv("AWS_REGION", "us-east-1") # Default region if not set
 
-@celery_app.task(bind=True, name='app.worker.run_graph_job') # Explicit naming is good practice
-def run_graph_job(self, job_id: str, original_filename: str):
-    """
-    Celery task to load data, run the simple_graph, and save outputs.
-    `bind=True` makes `self` (the task instance) available for updating state.
-    """
-    logger.info(f"[{job_id}] Celery task 'run_graph_job' started for file: {original_filename}")
-    # Note: Celery automatically sets state to 'STARTED' if task_track_started=True
-    # self.update_state(state='STARTED', meta={'message': 'Job picked up by worker.'})
+s3_client = boto3.client("s3", region_name=S3_REGION)
 
-    input_file_path = BASE_INPUT_PATH / job_id / original_filename
-    output_job_path = BASE_OUTPUT_PATH / job_id
+# Worker will use a temporary local path for processing
+WORKER_TEMP_DIR = Path("/tmp/pyautocausal_worker_space").resolve() # Or another suitable temp location
+
+# Remove local BASE_INPUT_PATH and BASE_OUTPUT_PATH, as we use S3 and temp dirs
+# BASE_INPUT_PATH = Path("./local_job_files/inputs").resolve()
+# BASE_OUTPUT_PATH = Path("./local_job_files/outputs").resolve()
+
+@celery_app.task(bind=True, name='app.worker.run_graph_job')
+def run_graph_job(self, job_id: str, input_s3_uri: str, original_filename: str):
+    """
+    Celery task to download data from S3, run simple_graph, and upload outputs to S3.
+    """
+    if not S3_OUTPUT_BUCKET:
+        logger.error(f"[{job_id}] S3_OUTPUT_BUCKET environment variable is not set. Cannot proceed.")
+        raise ValueError("Server configuration error: S3 output bucket not specified.")
+
+    logger.info(f"[{job_id}] Celery task 'run_graph_job' started for input: {input_s3_uri}")
+
+    # Define local paths for this job on the worker instance
+    local_job_processing_dir = WORKER_TEMP_DIR / job_id
+    local_input_file_path = local_job_processing_dir / "input" / original_filename
+    local_output_job_path = local_job_processing_dir / "output"
+
+    s3_output_key_prefix = f"outputs/{job_id}/" # Example S3 key prefix for outputs
 
     try:
-        # Ensure output directory exists
-        output_job_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"[{job_id}] Output directory prepared: {output_job_path}")
+        # Create local directories for processing
+        local_input_file_path.parent.mkdir(parents=True, exist_ok=True)
+        local_output_job_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"[{job_id}] Local processing directory: {local_job_processing_dir}")
 
-        # 1. Load data (assuming CSV for this example)
-        if not input_file_path.exists():
-            logger.error(f"[{job_id}] Input file not found: {input_file_path}")
-            raise FileNotFoundError(f"Input file not found at {input_file_path} for job {job_id}")
-
-        current_meta = {'message': f'Loading data from {original_filename}.'}
-        self.update_state(state='PROCESSING', meta=current_meta) # Custom state
+        # 1. Download data from S3
+        current_meta = {'message': f'Downloading data from {input_s3_uri}.'}
+        self.update_state(state='PROCESSING', meta=current_meta)
         logger.info(f"[{job_id}] {current_meta['message']}")
-
         try:
-            # For PoC, assuming CSV. Add more robust handling for production.
-            data = pd.read_csv(input_file_path)
+            s3_bucket, s3_key = input_s3_uri.replace("s3://", "").split("/", 1)
+            s3_client.download_file(s3_bucket, s3_key, str(local_input_file_path))
+            logger.info(f"[{job_id}] Successfully downloaded {input_s3_uri} to {local_input_file_path}")
+        except NoCredentialsError:
+            logger.error(f"[{job_id}] AWS credentials not found for S3 download.")
+            raise # Propagate to mark task as failed
+        except ClientError as e:
+            logger.error(f"[{job_id}] S3 download failed for {input_s3_uri}: {e}", exc_info=True)
+            raise # Propagate
         except Exception as e:
-            logger.error(f"[{job_id}] Error reading input CSV ({input_file_path}): {e}", exc_info=True)
+            logger.error(f"[{job_id}] Error during S3 download setup: {e}", exc_info=True)
+            raise
+
+
+        # 2. Load data (assuming CSV)
+        current_meta = {'message': f'Loading data from local copy: {original_filename}.'}
+        self.update_state(state='PROCESSING', meta=current_meta)
+        logger.info(f"[{job_id}] {current_meta['message']}")
+        try:
+            data = pd.read_csv(local_input_file_path)
+        except Exception as e:
+            logger.error(f"[{job_id}] Error reading input CSV ({local_input_file_path}): {e}", exc_info=True)
             raise ValueError(f"Could not parse input file '{original_filename}' for job {job_id}: {e}")
 
-        # 2. Initialize and run the graph
+        # 3. Initialize and run the graph (outputs to local_output_job_path)
         current_meta = {'message': 'Initializing and fitting the causal graph.'}
         self.update_state(state='PROCESSING', meta=current_meta)
         logger.info(f"[{job_id}] {current_meta['message']}")
 
-        # The simple_graph function from your library
-        # It expects output_path where it will save its results.
-        graph = simple_graph(output_path=output_job_path)
+        graph = simple_graph(output_path=local_output_job_path)
+        graph.fit(df=data)
+        logger.info(f"[{job_id}] Graph fitting complete. Local results in {local_output_job_path}")
 
-        graph.fit(df=data) # This is the potentially long-running operation
-        logger.info(f"[{job_id}] Graph fitting complete. Results should be in {output_job_path}")
-
-        # --- Add Notebook Export Logic Here ---
-        current_meta = {'message': 'Exporting graph to Jupyter Notebook.'}
+        # 4. Export Notebook locally
+        current_meta = {'message': 'Exporting graph to Jupyter Notebook locally.'}
         self.update_state(state='PROCESSING', meta=current_meta)
         logger.info(f"[{job_id}] {current_meta['message']}")
         try:
             exporter = NotebookExporter(graph)
-            notebook_filename = "causal_analysis_notebook.ipynb" # Or any name you prefer
-            notebook_full_path = output_job_path / notebook_filename
-            exporter.export_notebook(notebook_full_path)
-            logger.info(f"[{job_id}] Notebook exported successfully to {notebook_full_path}")
+            notebook_filename = "causal_analysis_notebook.ipynb"
+            notebook_full_local_path = local_output_job_path / notebook_filename
+            exporter.export_notebook(notebook_full_local_path)
+            logger.info(f"[{job_id}] Notebook exported locally to {notebook_full_local_path}")
         except Exception as e:
-            logger.error(f"[{job_id}] Failed to export notebook: {e}", exc_info=True)
-            # Decide if this failure should fail the whole job or just be a warning.
-            # For now, we'll let it continue, but the main results are already saved.
-            # If notebook export is critical, you might want to re-raise or handle differently.
+            logger.warning(f"[{job_id}] Failed to export notebook locally: {e}", exc_info=True)
+            # Non-critical failure for notebook export, proceed to upload other results
 
-        # 3. Task completed successfully
-        # The result of the task will be the absolute path to the output directory.
-        return str(output_job_path.resolve()) # Celery automatically sets state to SUCCESS
+        # 5. Upload all contents of local_output_job_path to S3
+        current_meta = {'message': 'Uploading results to S3.'}
+        self.update_state(state='PROCESSING', meta=current_meta)
+        logger.info(f"[{job_id}] Uploading results from {local_output_job_path} to S3 bucket {S3_OUTPUT_BUCKET} with prefix {s3_output_key_prefix}")
+
+        uploaded_files_count = 0
+        for item in local_output_job_path.rglob('*'): # rglob to get all files in subdirectories too
+            if item.is_file():
+                file_key_in_s3 = s3_output_key_prefix + str(item.relative_to(local_output_job_path))
+                try:
+                    s3_client.upload_file(str(item), S3_OUTPUT_BUCKET, file_key_in_s3)
+                    logger.info(f"[{job_id}] Uploaded {item.name} to s3://{S3_OUTPUT_BUCKET}/{file_key_in_s3}")
+                    uploaded_files_count += 1
+                except NoCredentialsError:
+                    logger.error(f"[{job_id}] AWS credentials not found for S3 upload of {item.name}.")
+                    raise # Critical error
+                except ClientError as e:
+                    logger.error(f"[{job_id}] S3 upload failed for {item.name}: {e}", exc_info=True)
+                    # Decide if one failed upload should fail the whole job
+                    # For now, we'll log and continue, but this might need adjustment
+        
+        if uploaded_files_count == 0:
+            logger.warning(f"[{job_id}] No files were found in {local_output_job_path} to upload to S3.")
+        else:
+            logger.info(f"[{job_id}] Successfully uploaded {uploaded_files_count} result files to S3.")
+
+
+        # Task completed successfully, return the S3 URI for the output "directory"
+        output_s3_uri = f"s3://{S3_OUTPUT_BUCKET}/{s3_output_key_prefix}"
+        return output_s3_uri
 
     except Exception as e:
         logger.error(f"[{job_id}] Task 'run_graph_job' failed: {e}", exc_info=True)
-        # Celery automatically sets state to FAILURE and stores the exception
-        # You can do cleanup here if needed, e.g., remove partial output_job_path
-        # if output_job_path.exists():
-        #     shutil.rmtree(output_job_path)
-        #     logger.info(f"[{job_id}] Cleaned up output directory {output_job_path} due to failure.")
-        raise # Re-raise the exception to ensure Celery processes it correctly.
+        raise
+    finally:
+        # Clean up local temporary processing directory
+        if local_job_processing_dir.exists():
+            try:
+                shutil.rmtree(local_job_processing_dir)
+                logger.info(f"[{job_id}] Cleaned up local temporary directory: {local_job_processing_dir}")
+            except Exception as e_clean:
+                logger.error(f"[{job_id}] Error cleaning up local temporary directory {local_job_processing_dir}: {e_clean}", exc_info=True)
