@@ -30,6 +30,19 @@ S3_REGION = os.getenv("AWS_REGION", "us-east-1") # Default region if not set
 
 s3_client = boto3.client("s3", region_name=S3_REGION)
 
+# Function to parse S3 URI into bucket and path components
+def parse_s3_uri(s3_uri):
+    """Parse an S3 URI into bucket and key components."""
+    if not s3_uri or not s3_uri.startswith("s3://"):
+        return None, None
+    
+    # Remove 's3://' prefix and split into bucket and key
+    parts = s3_uri[5:].split('/', 1)
+    bucket = parts[0]
+    # If there's a path component, return it, otherwise return empty string
+    key = parts[1] if len(parts) > 1 else ""
+    return bucket, key
+
 # Remove local BASE_INPUT_PATH, as we're using S3 now
 # BASE_INPUT_PATH = Path("./local_job_files/inputs").resolve()
 # BASE_INPUT_PATH.mkdir(parents=True, exist_ok=True)
@@ -61,14 +74,29 @@ async def submit_job(
         logger.error("S3_INPUT_BUCKET environment variable is not set.")
         raise HTTPException(status_code=500, detail="Server configuration error: S3 input bucket not specified.")
 
+    # Parse the S3 input bucket URI to get bucket name and base path
+    bucket_name, base_path = parse_s3_uri(S3_INPUT_BUCKET)
+    if not bucket_name:
+        logger.error(f"Invalid S3 URI format for S3_INPUT_BUCKET: {S3_INPUT_BUCKET}")
+        raise HTTPException(status_code=500, detail="Server configuration error: Invalid S3 input bucket URI format.")
+
     job_id = str(uuid.uuid4())
     original_filename = file.filename or "uploaded_file"
-    s3_input_key = f"inputs/{job_id}/{original_filename}" # Example S3 key structure
+    
+    # Construct the full S3 key including the base path if it exists
+    if base_path:
+        # Ensure base_path has trailing slash but not leading slash
+        base_path = base_path.strip('/')
+        if base_path:
+            base_path += '/'
+        s3_input_key = f"{base_path}inputs/{job_id}/{original_filename}"
+    else:
+        s3_input_key = f"inputs/{job_id}/{original_filename}"
 
     try:
         # Upload the file to S3
-        s3_client.upload_fileobj(file.file, S3_INPUT_BUCKET, s3_input_key)
-        input_s3_uri = f"s3://{S3_INPUT_BUCKET}/{s3_input_key}"
+        s3_client.upload_fileobj(file.file, bucket_name, s3_input_key)
+        input_s3_uri = f"s3://{bucket_name}/{s3_input_key}"
         logger.info(f"File for job {job_id} uploaded to {input_s3_uri}")
 
     except NoCredentialsError:
@@ -87,7 +115,7 @@ async def submit_job(
         logger.error(f"Failed to submit job {job_id} to Celery queue: {e}", exc_info=True)
         # Attempt to delete the uploaded S3 object if task submission fails
         try:
-            s3_client.delete_object(Bucket=S3_INPUT_BUCKET, Key=s3_input_key)
+            s3_client.delete_object(Bucket=bucket_name, Key=s3_input_key)
             logger.info(f"Cleaned up S3 object {input_s3_uri} due to Celery submission failure.")
         except Exception as s3_del_e:
             logger.error(f"Failed to clean up S3 object {input_s3_uri}: {s3_del_e}")

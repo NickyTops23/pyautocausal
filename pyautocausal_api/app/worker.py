@@ -49,6 +49,19 @@ S3_REGION = os.getenv("AWS_REGION", "us-east-1") # Default region if not set
 
 s3_client = boto3.client("s3", region_name=S3_REGION)
 
+# Function to parse S3 URI into bucket and path components
+def parse_s3_uri(s3_uri):
+    """Parse an S3 URI into bucket and key components."""
+    if not s3_uri or not s3_uri.startswith("s3://"):
+        return None, None
+    
+    # Remove 's3://' prefix and split into bucket and key
+    parts = s3_uri[5:].split('/', 1)
+    bucket = parts[0]
+    # If there's a path component, return it, otherwise return empty string
+    key = parts[1] if len(parts) > 1 else ""
+    return bucket, key
+
 # Worker will use a temporary local path for processing
 WORKER_TEMP_DIR = Path("/tmp/pyautocausal_worker_space").resolve() # Or another suitable temp location
 
@@ -64,6 +77,12 @@ def run_graph_job(self, job_id: str, input_s3_uri: str, original_filename: str):
     if not S3_OUTPUT_BUCKET:
         logger.error(f"[{job_id}] S3_OUTPUT_BUCKET environment variable is not set. Cannot proceed.")
         raise ValueError("Server configuration error: S3 output bucket not specified.")
+    
+    # Parse the S3 output bucket URI to get bucket name and base path
+    output_bucket_name, output_base_path = parse_s3_uri(S3_OUTPUT_BUCKET)
+    if not output_bucket_name:
+        logger.error(f"[{job_id}] Invalid S3 URI format for S3_OUTPUT_BUCKET: {S3_OUTPUT_BUCKET}")
+        raise ValueError("Server configuration error: Invalid S3 output bucket URI format.")
 
     logger.info(f"[{job_id}] Celery task 'run_graph_job' started for input: {input_s3_uri}")
 
@@ -72,7 +91,15 @@ def run_graph_job(self, job_id: str, input_s3_uri: str, original_filename: str):
     local_input_file_path = local_job_processing_dir / "input" / original_filename
     local_output_job_path = local_job_processing_dir / "output"
 
-    s3_output_key_prefix = f"outputs/{job_id}/" # Example S3 key prefix for outputs
+    # Construct the full S3 key including the base path if it exists
+    if output_base_path:
+        # Ensure base_path has trailing slash but not leading slash
+        output_base_path = output_base_path.strip('/')
+        if output_base_path:
+            output_base_path += '/'
+        s3_output_key_prefix = f"{output_base_path}outputs/{job_id}/"
+    else:
+        s3_output_key_prefix = f"outputs/{job_id}/"
 
     try:
         # Create local directories for processing
@@ -135,15 +162,15 @@ def run_graph_job(self, job_id: str, input_s3_uri: str, original_filename: str):
         # 5. Upload all contents of local_output_job_path to S3
         current_meta = {'message': 'Uploading results to S3.'}
         self.update_state(state='PROCESSING', meta=current_meta)
-        logger.info(f"[{job_id}] Uploading results from {local_output_job_path} to S3 bucket {S3_OUTPUT_BUCKET} with prefix {s3_output_key_prefix}")
+        logger.info(f"[{job_id}] Uploading results from {local_output_job_path} to S3 bucket {output_bucket_name} with prefix {s3_output_key_prefix}")
 
         uploaded_files_count = 0
         for item in local_output_job_path.rglob('*'): # rglob to get all files in subdirectories too
             if item.is_file():
                 file_key_in_s3 = s3_output_key_prefix + str(item.relative_to(local_output_job_path))
                 try:
-                    s3_client.upload_file(str(item), S3_OUTPUT_BUCKET, file_key_in_s3)
-                    logger.info(f"[{job_id}] Uploaded {item.name} to s3://{S3_OUTPUT_BUCKET}/{file_key_in_s3}")
+                    s3_client.upload_file(str(item), output_bucket_name, file_key_in_s3)
+                    logger.info(f"[{job_id}] Uploaded {item.name} to s3://{output_bucket_name}/{file_key_in_s3}")
                     uploaded_files_count += 1
                 except NoCredentialsError:
                     logger.error(f"[{job_id}] AWS credentials not found for S3 upload of {item.name}.")
@@ -160,7 +187,7 @@ def run_graph_job(self, job_id: str, input_s3_uri: str, original_filename: str):
 
 
         # Task completed successfully, return the S3 URI for the output "directory"
-        output_s3_uri = f"s3://{S3_OUTPUT_BUCKET}/{s3_output_key_prefix}"
+        output_s3_uri = f"s3://{output_bucket_name}/{s3_output_key_prefix}"
         return output_s3_uri
 
     except Exception as e:
