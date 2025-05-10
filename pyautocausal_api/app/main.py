@@ -1,6 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Path as FastAPIPath, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Path as FastAPIPath, Request
 from celery.result import AsyncResult
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uuid
 from pathlib import Path
 import shutil
@@ -59,6 +59,10 @@ class JobStatusResponse(BaseModel):
     message: str | None = None
     result_path: str | None = None # Path to results if job COMPLETED
     error_details: str | None = None
+class S3JobSubmission(BaseModel):
+    s3_uri: str = Field(..., description="S3 URI of the file to process (e.g., s3://bucket/path/to/file.csv)")
+    original_filename: str | None = Field(None, description="Original filename (optional, extracted from S3 path if not provided)")
+
 
 # --- API Endpoints ---
 @app.post("/jobs", response_model=JobSubmissionResponse, status_code=202)
@@ -193,6 +197,63 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
         message=user_message,
         result_path=result_data_path,
         error_details=error_info_details
+    )
+
+# Add this new endpoint
+@app.post("/jobs/s3", response_model=JobSubmissionResponse, status_code=202)
+async def submit_job_from_s3(
+    request: Request,
+    submission: S3JobSubmission
+):
+    """
+    Submit a new job to process a data file that already exists in S3.
+    Provide the full S3 URI to the file.
+    """
+    s3_uri = submission.s3_uri
+    
+    # Validate the S3 URI format
+    source_bucket, source_key = parse_s3_uri(s3_uri)
+    if not source_bucket or not source_key:
+        raise HTTPException(status_code=400, detail="Invalid S3 URI format. Must be s3://bucket/path/to/file")
+    
+    # Extract filename from S3 path if not provided
+    original_filename = submission.original_filename
+    if not original_filename:
+        original_filename = Path(source_key).name
+    
+    job_id = str(uuid.uuid4())
+    
+    # Check if the S3 object exists
+    try:
+        s3_client.head_object(Bucket=source_bucket, Key=source_key)
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "404":
+            raise HTTPException(status_code=404, detail=f"The specified S3 object does not exist: {s3_uri}")
+        else:
+            logger.error(f"Error accessing S3 object {s3_uri}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error accessing S3 object: {e}")
+    
+    # Dispatch the Celery task directly with the provided S3 URI
+    try:
+        task = run_graph_job.delay(job_id=job_id, input_s3_uri=s3_uri, original_filename=original_filename)
+    except Exception as e:
+        logger.error(f"Failed to submit job {job_id} to Celery queue: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Job queueing service unavailable: {e}")
+
+    job_to_celery_map[job_id] = {
+        "celery_task_id": task.id,
+        "original_filename": original_filename,
+        "input_s3_uri": s3_uri
+    }
+
+    # Construct the full status URL
+    status_url = request.url_for("get_job_status", job_id=job_id)
+
+    return JobSubmissionResponse(
+        job_id=job_id,
+        status_url=str(status_url),
+        message="Job submitted successfully. Check the status URL for updates."
     )
 
 # It's good practice to have a root endpoint for basic API health check
