@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "pyautocausal_api"
+version = "0.1.0"
+description = "An api endpoint for running pyautocausal pipelines"
+authors = ["Nicholas Topousis <nicktopousis@gmail.com>", "Yogam Tchokni <yogamtchokni@gmail.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.10, <3.13"
+fastapi = "^0.100.0"
+uvicorn = {extras = ["standard"], version = "^0.23.2"}
+celery = "^5.3.1"
+redis = "^4.6.0"
+python-multipart = "^0.0.6"
+pandas = "^2.0.3"
+
+pyautocausal = {path = "../pyautocausal", develop = true}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
