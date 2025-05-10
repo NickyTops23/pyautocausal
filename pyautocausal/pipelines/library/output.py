@@ -40,17 +40,5 @@ def write_sklearn_summary(res: BaseEstimator) -> str:
     return '\n'.join(output)
 
 
-@make_transformable
-def write_statsmodels_summary_notebook(output: Any) -> str:
-    """Notebook-friendly version of write_statsmodels_summary that also saves results to a file"""    
-
-    notebook_display_string = f"""res_PLACEHOLDER.summary()
-
-with open('model_summary.txt', 'w') as f:
-    f.write(str(node_name_PLACEHOLDER))
-
-# Display the summary
-print(node_name_PLACEHOLDER)
-"""
-    
-    return notebook_display_string
+def write_statsmodels_summary_notebook(output: Any) -> None:
+    print(output)

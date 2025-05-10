@@ -497,6 +497,7 @@ def spec_constructor(spec: Any) -> str:
     """
     # Get the class name for the constructor call
     class_name = spec.__class__.__name__
+    class_module = spec.__class__.__module__
     
     # Gather attributes excluding DataFrame objects
     attrs = []
@@ -517,6 +518,9 @@ def spec_constructor(spec: Any) -> str:
         else:
             # For other types (booleans, numbers, etc.)
             attrs.append(f"    {key}={value}")
+
+    # add import statement for the class
+    
 
     # Return the constructor call as a string with proper indentation
     return f"{class_name}(\n" + ",\n".join(attrs) + "\n)"

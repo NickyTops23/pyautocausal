@@ -3,6 +3,7 @@ import networkx as nx
 import nbformat
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
 import inspect
+import ast
 from ..orchestration.nodes import Node, InputNode, DecisionNode
 from ..orchestration.graph import ExecutableGraph
 from .visualizer import visualize_graph
@@ -20,7 +21,7 @@ class NotebookExporter:
         self._var_names: Dict[str, str] = {}  # Maps node names to variable names
         # get module this is run from
         self.this_module = inspect.getmodule(inspect.getouterframes(inspect.currentframe())[1][0])
-        
+        self.needed_imports = set()
     def _get_topological_order(self) -> List[Node]:
         """Get a valid sequential order of nodes for the notebook."""
         return list(nx.topological_sort(self.graph))
@@ -32,11 +33,11 @@ class NotebookExporter:
         
         self.nb.cells.append(new_markdown_cell(header))
     
-    def _create_imports_cell(self) -> None:
+    def _create_imports_cell(self, cell_index: int) -> None:
         """Create cell with all necessary imports."""
-        imports = "import pandas as pd\nimport numpy as np\n"
-        # TODO: Collect imports from node functions
-        self.nb.cells.append(new_code_cell(imports))
+        all_imports = "\n".join(self.needed_imports)
+        # insert cell at cell_index
+        self.nb.cells.insert(cell_index, new_code_cell(all_imports))
     
     def _is_exposed_wrapper(self, func) -> bool:
         """Check if a function is decorated with expose_in_notebook."""
@@ -50,12 +51,86 @@ class NotebookExporter:
         info = func._notebook_export_info
         return info.get('target_function'), info.get('arg_mapping', {})
     
+    def _get_function_imports(self, func) -> None:
+        """Extract import statements needed for a given function."""
+        try:
+            # First analyze the module to track imports and their aliases
+            module = inspect.getmodule(func)
+            try:
+                module_source = inspect.getsource(module)
+                module_tree = ast.parse(module_source)
+                
+                # Track imports and their aliases
+                import_aliases = {}  # Maps aliases to (module, original_name)
+                
+                for node in ast.walk(module_tree):
+                    # Handle from x import y as z
+                    if isinstance(node, ast.ImportFrom):
+                        module_name = node.module
+                        for name in node.names:
+                            alias = name.asname or name.name
+                            import_aliases[alias] = (module_name, name.name)
+                    
+                    # Handle import x as y
+                    elif isinstance(node, ast.Import):
+                        for name in node.names:
+                            alias = name.asname or name.name
+                            import_aliases[alias] = (name.name, None)
+            except Exception:
+                # If module source parsing fails, continue with function analysis only
+                import_aliases = {}
+            
+            # Get function source code and parse it
+            source = inspect.getsource(func)
+            tree = ast.parse(source)
+            
+            # Process Name nodes (simple references)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                    name = node.id
+                    
+                    # Check if it's an imported alias
+                    if name in import_aliases:
+                        module_name, original_name = import_aliases[name]
+                        if original_name:
+                            self.needed_imports.add(f"from {module_name} import {original_name}{' as ' + name if original_name != name else ''}")
+                        else:
+                            self.needed_imports.add(f"import {module_name}{' as ' + name if module_name != name else ''}")
+                    
+                    # Check if it's a function/object from another module
+                    elif name in module.__dict__:
+                        obj = module.__dict__[name]
+                        if hasattr(obj, '__module__'):
+                            module_name = obj.__module__
+                            if (module_name != 'builtins' and 
+                                not module_name.startswith('_')):
+                                self.needed_imports.add(f"from {module_name} import {name}")
+                
+                # Handle attribute access (like package.function)
+                elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                    pkg_name = node.value.id
+                    attr_name = node.attr
+                    
+                    # Check if the base is an imported package
+                    if pkg_name in import_aliases:
+                        module_name, _ = import_aliases[pkg_name]
+                        self.needed_imports.add(f"import {module_name}{' as ' + pkg_name if module_name != pkg_name else ''}")
+                    
+                    # Check if it's a direct module in the module namespace
+                    elif pkg_name in module.__dict__:
+                        obj = module.__dict__[pkg_name]
+                        if hasattr(obj, '__name__'):
+                            module_name = obj.__name__
+                            self.needed_imports.add(f"import {module_name}{' as ' + pkg_name if module_name != pkg_name else ''}")
+    
+        
+        except Exception as e:
+            # Fallback in case of any errors
+            return f"# Import analysis failed: {str(e)}\n"
+    
     def _format_function_definition(self, node: Node) -> str:
         """Format the function definition for a node."""
         if isinstance(node, InputNode):
-            return ""
-        
-        if hasattr(node, 'notebook_function') and node.notebook_function is not None and node.is_completed():
             return ""
 
         if isinstance(node, DecisionNode):
@@ -82,15 +157,11 @@ class NotebookExporter:
             # Get the target function's name
             target_name = target_func.__name__
             
-            # Create imports if the target function is from an external module
-            # TODO: This doesn't work for functions defined in pyautocausal
-            module_name = target_func.__module__
-            if module_name != self.this_module.__dict__['__name__']:
-                import_statement = f"from {module_name} import {target_name}\n\n"
-                target_source = import_statement + target_source
+            # Create imports using AST analysis
+            self._get_function_imports(target_func)
             
-            # Add both the target and wrapper
-            return target_source
+            # Add both the target and wrapper with proper imports
+            return comment + target_source
         
         # Handle lambdas
         source = inspect.getsource(func)
@@ -184,29 +255,6 @@ class NotebookExporter:
         #TODO: Handle run-context arguments
 
         return arguments
-
-    def _format_notebook_function(self, node: Node) -> str:
-        """Format the notebook function for a node.
-        Notebook functions return string representations of the function definition,
-        where arguments are denoted by the argument name followed by "[argument_name]_argument"
-
-        This function takes the string representation of the notebook function and
-        resolves the arguments to the actual node names.
-        """
-        
-        arguments = self._resolve_function_arguments(node, node.action_function)
-
-        node_result = node.output.result_dict[node.name]
-        notebook_display_string = node.notebook_function(node_result)
-
-        # Replace the argument placeholders with the actual node names
-        for arg_name, predecessor_output in arguments.items():
-            notebook_display_string = notebook_display_string.replace(f"{arg_name}_PLACEHOLDER", f"{predecessor_output}")
-
-        # Remove the title line and empty line after it
-        notebook_display_string = notebook_display_string.replace(f"node_name_PLACEHOLDER", f"{node.name}_output")
-
-        return f"{node.name}_output = {notebook_display_string}"
     
     def _format_function_execution(self, node: Node, function_string: str) -> str:
         """Format the function execution statement."""
@@ -259,21 +307,23 @@ class NotebookExporter:
         if node.node_description:
             info += f"{node.node_description}\n"
         self.nb.cells.append(new_markdown_cell(info))
-        
-        # Add function definition if not an input node and no notebook function is defined
-        if hasattr(node, 'notebook_function') and node.notebook_function is not None and node.is_completed():
-            # Add execution cell
-            notebook_display_code = self._format_notebook_function(node)
-            self.nb.cells.append(new_code_cell(notebook_display_code))
     
-        elif not isinstance(node, InputNode):
+        if not isinstance(node, InputNode):
             func_def = self._format_function_definition(node)
             self.nb.cells.append(new_code_cell(func_def))
         
-            # Add execution cell
             exec_code = self._format_function_execution(node, func_def)
             self.nb.cells.append(new_code_cell(exec_code))
+        
+            if node.display_function:
+                notebook_display_code = self._format_display_function_call(node)
+                self.nb.cells.append(new_code_cell(notebook_display_code))
     
+    def _format_display_function_call(self, node: Node) -> str:
+        """Format the display function call for a node. This simply
+        calls the display function on the node's output."""
+        return f"# Display Result\n{node.display_function.__name__}({node.name}_output)"
+
     def _create_input_node_cells(self, node: InputNode) -> None:
         """Create cells for a single input node's execution."""
         # Add markdown cell with node info
@@ -302,8 +352,7 @@ class NotebookExporter:
         markdown_content = "\n".join(markdown_content.split("\n")[1:])
         self.nb.cells.append(new_markdown_cell(markdown_content))
 
-        # Create imports
-        self._create_imports_cell()
+        end_of_markdown = len(self.nb.cells)
 
         # Process nodes in topological order
         for node in self._get_topological_order():
@@ -316,6 +365,8 @@ class NotebookExporter:
                     self._create_input_node_cells(node)
                 else:
                     self._create_node_cells(node)
+
+        self._create_imports_cell(end_of_markdown)
         
         # Save the notebook
         with open(filepath, 'w') as f:
