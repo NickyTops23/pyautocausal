@@ -19,9 +19,10 @@ RUN pip install "poetry==${POETRY_VERSION}"
 # Set the working directory
 WORKDIR /app
 
-# Copy only the files needed to install dependencies
+# Copy only the pyproject.toml file and generate the lock file
 # This leverages Docker's cache. If these files don't change, this layer won't be rebuilt.
-COPY pyproject.toml poetry.lock ./
+COPY pyproject.toml ./
+RUN poetry lock
 
 # Install project dependencies (without dev dependencies)
 # --no-root is used because we will copy the application code in the next stage
