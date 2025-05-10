@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=off \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
-    POETRY_VERSION=1.7.1 \
+    POETRY_VERSION=1.8.0 \
     # Tell poetry to not create a virtual environment, as the container is the environment
     POETRY_NO_INTERACTION=1 \
     POETRY_VIRTUALENVS_CREATE=false
