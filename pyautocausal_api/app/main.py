@@ -189,8 +189,16 @@ async def submit_job(
     try:
         celery_start = time.time()
         logger.debug(f"[{job_id}] Dispatching Celery task with input: {input_s3_uri}")
-        task = run_graph_job.delay(job_id=job_id, input_s3_uri=input_s3_uri, original_filename=original_filename)
+        task = run_graph_job.apply_async(
+            args=[job_id, input_s3_uri, original_filename],
+            expires=60,  # Task expires if not picked up within 60 seconds
+            connection_timeout=5  # Connection timeout in seconds
+        )
+        
         celery_duration = (time.time() - celery_start) * 1000  # ms
+        
+        if not task.id:
+            raise Exception("Failed to generate task ID - Redis connection issue")
         
         log_event(
             "celery_task_submitted", 
@@ -376,8 +384,16 @@ async def submit_job_from_s3(
     try:
         celery_start = time.time()
         logger.debug(f"[{job_id}] Dispatching Celery task with input: {s3_uri}")
-        task = run_graph_job.delay(job_id=job_id, input_s3_uri=s3_uri, original_filename=original_filename)
+        task = run_graph_job.apply_async(
+            args=[job_id, s3_uri, original_filename],
+            expires=60,  # Task expires if not picked up within 60 seconds
+            connection_timeout=5  # Connection timeout in seconds
+        )
+        
         celery_duration = (time.time() - celery_start) * 1000  # ms
+        
+        if not task.id:
+            raise Exception("Failed to generate task ID - Redis connection issue")
         
         log_event(
             "celery_task_submitted", 
