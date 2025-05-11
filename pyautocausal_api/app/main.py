@@ -326,7 +326,7 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "celery": check_celery_status()}
+    return {"status": "healthy"}
 
 # Add this new endpoint
 @app.post("/jobs/s3", response_model=JobSubmissionResponse, status_code=202)
