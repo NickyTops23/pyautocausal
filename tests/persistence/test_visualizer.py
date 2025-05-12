@@ -84,6 +84,7 @@ def test_visualize_graph_node_labels(simple_graph, tmp_path):
             classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;
             classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;
             classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;
+            classDef passedNode fill:#d8d8d8,stroke:#3080cf,stroke-width:2px,color:black;
             style node0 fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black
             style node1 fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black
             style node2 fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black
@@ -102,12 +103,13 @@ def test_visualize_graph_node_labels(simple_graph, tmp_path):
         ### Node States
         ```mermaid
         graph LR
-            pendingNode[Pending]:::pendingNode ~~~ runningNode[Running]:::runningNode ~~~ completedNode[Completed]:::completedNode ~~~ failedNode[Failed]:::failedNode
+            pendingNode[Pending]:::pendingNode ~~~ runningNode[Running]:::runningNode ~~~ completedNode[Completed]:::completedNode ~~~ failedNode[Failed]:::failedNode ~~~ passedNode[Passed]:::passedNode
 
             classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;
             classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;
             classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;
             classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;
+            classDef passedNode fill:#d8d8d8,stroke:#3080cf,stroke-width:2px,color:black;
         ```
 
         Node state coloring indicates the execution status of each node in the graph."""

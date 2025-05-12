@@ -1,17 +1,19 @@
-
 from typing import Set, Optional, Dict, Any, Callable, Union, List
 from .base import Node
 from .result import Result
+from .node_state import NodeState
 
 from ..persistence.output_handler import OutputHandler
 from pyautocausal.utils.logger import get_class_logger
 from pyautocausal.orchestration.run_context import RunContext
-from pyautocausal.orchestration.node_state import NodeState
 from inspect import Parameter, Signature
 from ..persistence.local_output_handler import LocalOutputHandler
 from pathlib import Path
 from ..persistence.output_config import OutputConfig
 import networkx as nx
+import inspect
+import logging
+from networkx import DiGraph
 
 
 class ExecutableGraph(nx.DiGraph):
@@ -467,11 +469,23 @@ class ExecutableGraph(nx.DiGraph):
         predecessors = self.get_node_predecessors(node)
 
         all_outputs = {}
-        # validate that each predecessor's output is a Result
         for predecessor in predecessors:
-            if not isinstance(predecessor.output, Result):
-                raise ValueError(f"Predecessor {predecessor.name} output is not a Result")
-            all_outputs.update(predecessor.output.result_dict)
+            if predecessor.is_completed():
+                # Node has completed normally, use its output
+                if not isinstance(predecessor.output, Result):
+                    raise ValueError(f"Predecessor {predecessor.name} output is not a Result")
+                all_outputs.update(predecessor.output.result_dict)
+            elif predecessor.is_passed():
+                # Skip PASSED nodes - they don't contribute outputs
+                self.logger.info(f"Skipping PASSED node {predecessor.name} as a predecessor of {node.name}")
+                # Don't add any outputs for this node
+                continue
+            else:
+                # Unexpected state
+                raise ValueError(
+                    f"Predecessor {predecessor.name} is not in COMPLETED or PASSED state, "
+                    f"current state: {predecessor.state}"
+                )
         return all_outputs
 
     def is_node_ready(self, node) -> bool:
@@ -479,7 +493,7 @@ class ExecutableGraph(nx.DiGraph):
         
         A node is ready when:
         1. It is in PENDING state
-        2. All incoming edges are traversable and from completed nodes
+        2. All incoming edges are traversable and from completed/passed nodes
         
         Args:
             node: The node to check
@@ -493,8 +507,8 @@ class ExecutableGraph(nx.DiGraph):
         # Check all incoming edges
         for pred in self.predecessors(node):
             edge = self.edges[pred, node]
-            # If any predecessor is not completed or edge is not traversable, node is not ready
-            if not pred.is_completed() or not edge.get('traversable', False):
+            # If any predecessor is not completed/passed or edge is not traversable, node is not ready
+            if not (pred.is_completed() or pred.is_passed()) or not edge.get('traversable', True):
                 return False
         
         return True
@@ -604,7 +618,7 @@ class ExecutableGraph(nx.DiGraph):
         
         A node is ready when:
         1. It is in PENDING state
-        2. All incoming edges are from completed nodes and are traversable
+        2. All incoming edges are from completed/passed nodes and are traversable
         
         Args:
             node: The node to check
@@ -618,8 +632,8 @@ class ExecutableGraph(nx.DiGraph):
         # Check all incoming edges
         for pred in self.predecessors(node):
             edge = self.edges[pred, node]
-            # If any predecessor is not completed or edge is not traversable, node is not ready
-            if not pred.is_completed() or not edge.get('traversable', False):
+            # If any predecessor is not completed/passed or edge is not traversable, node is not ready
+            if not (pred.is_completed() or pred.is_passed()) or not edge.get('traversable', True):
                 return False
         
         return True

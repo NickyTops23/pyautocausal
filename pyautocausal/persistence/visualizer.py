@@ -25,6 +25,8 @@ def get_node_style(node) -> str:
             fill_color = "salmon"
         elif state_name == 'RUNNING':
             fill_color = "yellow"
+        elif state_name == 'PASSED':
+            fill_color = "#d8d8d8"  # Light gray
     
     return style_format.format(node_id="{node_id}", fill_color=fill_color, stroke_color=stroke_color)
 
@@ -115,6 +117,7 @@ def visualize_graph(graph, save_path = None):
         "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;",
         "    classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;",
         "    classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;",
+        "    classDef passedNode fill:#d8d8d8,stroke:#3080cf,stroke-width:2px,color:black;",
     ])
     
     # Add individual node styles
@@ -148,12 +151,13 @@ def visualize_graph(graph, save_path = None):
         "### Node States",
         "```mermaid",
         "graph LR",
-        "    pendingNode[Pending]:::pendingNode ~~~ runningNode[Running]:::runningNode ~~~ completedNode[Completed]:::completedNode ~~~ failedNode[Failed]:::failedNode",
+        "    pendingNode[Pending]:::pendingNode ~~~ runningNode[Running]:::runningNode ~~~ completedNode[Completed]:::completedNode ~~~ failedNode[Failed]:::failedNode ~~~ passedNode[Passed]:::passedNode",
         "",
         "    classDef pendingNode fill:lightblue,stroke:#3080cf,stroke-width:2px,color:black;",
         "    classDef runningNode fill:yellow,stroke:#3080cf,stroke-width:2px,color:black;", 
         "    classDef completedNode fill:lightgreen,stroke:#3080cf,stroke-width:2px,color:black;",
         "    classDef failedNode fill:salmon,stroke:#3080cf,stroke-width:2px,color:black;",
+        "    classDef passedNode fill:#d8d8d8,stroke:#3080cf,stroke-width:2px,color:black;",
         "```",
         "",
         "Node state coloring indicates the execution status of each node in the graph.",
