@@ -16,7 +16,9 @@ def generate_mock_data(
     add_omitted_variable: bool = False,
     staggered_treatment: bool = False,
     random_seed: int = 42,
-    omitted_variable_effect: float = 0.0
+    omitted_variable_effect: float = 0.0,
+    add_pre_trends: bool = False,
+    pre_trend_size: float = 0.5
 ) -> pd.DataFrame:
     """
     Generate a simplified mock dataset for testing causal inference methods.
@@ -36,6 +38,8 @@ def generate_mock_data(
         staggered_treatment: Whether treatment timing varies across units
         random_seed: Random seed for reproducibility
         omitted_variable_effect: Effect size of the omitted variable on the outcome
+        add_pre_trends: Whether to add pre-trends in the treatment group
+        pre_trend_size: Size of the pre-trend effect
         
     Returns:
         DataFrame with columns:
@@ -161,7 +165,10 @@ def generate_mock_data(
             relative_time = t - treatment_start if is_treated else np.nan
             post = 1 if t >= treatment_start else 0
             
-            # Add noise to signal
+            # Add noise to signal with a unique seed for each time period
+            # This ensures different noise patterns across time periods
+            period_seed = random_seed + i*100 + t*10  # Unique seed for each unit-time combination
+            np.random.seed(period_seed)
             noise = np.random.normal(0, noise_std)
             y = signal + noise
             
@@ -180,8 +187,7 @@ def generate_mock_data(
                 'x1': x1,
                 'x2': x2,
                 'confounder': confounder,
-                'collider': collider,
-                'post': post,
+                'collider': collider
             })
     
     # Create DataFrame

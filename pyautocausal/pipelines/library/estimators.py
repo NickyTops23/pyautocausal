@@ -9,16 +9,16 @@ from sklearn.linear_model import Lasso
 from sklearn.model_selection import KFold
 import patsy
 from statsmodels.base.model import Results
-
+import copy
 
 from pyautocausal.persistence.parameter_mapper import make_transformable
-from .specifications import (
+from pyautocausal.pipelines.library.specifications import (
     BaseSpec,
     DiDSpec,
     EventStudySpec,
     StaggeredDiDSpec,
 )
-from .base_estimator import format_statsmodels_result
+from pyautocausal.pipelines.library.base_estimator import format_statsmodels_result
 
 
 def create_model_matrices(spec: BaseSpec) -> Tuple[np.ndarray, np.ndarray]:
@@ -94,18 +94,22 @@ def fit_ols(spec: BaseSpec, weights: Optional[np.ndarray] = None) -> Results:
         weights: Optional sample weights for weighted regression
         
     Returns:
-        Fitted statsmodels regression results
+        Specification with model field set to the fitted model
     """
     # We can still use the formula interface directly for OLS
     data = spec.data
     formula = spec.formula
     
+    
     if weights is not None:
         model = sm.WLS.from_formula(formula, data=data, weights=weights).fit(cov_type='HC1')
     else:
         model = sm.OLS.from_formula(formula, data=data).fit(cov_type='HC1')
+    
+    # Set the model field (ensure all spec types handle this correctly)
+    spec.model = model
             
-    return model
+    return spec
 
 
 @make_transformable

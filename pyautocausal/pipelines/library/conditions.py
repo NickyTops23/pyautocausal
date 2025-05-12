@@ -105,21 +105,25 @@ def has_single_period(df: pd.DataFrame) -> bool:
 def has_staggered_treatment(df: pd.DataFrame) -> bool:
     """
     Check if treatment timing is staggered across units.
-    
+
     Args:
         df: DataFrame with 'treat', 'id_unit', and 't' columns
-        
+
     Returns:
         bool: True if treatment is staggered across units
     """
-    if not all(col in df.columns for col in ['treat', 'id_unit', 't']):
+    required_cols = {'treat', 'id_unit', 't'}
+    if not required_cols.issubset(df.columns):
         return False
-        
-    # Check if treatment starts at different times for different units
-    treatment_starts = df.groupby('id_unit')['treat'].apply(
-        lambda x: x.eq(1).idxmax() if x.eq(1).any() else None
+
+    # Get treatment start time for each unit, if any
+    treatment_starts = (
+        df[df['treat'] == 1]
+        .groupby('id_unit')['t']
+        .min()
     )
-    return len(treatment_starts.unique()) > 1
+    # More than one unique treatment start → staggered
+    return treatment_starts.nunique(dropna=True) > 1
 
 
 @make_transformable
@@ -141,7 +145,7 @@ def has_minimum_pre_periods(df: pd.DataFrame, min_periods: int = 3) -> bool:
 
 
 @make_transformable
-def has_minimum_post_periods(df: pd.DataFrame, min_periods: int = 3) -> bool:
+def has_minimum_post_periods(df: pd.DataFrame, min_periods: int = 2) -> bool:
     """
     Check if there are enough post-treatment periods.
     
@@ -173,6 +177,20 @@ def has_multiple_treated_units(df: pd.DataFrame) -> bool:
     """
     return len(df[df['treat']==1]['id_unit'].unique()) > 1
 
+@make_transformable
+def has_never_treated_units(df: pd.DataFrame) -> bool:
+    """
+    Check if dataset has never treated units.
+    
+    Args:
+        df: DataFrame with 'treat' and 'id_unit' columns
+        
+    Returns:
+        bool: True if dataset has units that are never treated
+    """
+    all_units = df['id_unit'].unique()
+    ever_treated_units = df[df['treat'] == 1]['id_unit'].unique()
+    return len(set(all_units) - set(ever_treated_units)) > 0
 
 @make_transformable
 def has_covariate_imbalance(df: pd.DataFrame, threshold: float = 0.5, imbalance_threshold: float = 0.25) -> bool:
