@@ -16,7 +16,9 @@ def generate_mock_data(
     add_omitted_variable: bool = False,
     staggered_treatment: bool = False,
     random_seed: int = 42,
-    omitted_variable_effect: float = 0.0
+    omitted_variable_effect: float = 0.0,
+    add_pre_trends: bool = False,
+    pre_trend_size: float = 0.5
 ) -> pd.DataFrame:
     """
     Generate a simplified mock dataset for testing causal inference methods.
@@ -36,6 +38,8 @@ def generate_mock_data(
         staggered_treatment: Whether treatment timing varies across units
         random_seed: Random seed for reproducibility
         omitted_variable_effect: Effect size of the omitted variable on the outcome
+        add_pre_trends: Whether to add pre-trends in the treatment group
+        pre_trend_size: Size of the pre-trend effect
         
     Returns:
         DataFrame with columns:
