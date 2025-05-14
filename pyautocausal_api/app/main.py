@@ -3,7 +3,6 @@ from celery.result import AsyncResult
 from pydantic import BaseModel, Field
 import uuid
 from pathlib import Path
-import shutil
 import os # For environment variables
 import boto3 # Add boto3 import
 from botocore.exceptions import NoCredentialsError, ClientError
@@ -11,10 +10,19 @@ import time
 import logging
 import json
 from datetime import datetime
-
+import io
+from enum import Enum
 # Import the Celery app instance and the task definition from app.worker
 # This assumes main.py and worker.py are in the same 'app' directory.
 from .worker import celery_app, run_graph_job
+
+# Import our file utilities
+from .utils.file_io import (
+    is_s3_path, parse_path, extract_filename, 
+    check_path_exists, read_from, write_to,
+    join_paths,
+    Status
+)
 
 # Configure logging
 logging.basicConfig(
@@ -36,18 +44,15 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# In-memory store for mapping our job_id to Celery's task_id
-# Key: our application-specific job_id (str)
-# Value: {"celery_task_id": str, "original_filename": str, "input_s3_uri": str}
-# For a PoC, this is okay. For production, use a persistent store (e.g., Redis, DB).
-job_to_celery_map = {}
+job_status_store = {}
 
 # Configuration from Environment Variables
-S3_INPUT_BUCKET = os.getenv("S3_INPUT_BUCKET")
+S3_INPUT_DIR = os.getenv("S3_INPUT_BUCKET")
+S3_OUTPUT_DIR = os.getenv("S3_OUTPUT_BUCKET")
 S3_REGION = os.getenv("AWS_REGION", "us-east-1") # Default region if not set
 
 # Log environment configuration at startup
-logger.info(f"Starting PyAutoCausal API with: S3_INPUT_BUCKET={S3_INPUT_BUCKET}, AWS_REGION={S3_REGION}")
+logger.info(f"Starting PyAutoCausal API with: S3_INPUT_BUCKET={S3_INPUT_DIR}, S3_OUTPUT_BUCKET={S3_OUTPUT_DIR}, AWS_REGION={S3_REGION}")
 
 # Configure boto3 with timeouts
 s3_client = boto3.client(
@@ -92,9 +97,10 @@ class JobStatusResponse(BaseModel):
     message: str | None = None
     result_path: str | None = None # Path to results if job COMPLETED
     error_details: str | None = None
-class S3JobSubmission(BaseModel):
-    s3_uri: str = Field(..., description="S3 URI of the file to process (e.g., s3://bucket/path/to/file.csv)")
-    original_filename: str | None = Field(None, description="Original filename (optional, extracted from S3 path if not provided)")
+
+class InputPathSubmission(BaseModel):
+    input_path: str = Field(..., description="Path to input file (S3 URI or local path)")
+    original_filename: str | None = Field(None, description="Original filename (optional, extracted from path if not provided)")
 
 # Helper function for structured logging
 def log_event(event_type, job_id=None, duration_ms=None, status=None, error=None, **kwargs):
@@ -119,115 +125,117 @@ def log_event(event_type, job_id=None, duration_ms=None, status=None, error=None
     # Log as JSON string for better parsing
     logger.info(json.dumps(log_data))
 
-# --- API Endpoints ---
+
+# --- Unified API Endpoint ---
 @app.post("/jobs", response_model=JobSubmissionResponse, status_code=202)
 async def submit_job(
     request: Request, # To construct full status URL
-    file: UploadFile = File(..., description="The data file (e.g., CSV) to process.")
+    input_path: str,
+    background_tasks: BackgroundTasks
 ):
     """
     Submit a new job to process a data file with the PyAutoCausal simple_graph.
-    The file will be uploaded to S3, and its S3 URI will be passed to the worker.
+    
+    You can either:
+    1. Upload a file directly using the 'file' parameter, or
+    2. Specify the path to an existing file using 'input_path' (can be S3 URI or local path)
     """
     start_time = time.time()
     job_id = str(uuid.uuid4())
-    original_filename = file.filename or "uploaded_file"
     
-    logger.info(f"[{job_id}] New job submission started for file: {original_filename}")
+    # Validate that we have either a file upload or an input path
+    if not input_path:
+        logger.warning(f"[{job_id}] Job submission missing both file and input_path")
+        raise HTTPException(status_code=400, detail="You must provide either a file upload or an input_path")
     
-    if not S3_INPUT_BUCKET:
+    # Read the file from the input path
+    file_content = read_from(input_path)
+
+    # Determine original filename and set up paths
+    original_filename = extract_filename(input_path)
+    logger.info(f"[{job_id}] New job submission started for input path: {input_path}")
+    
+    # Configure the input path where the worker will find the file
+    if not S3_INPUT_DIR:
         logger.error(f"[{job_id}] S3_INPUT_BUCKET environment variable is not set.")
         raise HTTPException(status_code=500, detail="Server configuration error: S3 input bucket not specified.")
-
-    # Parse the S3 input bucket URI to get bucket name and base path
-    bucket_name, base_path = parse_s3_uri(S3_INPUT_BUCKET)
-    if not bucket_name:
-        logger.error(f"[{job_id}] Invalid S3 URI format for S3_INPUT_BUCKET: {S3_INPUT_BUCKET}")
-        raise HTTPException(status_code=500, detail="Server configuration error: Invalid S3 input bucket URI format.")
-
-    # Construct the full S3 key including the base path if it exists
-    if base_path:
-        # Ensure base_path has trailing slash but not leading slash
-        base_path = base_path.strip('/')
-        if base_path:
-            base_path += '/'
-        s3_input_key = f"{base_path}inputs/{job_id}/{original_filename}"
-    else:
-        s3_input_key = f"inputs/{job_id}/{original_filename}"
-    
-    logger.debug(f"[{job_id}] Constructed S3 key: {s3_input_key}")
-
-    try:
-        # Upload the file to S3
-        upload_start = time.time()
-        logger.debug(f"[{job_id}] Starting S3 upload to bucket {bucket_name}")
-        s3_client.upload_fileobj(file.file, bucket_name, s3_input_key)
-        upload_duration = (time.time() - upload_start) * 1000  # ms
-        input_s3_uri = f"s3://{bucket_name}/{s3_input_key}"
         
+    # Generate destination S3 path for uploaded file
+    dest_path = join_paths(S3_INPUT_DIR, f"inputs/{job_id}/{original_filename}")
+        
+    try:
+        # Upload the file
+        upload_start = time.time()
+        logger.debug(f"[{job_id}] Starting upload to {dest_path}")
+        
+        # Write the uploaded file to destination
+        write_to(file_content, dest_path)
+        
+        # Set input_path to the location we just wrote to
+        input_path_for_worker = dest_path
+        
+        upload_duration = (time.time() - upload_start) * 1000  # ms
         log_event(
-            "s3_upload_complete", 
+            "file_upload_complete", 
             job_id=job_id, 
             duration_ms=upload_duration,
             file_name=original_filename,
-            s3_uri=input_s3_uri
+            destination_path=dest_path
         )
-
-    except NoCredentialsError as e:
-        logger.error(f"[{job_id}] AWS credentials not found for S3 upload: {e}")
-        raise HTTPException(status_code=500, detail="Server configuration error: AWS credentials not found.")
-    except ClientError as e:
-        logger.error(f"[{job_id}] S3 upload failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Could not upload file to S3: {e}")
     except Exception as e:
-        logger.error(f"[{job_id}] Unexpected error during S3 upload: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Unexpected error during file upload: {str(e)}")
-    finally:
-        await file.close()
-
-    # Dispatch the Celery task with the S3 URI
+        logger.error(f"[{job_id}] Error during file upload: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error during file upload: {str(e)}")
+    
     try:
-        celery_start = time.time()
-        logger.debug(f"[{job_id}] Dispatching Celery task with input: {input_s3_uri}")
-        task = run_graph_job.apply_async(
-            args=[job_id, input_s3_uri, original_filename],
-            expires=60,  # Task expires if not picked up within 60 seconds
-            connection_timeout=5  # Connection timeout in seconds
-        )
+        path_check_start = time.time()
+        if not check_path_exists(input_path_for_worker):
+            logger.warning(f"[{job_id}] File does not exist: {input_path_for_worker}")
+            raise HTTPException(status_code=404, detail=f"The specified file does not exist: {input_path}")
         
-        celery_duration = (time.time() - celery_start) * 1000  # ms
-        
-        if not task.id:
-            raise Exception("Failed to generate task ID - Redis connection issue")
-        
-        log_event(
-            "celery_task_submitted", 
-            job_id=job_id, 
-            duration_ms=celery_duration,
-            celery_task_id=task.id
-        )
-        
+        path_check_duration = (time.time() - path_check_start) * 1000  # ms
+        logger.debug(f"[{job_id}] Input file exists in S3, check took {path_check_duration:.2f}ms")
     except Exception as e:
-        logger.error(f"[{job_id}] Failed to submit job to Celery queue: {e}", exc_info=True)
-        # Attempt to delete the uploaded S3 object if task submission fails
-        try:
-            logger.debug(f"[{job_id}] Cleaning up S3 object due to Celery submission failure")
-            s3_client.delete_object(Bucket=bucket_name, Key=s3_input_key)
-            logger.info(f"[{job_id}] Cleaned up S3 object {input_s3_uri} due to Celery submission failure")
-        except Exception as s3_del_e:
-            logger.error(f"[{job_id}] Failed to clean up S3 object {input_s3_uri}: {s3_del_e}")
+        if isinstance(e, HTTPException):
+            raise  # Re-raise HTTP exceptions
+        logger.error(f"[{job_id}] Error checking intermediate storage path: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error checking intermediate storage path: {str(e)}")
+
+    # Dispatch the FastAPI Background task with the input path
+    try:
+        job_start = time.time()
+        logger.debug(f"[{job_id}] Dispatching FastAPI background task with input: {input_path}")
+        # Use FastAPI's BackgroundTasks instead of Celery
+        background_tasks.add_task(
+            run_graph_job,
+            job_id=job_id, 
+            input_s3_uri=input_path_for_worker, 
+            task_store=job_status_store
+        )
+        
+        task_init_duration = (time.time() - job_start) * 1000  # ms
         
         log_event(
-            "celery_task_submission_failed", 
+            "task_submitted", 
+            job_id=job_id, 
+            duration_ms=task_init_duration,
+            input_path=input_path
+        )
+
+    except Exception as e:
+        logger.error(f"[{job_id}] Failed to submit job to FastAPI background task: {e}", exc_info=True)
+        log_event(
+            "task_submission_failed", 
             job_id=job_id, 
             error=str(e)
         )
         raise HTTPException(status_code=503, detail=f"Job queueing service unavailable: {e}")
 
-    job_to_celery_map[job_id] = {
-        "celery_task_id": task.id,
+    job_status_store[job_id] = {
+        "status": Status.PENDING,
         "original_filename": original_filename,
-        "input_s3_uri": input_s3_uri
+        "input_path": input_path,
+        "result": None,
+        "error": None
     }
 
     # Construct the full status URL using the request object
@@ -255,21 +263,13 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
     start_time = time.time()
     logger.debug(f"[{job_id}] Status check requested")
     
-    job_info = job_to_celery_map.get(job_id)
+    job_info = job_status_store.get(job_id)
 
     if not job_info:
-        logger.warning(f"[{job_id}] Job ID not found in job_to_celery_map")
-        raise HTTPException(status_code=404, detail=f"Job ID '{job_id}' not found. It may not have been submitted or has been cleared from the PoC map.")
-
-    celery_task_id = job_info.get("celery_task_id")
-    if not celery_task_id:
-        # This internal state error should ideally not happen
-        logger.error(f"[{job_id}] Internal error: Celery task ID not found in job_to_celery_map entry")
-        raise HTTPException(status_code=500, detail=f"Internal error retrieving task details for job '{job_id}'.")
+        logger.warning(f"[{job_id}] Job ID not found in job_status_store")
+        raise HTTPException(status_code=404, detail=f"Job ID '{job_id}' not found. It may not have been submitted or has been cleared.")
 
     try:
-        logger.debug(f"[{job_id}] Retrieving task result for Celery task ID: {celery_task_id}")
-        task_result = AsyncResult(celery_task_id, app=celery_app)
         current_celery_status = task_result.status
         logger.debug(f"[{job_id}] Current Celery status: {current_celery_status}")
     except Exception as e:
@@ -292,8 +292,6 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
         user_message = f"Job '{job_id}' failed."
         error_info_details = f"{type(error_exception).__name__}: {str(error_exception)}"
         logger.error(f"[{job_id}] Job failed: {error_info_details}")
-        # For very detailed server-side logging of the traceback:
-        logger.debug(f"[{job_id}] Traceback for failed job (task {celery_task_id}): {task_result.traceback}")
     elif current_celery_status == "PENDING":
         logger.info(f"[{job_id}] Job is pending/queued")
         user_message = f"Job '{job_id}' is queued and waiting for a worker."
@@ -334,109 +332,6 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
-
-# Add this new endpoint
-@app.post("/jobs/s3", response_model=JobSubmissionResponse, status_code=202)
-async def submit_job_from_s3(
-    request: Request,
-    submission: S3JobSubmission
-):
-    """
-    Submit a new job to process a data file that already exists in S3.
-    Provide the full S3 URI to the file.
-    """
-    start_time = time.time()
-    s3_uri = submission.s3_uri
-    job_id = str(uuid.uuid4())
-    
-    logger.info(f"[{job_id}] New S3 job submission started for URI: {s3_uri}")
-    
-    # Validate the S3 URI format
-    source_bucket, source_key = parse_s3_uri(s3_uri)
-    if not source_bucket or not source_key:
-        logger.warning(f"[{job_id}] Invalid S3 URI format: {s3_uri}")
-        raise HTTPException(status_code=400, detail="Invalid S3 URI format. Must be s3://bucket/path/to/file")
-    
-    # Extract filename from S3 path if not provided
-    original_filename = submission.original_filename
-    if not original_filename:
-        original_filename = Path(source_key).name
-        logger.debug(f"[{job_id}] Using filename from S3 path: {original_filename}")
-    
-    # Check if the S3 object exists
-    try:
-        logger.debug(f"[{job_id}] Checking if S3 object exists: {s3_uri}")
-        check_start = time.time()
-        s3_client.head_object(Bucket=source_bucket, Key=source_key)
-        check_duration = (time.time() - check_start) * 1000  # ms
-        logger.debug(f"[{job_id}] S3 object exists, check took {check_duration:.2f}ms")
-    except ClientError as e:
-        error_code = e.response.get("Error", {}).get("Code", "")
-        if error_code == "404":
-            logger.warning(f"[{job_id}] S3 object does not exist: {s3_uri}")
-            raise HTTPException(status_code=404, detail=f"The specified S3 object does not exist: {s3_uri}")
-        else:
-            logger.error(f"[{job_id}] Error accessing S3 object {s3_uri}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Error accessing S3 object: {e}")
-    
-    # Dispatch the Celery task directly with the provided S3 URI
-    try:
-        celery_start = time.time()
-        logger.debug(f"[{job_id}] Dispatching Celery task with input: {s3_uri}")
-        task = run_graph_job.apply_async(
-            args=[job_id, s3_uri, original_filename],
-            expires=60,  # Task expires if not picked up within 60 seconds
-            connection_timeout=5  # Connection timeout in seconds
-        )
-        
-        celery_duration = (time.time() - celery_start) * 1000  # ms
-        
-        if not task.id:
-            raise Exception("Failed to generate task ID - Redis connection issue")
-        
-        log_event(
-            "celery_task_submitted", 
-            job_id=job_id, 
-            duration_ms=celery_duration,
-            celery_task_id=task.id,
-            s3_uri=s3_uri
-        )
-    except Exception as e:
-        logger.error(f"[{job_id}] Failed to submit job to Celery queue: {e}", exc_info=True)
-        log_event(
-            "celery_task_submission_failed", 
-            job_id=job_id, 
-            error=str(e)
-        )
-        raise HTTPException(status_code=503, detail=f"Job queueing service unavailable: {e}")
-
-    job_to_celery_map[job_id] = {
-        "celery_task_id": task.id,
-        "original_filename": original_filename,
-        "input_s3_uri": s3_uri
-    }
-
-    # Construct the full status URL
-    status_url = request.url_for("get_job_status", job_id=job_id)
-    
-    total_duration = (time.time() - start_time) * 1000  # ms
-    log_event(
-        "job_submission_complete", 
-        job_id=job_id, 
-        duration_ms=total_duration,
-        status_url=str(status_url)
-    )
-
-    return JobSubmissionResponse(
-        job_id=job_id,
-        status_url=str(status_url),
-        message="Job submitted successfully. Check the status URL for updates."
-    )
-
-# Add a health check endpoint
-@app.get("/health")
-async def health_check():
     """
     Health check endpoint to verify API and Celery connectivity
     """
@@ -466,16 +361,22 @@ async def health_check():
         health_status["celery"] = "unhealthy"
         health_status["celery_error"] = str(e)
     
-    # Check S3 connectivity
-    try:
-        s3_start = time.time()
-        s3_client.list_buckets()
-        s3_duration = (time.time() - s3_start) * 1000  # ms
-        health_status["s3"] = "healthy"
-        health_status["s3_response_time_ms"] = s3_duration
-    except Exception as e:
-        health_status["s3"] = "unhealthy"
-        health_status["s3_error"] = str(e)
+    # Check S3 connectivity if we have S3 configuration
+    if S3_INPUT_DIR:
+        try:
+            s3_start = time.time()
+            # Check if bucket exists by parsing and checking
+            scheme, bucket, _ = parse_path(S3_INPUT_DIR)
+            if scheme == "s3":
+                # Try a simple operation to test connectivity
+                from .utils.file_io import s3_client
+                s3_client.list_buckets()
+                s3_duration = (time.time() - s3_start) * 1000  # ms
+                health_status["s3"] = "healthy"
+                health_status["s3_response_time_ms"] = s3_duration
+        except Exception as e:
+            health_status["s3"] = "unhealthy"
+            health_status["s3_error"] = str(e)
     
     # Overall health determination
     health_status["overall"] = "healthy" if all(

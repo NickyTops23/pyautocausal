@@ -10,7 +10,7 @@ import json
 from botocore.exceptions import NoCredentialsError, ClientError
 
 # Import the FastAPI app
-from app.main import app, parse_s3_uri, job_to_celery_map
+from app.main import app, parse_s3_uri, job_status_store
 
 # Create a TestClient for the FastAPI app
 client = TestClient(app)
@@ -125,8 +125,8 @@ def test_submit_job_success(mock_uuid, mock_s3_client, mock_celery_task, mock_s3
     assert args["input_s3_uri"].startswith("s3://")
     
     # Verify job_to_celery_map was updated
-    assert "test-uuid" in job_to_celery_map
-    assert job_to_celery_map["test-uuid"]["celery_task_id"] == "mock-task-id"
+    assert "test-uuid" in job_status_store
+    assert job_status_store["test-uuid"]["celery_task_id"] == "mock-task-id"
 
 # Test S3 upload failure
 def test_submit_job_s3_upload_failure(mock_s3_client, mock_s3_env):
@@ -173,7 +173,7 @@ def test_get_job_status_pending(job_id):
     mock_result.state = "PENDING"
     
     # Add job to job_to_celery_map
-    job_to_celery_map[job_id] = {
+    job_status_store[job_id] = {
         "celery_task_id": "mock-task-id",
         "original_filename": "test.csv",
         "input_s3_uri": "s3://test-bucket/test.csv"
@@ -190,7 +190,7 @@ def test_get_job_status_pending(job_id):
         assert response.json()["error_details"] is None
         
     # Clean up
-    job_to_celery_map.pop(job_id, None)
+    job_status_store.pop(job_id, None)
 
 # Test job status retrieval for job in SUCCESS state
 def test_get_job_status_success(job_id):
@@ -202,7 +202,7 @@ def test_get_job_status_success(job_id):
     mock_result.result = "s3://output-bucket/outputs/job-id/"
     
     # Add job to job_to_celery_map
-    job_to_celery_map[job_id] = {
+    job_status_store[job_id] = {
         "celery_task_id": "mock-task-id",
         "original_filename": "test.csv",
         "input_s3_uri": "s3://test-bucket/test.csv"
@@ -219,7 +219,7 @@ def test_get_job_status_success(job_id):
         assert response.json()["error_details"] is None
         
     # Clean up
-    job_to_celery_map.pop(job_id, None)
+    job_status_store.pop(job_id, None)
 
 # Test job status retrieval for job in FAILURE state
 def test_get_job_status_failure(job_id):
@@ -234,7 +234,7 @@ def test_get_job_status_failure(job_id):
     mock_result.result = mock_exception
     
     # Add job to job_to_celery_map
-    job_to_celery_map[job_id] = {
+    job_status_store[job_id] = {
         "celery_task_id": "mock-task-id",
         "original_filename": "test.csv",
         "input_s3_uri": "s3://test-bucket/test.csv"
@@ -251,7 +251,7 @@ def test_get_job_status_failure(job_id):
         assert "ValueError: Test error" in response.json()["error_details"]
         
     # Clean up
-    job_to_celery_map.pop(job_id, None)
+    job_status_store.pop(job_id, None)
 
 # Test job status retrieval for job in custom PROCESSING state
 def test_get_job_status_processing(job_id):
@@ -264,7 +264,7 @@ def test_get_job_status_processing(job_id):
     mock_result.info = {"message": "Loading data from local copy"}
     
     # Add job to job_to_celery_map
-    job_to_celery_map[job_id] = {
+    job_status_store[job_id] = {
         "celery_task_id": "mock-task-id",
         "original_filename": "test.csv",
         "input_s3_uri": "s3://test-bucket/test.csv"
@@ -279,4 +279,4 @@ def test_get_job_status_processing(job_id):
         assert "Loading data from local copy" in response.json()["message"]
         
     # Clean up
-    job_to_celery_map.pop(job_id, None) 
+    job_status_store.pop(job_id, None) 
