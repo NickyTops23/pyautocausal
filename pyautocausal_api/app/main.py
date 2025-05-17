@@ -47,12 +47,12 @@ app = FastAPI(
 job_status_store = {}
 
 # Configuration from Environment Variables
-S3_INPUT_DIR = os.getenv("S3_INPUT_BUCKET")
-S3_OUTPUT_DIR = os.getenv("S3_OUTPUT_BUCKET")
+S3_INPUT_DIR = os.getenv("S3_BUCKET_INPUT")
+S3_OUTPUT_DIR = os.getenv("S3_BUCKET_OUTPUT")
 S3_REGION = os.getenv("AWS_REGION", "us-east-1") # Default region if not set
 
 # Log environment configuration at startup
-logger.info(f"Starting PyAutoCausal API with: S3_INPUT_BUCKET={S3_INPUT_DIR}, S3_OUTPUT_BUCKET={S3_OUTPUT_DIR}, AWS_REGION={S3_REGION}")
+logger.info(f"Starting PyAutoCausal API with: S3_BUCKET_INPUT={S3_INPUT_DIR}, S3_BUCKET_OUTPUT={S3_BUCKET_OUTPUT}, AWS_REGION={S3_REGION}")
 
 # Configure boto3 with timeouts
 s3_client = boto3.client(
