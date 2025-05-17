@@ -1,6 +1,5 @@
 import os
 import uuid
-import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 from fastapi import UploadFile
@@ -8,6 +7,8 @@ from pathlib import Path
 import io
 import json
 from botocore.exceptions import NoCredentialsError, ClientError
+from fastapi import BackgroundTasks
+import pytest
 
 # Import the FastAPI app
 from app.main import app, parse_s3_uri, job_status_store

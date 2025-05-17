@@ -6,6 +6,7 @@ import pandas as pd
 from botocore.exceptions import NoCredentialsError, ClientError
 from typing import Union, Tuple, BinaryIO, Optional
 import re
+from enum import Enum
 
 class Status(str, Enum):
     PENDING = "PENDING"

@@ -1,4 +1,3 @@
-from celery import Celery
 from celery.utils.log import get_task_logger
 import pandas as pd
 from pathlib import Path
@@ -60,7 +59,19 @@ def log_worker_event(event_type, job_id, duration_ms=None, status=None, error=No
 # Worker will use a temporary local path for processing
 WORKER_TEMP_DIR = Path("/tmp/pyautocausal_worker_space").resolve() # Or another suitable temp location
 
-def run_graph_job(self, job_id: str, input_s3_uri: str, task_store: dict) -> None:
+# Helper function to get file size
+def _get_file_size(file_path: Path) -> int:
+    """Helper function to get the size of a file."""
+    try:
+        return file_path.stat().st_size
+    except FileNotFoundError:
+        logger.warning(f"File not found when trying to get size: {file_path}")
+        return 0 # Or raise an error, depending on desired behavior
+    except Exception as e:
+        logger.error(f"Error getting file size for {file_path}: {e}")
+        return 0 # Or raise
+
+def run_graph_job(job_id: str, input_s3_uri: str, task_store: dict) -> None:
     """
     FastAPI background task to download data from S3, run simple_graph, and upload outputs to S3.
     This is a wrapper around the _run_graph_job function that updates the task store with the status and result.
@@ -81,7 +92,7 @@ def run_graph_job(self, job_id: str, input_s3_uri: str, task_store: dict) -> Non
         task_store[job_id]["error"] = str(e)
         raise # Re-raise the error to be handled by Celery
     
-def _run_graph_job(self, job_id: str, input_s3_uri: str):
+def _run_graph_job(job_id: str, input_s3_uri: str):
     """
     FastAPI background task to download data from S3, run simple_graph, and upload outputs to S3.
     """
@@ -102,8 +113,8 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
         raise ValueError("Server configuration error: Invalid S3 output bucket URI format.")
     
     # Define local paths for this job on the worker instance
-    local_input_file_path = os.path.join(WORKER_TEMP_DIR, "input", job_id)
-    local_output_job_path = os.path.join(WORKER_TEMP_DIR, "output", job_id)
+    local_input_file_path = Path(os.path.join(WORKER_TEMP_DIR, "input", job_id))
+    local_output_job_path = Path(os.path.join(WORKER_TEMP_DIR, "output", job_id))
     s3_output_key_prefix = f"{S3_OUTPUT_DIR}/{job_id}/"
     
     log_worker_event(
@@ -119,50 +130,9 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
         os.makedirs(local_input_file_path, exist_ok=True)
         os.makedirs(local_output_job_path, exist_ok=True)
 
-        # 1. Download data from S3
-        logger.info(f"[{job_id}] Downloading data from {input_s3_uri}.")
-        
-        try:
-            start_download_time = time.time()
-            s3_bucket, s3_key = parse_s3_uri(input_s3_uri)
-            if not s3_bucket or not s3_key:
-                raise ValueError(f"Invalid S3 URI format: {input_s3_uri}")
-                
-            s3_client.download_file(s3_bucket, s3_key, str(local_input_file_path))
-            download_duration = (time.time() - start_download_time) * 1000  # ms
-
-            file_size = local_input_file_path.stat().st_size
-            
-            log_worker_event(
-                event_type="s3_download_complete",
-                job_id=job_id,
-                duration_ms=download_duration,
-                file_size_bytes=file_size,
-                s3_uri=input_s3_uri
-            )
-            
-            logger.info(f"[{job_id}] Successfully downloaded {input_s3_uri} to {local_input_file_path} ({file_size} bytes, {download_duration:.2f}ms)")
-        except NoCredentialsError as e:
-            logger.error(f"[{job_id}] AWS credentials not found for S3 download: {e}")
-            raise # Propagate to mark task as failed
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
-            logger.error(f"[{job_id}] S3 download failed for {input_s3_uri}: {error_code} - {e}", exc_info=True)
-            if error_code == "404":
-                raise FileNotFoundError(f"The S3 object {input_s3_uri} does not exist")
-            raise # Propagate
-        except Exception as e:
-            logger.error(f"[{job_id}] Error during S3 download: {e}", exc_info=True)
-            raise
-
-
-        # 2. Load data (assuming CSV)
-        try:
-            data = pd.read_csv(local_input_file_path)   
-            logger.info(f"[{job_id}] Successfully loaded CSV with {len(data)} rows and {len(data.columns)} columns in {csv_duration:.2f}ms")
-        except Exception as e:
-            logger.error(f"[{job_id}] Error reading input CSV ({local_input_file_path}): {e}", exc_info=True)
-            raise ValueError(f"Could not parse input file '{local_input_file_path}' for job {job_id}: {e}")
+        # 1. Download data from S3 and load it
+        logger.info(f"[{job_id}] Downloading and loading data from {input_s3_uri}.")
+        data = download_and_load_data(job_id, input_s3_uri, local_input_file_path)
 
         # 3. Initialize and run the graph (outputs to local_output_job_path)
         logger.info(f"[{job_id}] Initializing and fitting the causal graph.")
@@ -205,7 +175,7 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
             exporter.export_notebook(notebook_full_local_path)
             
             notebook_duration = (time.time() - notebook_start) * 1000  # ms
-            notebook_size = notebook_full_local_path.stat().st_size
+            notebook_size = _get_file_size(notebook_full_local_path)
             
             log_worker_event(
                 event_type="notebook_export_complete",
@@ -221,7 +191,7 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
                 event_type="notebook_export_failed",
                 job_id=job_id,
                 error=str(e)
-            )
+            )   
             # Non-critical failure for notebook export, proceed to upload other results
 
         logger.info(f"[{job_id}] Uploading results from {local_output_job_path} to S3 bucket {output_bucket_name} with prefix {s3_output_key_prefix}")
@@ -244,7 +214,7 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
             if item.is_file():
                 file_key_in_s3 = join_paths(s3_output_key_prefix, str(item.relative_to(local_output_job_path)))
                 file_size = item.stat().st_size
-                
+                    
                 try:
                     logger.debug(f"[{job_id}] Uploading {item.name} ({file_size} bytes) to s3://{output_bucket_name}/{file_key_in_s3}")
                     file_upload_start = time.time()
@@ -274,9 +244,9 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
                     logger.error(f"[{job_id}] S3 upload failed for {item.name}: {e}", exc_info=True)
                     # Decide if one failed upload should fail the whole job
                     # For now, we'll log and continue, but this might need adjustment
-        
+            
         upload_duration = (time.time() - upload_start) * 1000  # ms
-        
+            
         log_worker_event(
             event_type="s3_uploads_complete",
             job_id=job_id,
@@ -284,7 +254,7 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
             files_count=uploaded_files_count,
             total_bytes=total_uploaded_bytes
         )
-        
+            
         if uploaded_files_count == 0:
             logger.warning(f"[{job_id}] No files were uploaded to S3.")
         else:
@@ -293,17 +263,17 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
 
         # Task completed successfully, return the S3 URI for the output "directory"
         output_s3_uri = f"s3://{output_bucket_name}/{s3_output_key_prefix}"
-        
+            
         # Record total job time
         total_job_duration = (time.time() - task_start_time) * 1000  # ms
-        
+            
         log_worker_event(
             event_type="job_completed_successfully",
             job_id=job_id,
             duration_ms=total_job_duration,
             output_s3_uri=output_s3_uri
         )
-        
+            
         logger.info(f"[{job_id}] Task 'run_graph_job' completed successfully in {total_job_duration:.2f}ms. Output at {output_s3_uri}")
         return output_s3_uri
 
@@ -322,7 +292,7 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
         raise
     finally:
         # Clean up local temporary processing directory
-        if local_output_job_path.exists():
+        if os.path.exists(local_output_job_path):
             try:
                 cleanup_start = time.time()
                 shutil.rmtree(local_output_job_path)
@@ -337,3 +307,97 @@ def _run_graph_job(self, job_id: str, input_s3_uri: str):
                 logger.info(f"[{job_id}] Cleaned up local temporary directory: {local_output_job_path} in {cleanup_duration:.2f}ms")
             except Exception as e_clean:
                 logger.error(f"[{job_id}] Error cleaning up local temporary directory {local_output_job_path}: {e_clean}", exc_info=True)
+
+def download_and_load_data(job_id: str, input_uri: str, local_input_file_path: Path) -> pd.DataFrame:
+    """
+    Download data from S3 or load from local path and convert it into a pandas DataFrame.
+    
+    Args:
+        job_id: The unique job identifier
+        input_uri: The URI of the input file (S3 URI or local file path)
+        local_input_file_path: The local path to save the downloaded file
+        
+    Returns:
+        DataFrame containing the loaded data
+    
+    Raises:
+        ValueError: If the URI is invalid or the file cannot be parsed
+        NoCredentialsError: If AWS credentials are not found (for S3 URIs)
+        ClientError: If there's an error with the S3 client (for S3 URIs)
+    """
+    start_download_time = time.time()
+    
+    # Check if input is an S3 URI
+    if input_uri.startswith('s3://'):
+        copy_s3(job_id, input_uri, local_input_file_path, start_download_time)
+    else:
+        # Assume it's a local file path
+        copy_local(job_id, input_uri, local_input_file_path, start_download_time)
+
+    if local_input_file_path.suffix != ".csv":
+        raise ValueError(f"Input file must be a CSV file: {local_input_file_path}")
+    
+    try:
+        csv_start = time.time()
+        data = pd.read_csv(local_input_file_path)
+        csv_duration = (time.time() - csv_start) * 1000  # ms
+        logger.info(f"[{job_id}] Successfully loaded CSV with {len(data)} rows and {len(data.columns)} columns in {csv_duration:.2f}ms")
+        return data
+    except Exception as e:
+        logger.error(f"[{job_id}] Error reading input CSV ({local_input_file_path}): {e}", exc_info=True)
+        raise ValueError(f"Could not parse input file '{local_input_file_path}' for job {job_id}: {e}")
+
+def copy_s3(job_id, input_uri, local_input_file_path, start_download_time):
+    try:
+        s3_bucket, s3_key = parse_s3_uri(input_uri)
+        if not s3_bucket or not s3_key:
+            raise ValueError(f"Invalid S3 URI format: {input_uri}")
+                
+        s3_client.download_file(s3_bucket, s3_key, str(local_input_file_path))
+        download_duration = (time.time() - start_download_time) * 1000  # ms
+
+        file_size = _get_file_size(local_input_file_path)
+            
+        log_worker_event(
+                event_type="s3_download_complete",
+                job_id=job_id,
+                duration_ms=download_duration,
+                file_size_bytes=file_size,
+                s3_uri=input_uri
+            )
+            
+        logger.info(f"[{job_id}] Successfully downloaded {input_uri} to {local_input_file_path} ({file_size} bytes, {download_duration:.2f}ms)")
+    except NoCredentialsError as e:
+        logger.error(f"[{job_id}] AWS credentials not found for S3 download: {e}")
+        raise # Propagate to mark task as failed
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        logger.error(f"[{job_id}] S3 download failed for {input_uri}: {error_code} - {e}", exc_info=True)
+        if error_code == "404":
+            raise FileNotFoundError(f"The S3 object {input_uri} does not exist")
+        raise # Propagate
+    except Exception as e:
+        logger.error(f"[{job_id}] Error during S3 download: {e}", exc_info=True)
+        raise
+
+def copy_local(job_id, input_uri, local_input_file_path, start_download_time):
+    try:
+            # If input_uri is a local path, copy it to the expected location
+        source_path = Path(input_uri)
+        if not source_path.exists():
+            raise FileNotFoundError(f"Local file not found: {input_uri}")
+                
+            # Ensure the destination directory exists, error if it doesn't
+        if not os.path.isdir(os.path.dirname(str(local_input_file_path))):
+            raise FileNotFoundError(f"Local directory not found: {os.path.dirname(str(local_input_file_path))}")
+            
+            # Copy the file
+        shutil.copy2(str(source_path), str(local_input_file_path))
+            
+        file_size = _get_file_size(local_input_file_path)
+        download_duration = (time.time() - start_download_time) * 1000  # ms
+            
+        logger.info(f"[{job_id}] Successfully copied local file {input_uri} to {local_input_file_path} ({file_size} bytes, {download_duration:.2f}ms)")
+    except Exception as e:
+        logger.error(f"[{job_id}] Error accessing local file {input_uri}: {e}", exc_info=True)
+        raise

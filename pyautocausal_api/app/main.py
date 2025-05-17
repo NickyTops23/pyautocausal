@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Path as FastAPIPath, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Path as FastAPIPath, Request, BackgroundTasks
 from celery.result import AsyncResult
 from pydantic import BaseModel, Field
 import uuid
@@ -14,7 +14,7 @@ import io
 from enum import Enum
 # Import the Celery app instance and the task definition from app.worker
 # This assumes main.py and worker.py are in the same 'app' directory.
-from .worker import celery_app, run_graph_job
+from .worker import run_graph_job
 
 # Import our file utilities
 from .utils.file_io import (
