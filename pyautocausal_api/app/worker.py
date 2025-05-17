@@ -213,11 +213,12 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
         if not output_files:
             logger.warning(f"[{job_id}] No files found in {local_output_job_path} to upload to S3.")
         else:
-            logger.info(f"[{job_id}] Found {len(output_files)} files to upload to S3")
+            logger.info(f"[{job_id}] Found {len(output_files)} files in {local_output_job_path} to upload to S3")
         
         # Upload each file with progress tracking
         for item in output_files:
             if item.is_file():
+                logger.info(f"Joining {s3_output_key_prefix.strip('/')} and {str(item.relative_to(local_output_job_path)).strip('/')} to get {s3_output_key_prefix.strip('/') + '/' + str(item.relative_to(local_output_job_path)).strip('/')}")
                 s3_uri = s3_output_key_prefix.strip('/') + '/' + str(item.relative_to(local_output_job_path)).strip('/')
                 file_size = item.stat().st_size
                     
@@ -263,12 +264,10 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
         if uploaded_files_count == 0:
             logger.warning(f"[{job_id}] No files were uploaded to S3.")
         else:
-            logger.info(f"[{job_id}] Successfully uploaded {uploaded_files_count} result files ({total_uploaded_bytes} bytes) to S3 in {upload_duration:.2f}ms")
+            logger.info(f"[{job_id}] Successfully uploaded {uploaded_files_count} result files ({total_uploaded_bytes} bytes) to {s3_uri} in {upload_duration:.2f}ms")
 
 
-        # Task completed successfully, return the S3 URI for the output "directory"
-        output_s3_uri = f"s3://{output_bucket_name}/{s3_output_key_prefix}"
-            
+                    
         # Record total job time
         total_job_duration = (time.time() - task_start_time) * 1000  # ms
             
@@ -276,11 +275,11 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
             event_type="job_completed_successfully",
             job_id=job_id,
             duration_ms=total_job_duration,
-            output_s3_uri=output_s3_uri
+            output_s3_uri=s3_uri
         )
             
-        logger.info(f"[{job_id}] Task 'run_graph_job' completed successfully in {total_job_duration:.2f}ms. Output at {output_s3_uri}")
-        return output_s3_uri
+        logger.info(f"[{job_id}] Task 'run_graph_job' completed successfully in {total_job_duration:.2f}ms. Output at {s3_uri}")
+        return s3_uri
 
     except Exception as e:
         # Log failure with full details
