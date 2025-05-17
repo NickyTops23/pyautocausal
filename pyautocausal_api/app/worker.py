@@ -132,7 +132,10 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
 
         # 1. Download data from S3 and load it
         logger.info(f"[{job_id}] Downloading and loading data from {input_s3_uri}.")
-        data = download_and_load_data(job_id, input_s3_uri, local_input_file_path)
+        if input_s3_uri.endswith(".csv"):
+            data = pd.read_csv(input_s3_uri)
+        else:
+            raise ValueError(f"Input file must be a CSV file: {input_s3_uri}")
 
         # 3. Initialize and run the graph (outputs to local_output_job_path)
         logger.info(f"[{job_id}] Initializing and fitting the causal graph.")
@@ -307,97 +310,3 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
                 logger.info(f"[{job_id}] Cleaned up local temporary directory: {local_output_job_path} in {cleanup_duration:.2f}ms")
             except Exception as e_clean:
                 logger.error(f"[{job_id}] Error cleaning up local temporary directory {local_output_job_path}: {e_clean}", exc_info=True)
-
-def download_and_load_data(job_id: str, input_uri: str, local_input_file_path: Path) -> pd.DataFrame:
-    """
-    Download data from S3 or load from local path and convert it into a pandas DataFrame.
-    
-    Args:
-        job_id: The unique job identifier
-        input_uri: The URI of the input file (S3 URI or local file path)
-        local_input_file_path: The local path to save the downloaded file
-        
-    Returns:
-        DataFrame containing the loaded data
-    
-    Raises:
-        ValueError: If the URI is invalid or the file cannot be parsed
-        NoCredentialsError: If AWS credentials are not found (for S3 URIs)
-        ClientError: If there's an error with the S3 client (for S3 URIs)
-    """
-    start_download_time = time.time()
-    
-    # Check if input is an S3 URI
-    if input_uri.startswith('s3://'):
-        copy_s3(job_id, input_uri, local_input_file_path, start_download_time)
-    else:
-        # Assume it's a local file path
-        copy_local(job_id, input_uri, local_input_file_path, start_download_time)
-
-    if local_input_file_path.suffix != ".csv":
-        raise ValueError(f"Input file must be a CSV file: {local_input_file_path}")
-    
-    try:
-        csv_start = time.time()
-        data = pd.read_csv(local_input_file_path)
-        csv_duration = (time.time() - csv_start) * 1000  # ms
-        logger.info(f"[{job_id}] Successfully loaded CSV with {len(data)} rows and {len(data.columns)} columns in {csv_duration:.2f}ms")
-        return data
-    except Exception as e:
-        logger.error(f"[{job_id}] Error reading input CSV ({local_input_file_path}): {e}", exc_info=True)
-        raise ValueError(f"Could not parse input file '{local_input_file_path}' for job {job_id}: {e}")
-
-def copy_s3(job_id, input_uri, local_input_file_path, start_download_time):
-    try:
-        s3_bucket, s3_key = parse_s3_uri(input_uri)
-        if not s3_bucket or not s3_key:
-            raise ValueError(f"Invalid S3 URI format: {input_uri}")
-                
-        s3_client.download_file(s3_bucket, s3_key, str(local_input_file_path))
-        download_duration = (time.time() - start_download_time) * 1000  # ms
-
-        file_size = _get_file_size(local_input_file_path)
-            
-        log_worker_event(
-                event_type="s3_download_complete",
-                job_id=job_id,
-                duration_ms=download_duration,
-                file_size_bytes=file_size,
-                s3_uri=input_uri
-            )
-            
-        logger.info(f"[{job_id}] Successfully downloaded {input_uri} to {local_input_file_path} ({file_size} bytes, {download_duration:.2f}ms)")
-    except NoCredentialsError as e:
-        logger.error(f"[{job_id}] AWS credentials not found for S3 download: {e}")
-        raise # Propagate to mark task as failed
-    except ClientError as e:
-        error_code = e.response.get("Error", {}).get("Code", "")
-        logger.error(f"[{job_id}] S3 download failed for {input_uri}: {error_code} - {e}", exc_info=True)
-        if error_code == "404":
-            raise FileNotFoundError(f"The S3 object {input_uri} does not exist")
-        raise # Propagate
-    except Exception as e:
-        logger.error(f"[{job_id}] Error during S3 download: {e}", exc_info=True)
-        raise
-
-def copy_local(job_id, input_uri, local_input_file_path, start_download_time):
-    try:
-            # If input_uri is a local path, copy it to the expected location
-        source_path = Path(input_uri)
-        if not source_path.exists():
-            raise FileNotFoundError(f"Local file not found: {input_uri}")
-                
-            # Ensure the destination directory exists, error if it doesn't
-        if not os.path.isdir(os.path.dirname(str(local_input_file_path))):
-            raise FileNotFoundError(f"Local directory not found: {os.path.dirname(str(local_input_file_path))}")
-            
-            # Copy the file
-        shutil.copy2(str(source_path), str(local_input_file_path))
-            
-        file_size = _get_file_size(local_input_file_path)
-        download_duration = (time.time() - start_download_time) * 1000  # ms
-            
-        logger.info(f"[{job_id}] Successfully copied local file {input_uri} to {local_input_file_path} ({file_size} bytes, {download_duration:.2f}ms)")
-    except Exception as e:
-        logger.error(f"[{job_id}] Error accessing local file {input_uri}: {e}", exc_info=True)
-        raise

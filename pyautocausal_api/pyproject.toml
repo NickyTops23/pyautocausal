@@ -17,6 +17,7 @@ pandas = "^2.0.3"
 boto3 = "^1.28.0"
 
 pyautocausal = {path = "../pyautocausal", develop = true}
+s3fs = "^2025.3.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
