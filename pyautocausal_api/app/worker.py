@@ -19,7 +19,7 @@ from pyautocausal.persistence.notebook_export import NotebookExporter
 logger = get_task_logger(__name__)
 
 # Configuration from Environment Variables
-S3_OUTPUT_DIR = os.getenv("S3_OUTPUT_BUCKET")
+S3_OUTPUT_DIR = os.getenv("S3_BUCKET_OUTPUT")
 S3_REGION = os.getenv("AWS_REGION", "us-east-1") # Default region if not set
 
 
