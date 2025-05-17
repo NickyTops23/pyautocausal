@@ -7,6 +7,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pyautocausal  # Set default working directory for all run steps
+    
     steps:
       - uses: actions/checkout@v3
       
@@ -27,8 +31,8 @@ jobs:
         id: cached-poetry-dependencies
         uses: actions/cache@v3
         with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+          path: pyautocausal/.venv  # Update path to include subdirectory
+          key: venv-${{ runner.os }}-${{ hashFiles('pyautocausal/**/poetry.lock') }}  # Update path to include subdirectory
       
       - name: Install dependencies
         if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
