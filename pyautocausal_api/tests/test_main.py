@@ -2,16 +2,16 @@ import os
 import uuid
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
-from fastapi import UploadFile
+from fastapi import UploadFile, BackgroundTasks
 from pathlib import Path
 import io
 import json
 from botocore.exceptions import NoCredentialsError, ClientError
-from fastapi import BackgroundTasks
 import pytest
 
-# Import the FastAPI app
+# Import the FastAPI app and other necessary components
 from app.main import app, parse_s3_uri, job_status_store
+from app.utils.file_io import Status
 
 # Create a TestClient for the FastAPI app
 client = TestClient(app)
@@ -19,14 +19,9 @@ client = TestClient(app)
 # Fixture to mock boto3 s3_client
 @pytest.fixture
 def mock_s3_client():
-    with patch('app.main.s3_client') as mock_client:
+    with patch('app.utils.file_io.s3_client') as mock_client:
+        mock_client.list_buckets.return_value = {"Buckets": [{"Name": "test-bucket"}]}
         yield mock_client
-
-# Fixture to mock Celery task
-@pytest.fixture
-def mock_celery_task():
-    with patch('app.main.run_graph_job.delay', return_value=MagicMock(id='mock-task-id')) as mock_task:
-        yield mock_task
 
 # Fixture to provide a sample CSV file for testing
 @pytest.fixture
@@ -36,37 +31,32 @@ def sample_csv_file():
 
 # Fixture to provide a UUID for testing
 @pytest.fixture
-def job_id():
+def job_id_fixture():
     return str(uuid.uuid4())
 
-# Fixture to mock the S3 bucket environment variable - use patch instead of setting env vars
+# Fixture to mock the S3 environment variables
 @pytest.fixture
-def mock_s3_env():
-    # Patch S3_INPUT_BUCKET directly in the app.main module
-    with patch('app.main.S3_INPUT_BUCKET', 's3://test-bucket/base/path'):
-        with patch('app.main.S3_REGION', 'us-east-2'):
-            yield
+def mock_s3_env_vars():
+    with patch.dict(os.environ, {
+        # "S3_BUCKET_INPUT": "s3://test-input-bucket/inputs", # This might still be useful if other modules use it
+        "S3_BUCKET_OUTPUT": "s3://test-output-bucket/outputs",
+        "AWS_REGION": "us-east-1"
+    }):
+        with patch('app.main.S3_OUTPUT_DIR', "s3://test-output-bucket/outputs"):
+            with patch('app.main.S3_REGION', "us-east-1"):
+                yield
 
 # Test the parse_s3_uri function
 def test_parse_s3_uri():
-    # Test with empty input
     assert parse_s3_uri(None) == (None, None)
     assert parse_s3_uri('') == (None, None)
-    
-    # Test with invalid URI (no s3:// prefix)
     assert parse_s3_uri('invalid-bucket/path') == (None, None)
-    
-    # Test with valid bucket, no path
     bucket, key = parse_s3_uri('s3://my-bucket')
     assert bucket == 'my-bucket'
     assert key == ''
-    
-    # Test with valid bucket and path
     bucket, key = parse_s3_uri('s3://my-bucket/path/to/file')
     assert bucket == 'my-bucket'
     assert key == 'path/to/file'
-    
-    # Test with trailing slash
     bucket, key = parse_s3_uri('s3://my-bucket/')
     assert bucket == 'my-bucket'
     assert key == ''
@@ -78,206 +68,220 @@ def test_read_root():
     assert "message" in response.json()
     assert "PyAutoCausal API is running" in response.json()["message"]
 
-# Test job submission with missing S3 bucket config
-def test_submit_job_missing_config():
-    with patch('app.main.S3_INPUT_BUCKET', None):
-        response = client.post(
-            "/jobs",
-            files={"file": ("test.csv", io.BytesIO(b"test"), "text/csv")}
-        )
-        assert response.status_code == 500
-        assert "Server configuration error" in response.json()["detail"]
-        assert "S3 input bucket not specified" in response.json()["detail"]
-
-# Test job submission with invalid S3 URI format
-def test_submit_job_invalid_s3_uri():
-    with patch('app.main.S3_INPUT_BUCKET', 'invalid-uri'):
-        response = client.post(
-            "/jobs",
-            files={"file": ("test.csv", io.BytesIO(b"test"), "text/csv")}
-        )
-        assert response.status_code == 500
-        assert "Invalid S3 input bucket URI format" in response.json()["detail"]
+# Test job submission with missing S3_INPUT_DIR config
+# This test is no longer relevant as S3_INPUT_DIR check for intermediate upload is removed from submit_job.
+# @patch('app.main.read_from')
+# def test_submit_job_missing_input_dir_config(mock_read_from_main):
+#     mock_read_from_main.return_value = b"dummy file content"
+#     with patch('app.main.S3_INPUT_DIR', None): 
+#         response = client.post(
+#             "/jobs",
+#             data={"input_path": "s3://some-bucket/some-file.csv"}
+#         )
+#         assert response.status_code == 500
+#         assert "Server configuration error" in response.json()["detail"]
+#         assert "S3 input bucket not specified" in response.json()["detail"]
 
 # Test successful job submission
-@patch('uuid.uuid4', return_value=MagicMock(spec=uuid.UUID, __str__=lambda _: "test-uuid"))
-def test_submit_job_success(mock_uuid, mock_s3_client, mock_celery_task, mock_s3_env, sample_csv_file):
-    # Setup the request and mock objects
+@patch('uuid.uuid4')
+@patch.object(BackgroundTasks, 'add_task')
+def test_submit_job_success(
+    mock_add_task, mock_uuid_func, 
+    mock_s3_env_vars, job_id_fixture
+):
+    mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
+    
+    job_status_store.clear()
+
+    input_s3_path = "s3://test-bucket/source/test.csv"
     response = client.post(
         "/jobs",
-        files={"file": ("test.csv", sample_csv_file, "text/csv")}
+        data={"input_path": input_s3_path}
     )
     
-    # Check response
     assert response.status_code == 202
-    assert response.json()["job_id"] == "test-uuid"
-    assert "/jobs/test-uuid" in response.json()["status_url"]
-    assert "Job submitted successfully" in response.json()["message"]
+    json_response = response.json()
+    assert json_response["job_id"] == job_id_fixture
+    assert f"/jobs/{job_id_fixture}" in json_response["status_url"]
+    assert "Job submitted successfully" in json_response["message"]
     
-    # Verify S3 upload was called with correct parameters
-    mock_s3_client.upload_fileobj.assert_called_once()
-    # The call arguments can be verified further if needed
+    mock_add_task.assert_called_once()
+    args = mock_add_task.call_args[1]
+    assert args["job_id"] == job_id_fixture
+    assert args["input_s3_uri"] == input_s3_path
+    assert args["task_store"] is job_status_store
     
-    # Verify Celery task was called with correct parameters
-    mock_celery_task.assert_called_once()
-    args = mock_celery_task.call_args[1]
-    assert args["job_id"] == "test-uuid"
-    assert "test.csv" in args["original_filename"]
-    assert args["input_s3_uri"].startswith("s3://")
-    
-    # Verify job_to_celery_map was updated
-    assert "test-uuid" in job_status_store
-    assert job_status_store["test-uuid"]["celery_task_id"] == "mock-task-id"
+    assert job_id_fixture in job_status_store
+    assert job_status_store[job_id_fixture]["status"] == Status.PENDING
+    assert job_status_store[job_id_fixture]["original_filename"] == "test.csv"
+    assert job_status_store[job_id_fixture]["input_path"] == input_s3_path
 
-# Test S3 upload failure
-def test_submit_job_s3_upload_failure(mock_s3_client, mock_s3_env):
-    # Make S3 upload fail with NoCredentialsError
-    mock_s3_client.upload_fileobj.side_effect = NoCredentialsError()
-    
+# Test S3 upload failure (mocking write_to)
+# This test is no longer relevant as the endpoint doesn't do the intermediate write.
+# @patch('uuid.uuid4')
+# @patch('app.main.read_from')
+# @patch('app.main.write_to')
+# def test_submit_job_s3_upload_failure(
+#     mock_write_to, mock_read_from, mock_uuid_func,
+#     mock_s3_env_vars, job_id_fixture
+# ):
+#     mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
+#     mock_read_from.return_value = b"file,content"
+#     mock_write_to.side_effect = NoCredentialsError()
+# 
+#     job_status_store.clear()
+#     
+#     response = client.post(
+#         "/jobs",
+#         data={"input_path": "s3://test-bucket/source/test.csv"}
+#     )
+#     
+#     assert response.status_code == 500
+#     assert "Error during file upload" in response.json()["detail"]
+
+# Test Background Task submission failure
+@patch('uuid.uuid4')
+@patch.object(BackgroundTasks, 'add_task')
+def test_submit_job_task_submission_failure(
+    mock_add_task, mock_uuid_func,
+    mock_s3_env_vars, job_id_fixture
+):
+    mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
+    mock_add_task.side_effect = Exception("Queueing service error")
+
+    job_status_store.clear()
+
     response = client.post(
         "/jobs",
-        files={"file": ("test.csv", io.BytesIO(b"test"), "text/csv")}
+        data={"input_path": "s3://test-bucket/source/test.csv"}
     )
+        
+    assert response.status_code == 503
+    assert "Job queueing service unavailable" in response.json()["detail"]
+    assert "Queueing service error" in response.json()["detail"]
     
-    assert response.status_code == 500
-    assert "AWS credentials not found" in response.json()["detail"]
-
-# Test Celery task submission failure
-def test_submit_job_celery_failure(mock_s3_client, mock_s3_env):
-    # Make Celery task submission fail
-    with patch('app.main.run_graph_job.delay', side_effect=Exception("Celery connection error")):
-        response = client.post(
-            "/jobs",
-            files={"file": ("test.csv", io.BytesIO(b"test"), "text/csv")}
-        )
-        
-        assert response.status_code == 503
-        assert "Job queueing service unavailable" in response.json()["detail"]
-        
-        # Check that S3 cleanup was attempted
-        mock_s3_client.delete_object.assert_called_once()
+    assert job_id_fixture not in job_status_store
 
 # Test job status retrieval for non-existent job
-def test_get_job_status_not_found():
-    response = client.get("/jobs/non-existent-job")
+def test_get_job_status_not_found(job_id_fixture):
+    job_status_store.clear()
+    response = client.get(f"/jobs/{job_id_fixture}")
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
 
 # Test job status retrieval for job in PENDING state
-def test_get_job_status_pending(job_id):
-    # Create a mock AsyncResult
-    mock_result = MagicMock()
-    mock_result.status = "PENDING"
-    mock_result.successful.return_value = False
-    mock_result.failed.return_value = False
-    mock_result.result = None
-    mock_result.state = "PENDING"
-    
-    # Add job to job_to_celery_map
-    job_status_store[job_id] = {
-        "celery_task_id": "mock-task-id",
+def test_get_job_status_pending(job_id_fixture):
+    job_status_store.clear()
+    job_status_store[job_id_fixture] = {
+        "status": Status.PENDING,
         "original_filename": "test.csv",
-        "input_s3_uri": "s3://test-bucket/test.csv"
+        "input_path": "s3://test-bucket/test.csv",
+        "result": None,
+        "error": None
     }
     
-    with patch('app.main.AsyncResult', return_value=mock_result):
-        response = client.get(f"/jobs/{job_id}")
+    response = client.get(f"/jobs/{job_id_fixture}")
         
-        assert response.status_code == 200
-        assert response.json()["job_id"] == job_id
-        assert response.json()["status"] == "PENDING"
-        assert "queued and waiting" in response.json()["message"]
-        assert response.json()["result_path"] is None
-        assert response.json()["error_details"] is None
+    assert response.status_code == 200
+    json_response = response.json()
+    assert json_response["job_id"] == job_id_fixture
+    assert json_response["status"] == "PENDING"
+    assert "queued and waiting" in json_response["message"]
+    assert json_response["result_path"] is None
+    assert json_response["error_details"] is None
         
-    # Clean up
-    job_status_store.pop(job_id, None)
+    job_status_store.pop(job_id_fixture, None)
+
+# Test job status retrieval for job in RUNNING state
+def test_get_job_status_running(job_id_fixture):
+    job_status_store.clear()
+    job_status_store[job_id_fixture] = {
+        "status": Status.RUNNING,
+        "original_filename": "test.csv",
+        "input_path": "s3://test-bucket/test.csv",
+        "result": None,
+        "error": None
+    }
+    
+    response = client.get(f"/jobs/{job_id_fixture}")
+        
+    assert response.status_code == 200
+    json_response = response.json()
+    assert json_response["job_id"] == job_id_fixture
+    assert json_response["status"] == "RUNNING"
+    assert "currently running" in json_response["message"]
+    assert json_response["result_path"] is None
+    assert json_response["error_details"] is None
+        
+    job_status_store.pop(job_id_fixture, None)
 
 # Test job status retrieval for job in SUCCESS state
-def test_get_job_status_success(job_id):
-    # Create a mock AsyncResult
-    mock_result = MagicMock()
-    mock_result.status = "SUCCESS"
-    mock_result.successful.return_value = True
-    mock_result.failed.return_value = False
-    mock_result.result = "s3://output-bucket/outputs/job-id/"
-    
-    # Add job to job_to_celery_map
-    job_status_store[job_id] = {
-        "celery_task_id": "mock-task-id",
+def test_get_job_status_success(job_id_fixture):
+    job_status_store.clear()
+    output_s3_path = "s3://output-bucket/outputs/test-job-id/"
+    job_status_store[job_id_fixture] = {
+        "status": Status.SUCCESS,
         "original_filename": "test.csv",
-        "input_s3_uri": "s3://test-bucket/test.csv"
+        "input_path": "s3://test-bucket/test.csv",
+        "result": output_s3_path,
+        "error": None
     }
     
-    with patch('app.main.AsyncResult', return_value=mock_result):
-        response = client.get(f"/jobs/{job_id}")
+    response = client.get(f"/jobs/{job_id_fixture}")
         
-        assert response.status_code == 200
-        assert response.json()["job_id"] == job_id
-        assert response.json()["status"] == "COMPLETED"
-        assert "completed successfully" in response.json()["message"]
-        assert response.json()["result_path"] == "s3://output-bucket/outputs/job-id/"
-        assert response.json()["error_details"] is None
+    assert response.status_code == 200
+    json_response = response.json()
+    assert json_response["job_id"] == job_id_fixture
+    assert json_response["status"] == "COMPLETED"
+    assert "completed successfully" in json_response["message"]
+    assert json_response["result_path"] == output_s3_path
+    assert json_response["error_details"] is None
         
-    # Clean up
-    job_status_store.pop(job_id, None)
+    job_status_store.pop(job_id_fixture, None)
 
 # Test job status retrieval for job in FAILURE state
-def test_get_job_status_failure(job_id):
-    # Create a mock exception
-    mock_exception = ValueError("Test error")
-    
-    # Create a mock AsyncResult
-    mock_result = MagicMock()
-    mock_result.status = "FAILURE"
-    mock_result.successful.return_value = False
-    mock_result.failed.return_value = True
-    mock_result.result = mock_exception
-    
-    # Add job to job_to_celery_map
-    job_status_store[job_id] = {
-        "celery_task_id": "mock-task-id",
+def test_get_job_status_failure(job_id_fixture):
+    job_status_store.clear()
+    error_message = "ValueError: Something went wrong during processing"
+    job_status_store[job_id_fixture] = {
+        "status": Status.FAILED,
         "original_filename": "test.csv",
-        "input_s3_uri": "s3://test-bucket/test.csv"
+        "input_path": "s3://test-bucket/test.csv",
+        "result": None,
+        "error": error_message
     }
     
-    with patch('app.main.AsyncResult', return_value=mock_result):
-        response = client.get(f"/jobs/{job_id}")
+    response = client.get(f"/jobs/{job_id_fixture}")
         
-        assert response.status_code == 200
-        assert response.json()["job_id"] == job_id
-        assert response.json()["status"] == "FAILED"
-        assert "failed" in response.json()["message"]
-        assert response.json()["result_path"] is None
-        assert "ValueError: Test error" in response.json()["error_details"]
+    assert response.status_code == 200
+    json_response = response.json()
+    assert json_response["job_id"] == job_id_fixture
+    assert json_response["status"] == "FAILED"
+    assert "failed" in json_response["message"]
+    assert json_response["result_path"] is None
+    assert error_message in json_response["error_details"]
         
-    # Clean up
-    job_status_store.pop(job_id, None)
+    job_status_store.pop(job_id_fixture, None)
 
-# Test job status retrieval for job in custom PROCESSING state
-def test_get_job_status_processing(job_id):
-    # Create a mock AsyncResult
-    mock_result = MagicMock()
-    mock_result.status = "PROCESSING"
-    mock_result.state = "PROCESSING"
-    mock_result.successful.return_value = False
-    mock_result.failed.return_value = False
-    mock_result.info = {"message": "Loading data from local copy"}
-    
-    # Add job to job_to_celery_map
-    job_status_store[job_id] = {
-        "celery_task_id": "mock-task-id",
-        "original_filename": "test.csv",
-        "input_s3_uri": "s3://test-bucket/test.csv"
-    }
-    
-    with patch('app.main.AsyncResult', return_value=mock_result):
-        response = client.get(f"/jobs/{job_id}")
-        
-        assert response.status_code == 200
-        assert response.json()["job_id"] == job_id
-        assert response.json()["status"] == "PROCESSING"
-        assert "Loading data from local copy" in response.json()["message"]
-        
-    # Clean up
-    job_status_store.pop(job_id, None) 
+# Test for health check endpoint
+def test_health_check(mock_s3_client, mock_s3_env_vars):
+
+    # Mock s3_client.list_buckets() as used in health check
+    mock_s3_client.list_buckets.return_value = {"Buckets": [{"Name": "test-output-bucket"}]}
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    health_data = response.json()
+    assert health_data["api"] == "healthy"
+    assert health_data["s3"] == "healthy"
+    assert health_data["overall"] == "healthy"
+
+# Test for a case where input_path is not provided in submit_job
+def test_submit_job_missing_input_path(mock_s3_env_vars):
+    response = client.post(
+        "/jobs",
+        data={}
+    )
+    assert response.status_code == 422
+    assert "detail" in response.json()
+    assert any("input_path" in err.get("loc", []) and "field required" in err.get("msg", "").lower() for err in response.json()["detail"]) 

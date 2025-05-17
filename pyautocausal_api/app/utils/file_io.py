@@ -9,6 +9,10 @@ import re
 from enum import Enum
 
 class Status(str, Enum):
+    """
+    Status of a job.
+    """
+    UNKNOWN = "UNKNOWN"
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
