@@ -338,28 +338,8 @@ async def health_check():
     start_time = time.time()
     health_status = {
         "api": "healthy",
-        "celery": "unknown",
         "s3": "unknown",
     }
-    
-    # Check Celery connectivity
-    try:
-        celery_start = time.time()
-        # Simple ping by inspecting stats - doesn't require actual task submission
-        inspect = celery_app.control.inspect()
-        stats = inspect.stats()
-        celery_duration = (time.time() - celery_start) * 1000  # ms
-        
-        if stats:
-            health_status["celery"] = "healthy"
-            health_status["celery_workers"] = len(stats)
-            health_status["celery_response_time_ms"] = celery_duration
-        else:
-            health_status["celery"] = "unhealthy"
-            health_status["celery_error"] = "No workers available"
-    except Exception as e:
-        health_status["celery"] = "unhealthy"
-        health_status["celery_error"] = str(e)
     
     # Check S3 connectivity if we have S3 configuration
     if S3_INPUT_DIR:
@@ -381,7 +361,7 @@ async def health_check():
     # Overall health determination
     health_status["overall"] = "healthy" if all(
         status == "healthy" for key, status in health_status.items() 
-        if key in ["api", "celery", "s3"]
+        if key in ["api", "s3"]
     ) else "unhealthy"
     
     health_status["timestamp"] = datetime.utcnow().isoformat()
