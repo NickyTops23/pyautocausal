@@ -129,9 +129,9 @@ def log_event(event_type, job_id=None, duration_ms=None, status=None, error=None
 # --- Unified API Endpoint ---
 @app.post("/jobs", response_model=JobSubmissionResponse, status_code=202)
 async def submit_job(
-    request: Request, # To construct full status URL
+    request: Request,
+    background_tasks: BackgroundTasks, # To construct full status URL
     input_path: str = Form(...),
-    background_tasks: BackgroundTasks
 ):
     """
     Submit a new job to process a data file with the PyAutoCausal simple_graph.
