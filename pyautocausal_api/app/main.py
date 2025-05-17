@@ -360,8 +360,7 @@ async def health_check():
     
     # Overall health determination
     health_status["overall"] = "healthy" if all(
-        status == "healthy" for key, status in health_status.items() 
-        if key in ["api", "s3"]
+        status == "healthy" for _, status in health_status.items() 
     ) else "unhealthy"
     
     health_status["timestamp"] = datetime.utcnow().isoformat()
