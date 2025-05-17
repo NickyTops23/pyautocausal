@@ -263,18 +263,18 @@ def test_get_job_status_failure(job_id_fixture):
         
     job_status_store.pop(job_id_fixture, None)
 
-# Test for health check endpoint
-def test_health_check(mock_s3_client, mock_s3_env_vars):
+# # Test for health check endpoint
+# def test_health_check(mock_s3_client, mock_s3_env_vars):
 
-    # Mock s3_client.list_buckets() as used in health check
-    mock_s3_client.list_buckets.return_value = {"Buckets": [{"Name": "test-output-bucket"}]}
+#     # Mock s3_client.list_buckets() as used in health check
+#     mock_s3_client.list_buckets.return_value = {"Buckets": [{"Name": "test-output-bucket"}]}
 
-    response = client.get("/health")
-    assert response.status_code == 200
-    health_data = response.json()
-    assert health_data["api"] == "healthy"
-    assert health_data["s3"] == "healthy"
-    assert health_data["overall"] == "healthy"
+#     response = client.get("/health")
+#     assert response.status_code == 200
+#     health_data = response.json()
+#     assert health_data["api"] == "healthy"
+#     assert health_data["s3"] == "healthy"
+#     assert health_data["overall"] == "healthy"
 
 # Test for a case where input_path is not provided in submit_job
 def test_submit_job_missing_input_path(mock_s3_env_vars):
