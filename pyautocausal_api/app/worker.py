@@ -9,6 +9,7 @@ import time
 import json
 from datetime import datetime
 from .utils.file_io import Status, parse_s3_uri, join_paths
+import s3fs
 
 # --- pyautocausal Import ---
 # This should work if pyautocausal is installed via poetry from the local path
@@ -22,7 +23,6 @@ logger = get_task_logger(__name__)
 S3_OUTPUT_DIR = os.getenv("S3_BUCKET_OUTPUT")
 S3_REGION = os.getenv("AWS_REGION", "us-east-1") # Default region if not set
 
-
 # Configure boto3 with timeouts and retries
 s3_client = boto3.client(
     "s3", 
@@ -33,6 +33,9 @@ s3_client = boto3.client(
         retries={'max_attempts': 5}  # More retries for worker operations
     )
 )
+
+# Near s3_client initialization, or where appropriate
+s3 = s3fs.S3FileSystem(anon=False) # anon=False by default, uses boto3 credentials
 
 # Helper function for structured logging
 def log_worker_event(event_type, job_id, duration_ms=None, status=None, error=None, **kwargs):
@@ -215,18 +218,17 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
         # Upload each file with progress tracking
         for item in output_files:
             if item.is_file():
-                file_key_in_s3 = join_paths(s3_output_key_prefix, str(item.relative_to(local_output_job_path)))
+                s3_uri = s3_output_key_prefix.strip('/') + '/' + str(item.relative_to(local_output_job_path)).strip('/')
                 file_size = item.stat().st_size
                     
                 try:
-                    logger.debug(f"[{job_id}] Uploading {item.name} ({file_size} bytes) to s3://{output_bucket_name}/{file_key_in_s3}")
+                    logger.debug(f"[{job_id}] Uploading {item.name} ({file_size} bytes) to {s3_uri} using s3fs")
                     file_upload_start = time.time()
                     
-                    s3_client.upload_file(str(item), output_bucket_name, file_key_in_s3)
+                    s3.put(str(item), s3_uri) # Use s3fs.put()
                     
                     time_now = time.time()
                     file_upload_duration = (time_now - file_upload_start) * 1000  # ms
-                    file_upload_start = time_now
                     
                     log_worker_event(
                         event_type="file_upload_complete",
@@ -234,10 +236,10 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
                         duration_ms=file_upload_duration,
                         file_name=item.name,
                         file_size_bytes=file_size,
-                        s3_key=file_key_in_s3
+                        s3_key=s3_uri
                     )
                     
-                    logger.debug(f"[{job_id}] Uploaded {item.name} to bucket: {output_bucket_name}, key: {file_key_in_s3} in {file_upload_duration:.2f}ms")
+                    logger.debug(f"[{job_id}] Uploaded {item.name} to bucket: {output_bucket_name}, key: {s3_uri} in {file_upload_duration:.2f}ms")
                     uploaded_files_count += 1
                     total_uploaded_bytes += file_size
                 except NoCredentialsError:
