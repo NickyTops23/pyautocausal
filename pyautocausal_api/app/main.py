@@ -130,7 +130,7 @@ def log_event(event_type, job_id=None, duration_ms=None, status=None, error=None
 @app.post("/jobs", response_model=JobSubmissionResponse, status_code=202)
 async def submit_job(
     request: Request, # To construct full status URL
-    input_path: str,
+    input_path: str = Form(...),
     background_tasks: BackgroundTasks
 ):
     """
