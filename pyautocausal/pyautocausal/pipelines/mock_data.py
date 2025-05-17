@@ -196,3 +196,7 @@ def generate_mock_data(
     
     return df
 
+if __name__ == "__main__":
+    print("Generating mock data")
+    df = generate_mock_data(n_units=2000, n_periods=2, n_treated=500)
+    df.to_csv("mock_data.csv", index=False)
