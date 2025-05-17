@@ -116,9 +116,9 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
         raise ValueError("Server configuration error: Invalid S3 output bucket URI format.")
     
     # Define local paths for this job on the worker instance
-    local_input_file_path = Path(os.path.join(WORKER_TEMP_DIR, "input", job_id))
     local_output_job_path = Path(os.path.join(WORKER_TEMP_DIR, "output", job_id))
-    s3_output_key_prefix = f"{S3_OUTPUT_DIR}/{job_id}/"
+    # Ensure S3_OUTPUT_DIR has a trailing slash before appending job_id
+    s3_output_key_prefix = f"{S3_OUTPUT_DIR.rstrip('/')}/{job_id}/"
     
     log_worker_event(
         event_type="job_processing_started",
@@ -130,7 +130,6 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
     try:
         # Create local directories for processing
         setup_start = time.time()
-        os.makedirs(local_input_file_path, exist_ok=True)
         os.makedirs(local_output_job_path, exist_ok=True)
 
         # 1. Download data from S3 and load it
