@@ -10,6 +10,8 @@ from sklearn.model_selection import KFold
 import patsy
 from statsmodels.base.model import Results
 import copy
+import re
+from linearmodels import PanelOLS, RandomEffects, FirstDifferenceOLS, BetweenOLS
 
 from pyautocausal.persistence.parameter_mapper import make_transformable
 from pyautocausal.pipelines.library.specifications import (
@@ -280,6 +282,279 @@ def fit_synthdid_estimator(spec) -> object:
     
     # Store the estimate in the spec
     spec.model = estimate
+    
+    return spec
+
+
+@make_transformable
+def fit_panel_ols(spec: BaseSpec) -> BaseSpec:
+    """
+    Fit Panel OLS regression using linearmodels.
+    
+    Args:
+        spec: A specification object with data and column information
+        
+    Returns:
+        Specification with model field set to the fitted PanelOLS model
+    """
+    data = spec.data
+    
+    # Extract entity and time variables from the specification
+    entity_var = getattr(spec, 'entity_col', 'id_unit')
+    time_var = getattr(spec, 'time_col', 'period')
+    
+    # Create MultiIndex if not already present
+    if not isinstance(data.index, pd.MultiIndex):
+        data_indexed = data.set_index([entity_var, time_var])
+    else:
+        data_indexed = data.copy()
+    
+    # Use the formula from the spec but clean it for linearmodels
+    formula = spec.formula
+    
+    # Clean formula - remove any C() fixed effects patterns and add EntityEffects and TimeEffects
+    cleaned_formula = formula
+    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
+        cleaned_formula = re.sub(pattern, '', cleaned_formula)
+    
+    # Clean up extra spaces and operators
+    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
+    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
+    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
+    cleaned_formula = cleaned_formula.strip()
+    
+    # Add EntityEffects and TimeEffects to the formula
+    if 'EntityEffects' not in cleaned_formula:
+        cleaned_formula += ' + EntityEffects'
+    if 'TimeEffects' not in cleaned_formula:
+        cleaned_formula += ' + TimeEffects'
+    
+    # Set up clustering (default to entity clustering)
+    cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
+    
+    # Fit model using from_formula with special effects variables
+    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    
+    result = model.fit(**cluster_config)
+    
+    # Set the model field
+    spec.model = result
+
+    # Print the model summary
+    print(result.summary)
+    
+    return spec
+
+
+@make_transformable
+def fit_did_panel(spec: BaseSpec) -> BaseSpec:
+    """
+    Fit Difference-in-Differences using Panel OLS with entity and time fixed effects.
+    
+    Args:
+        spec: A specification object with data and column information
+        
+    Returns:
+        Specification with model field set to the fitted PanelOLS model for DiD
+    """
+    data = spec.data
+    
+    # Extract entity and time variables from the specification
+    entity_var = getattr(spec, 'entity_col', 'id_unit')
+    time_var = getattr(spec, 'time_col', 'period')
+    
+    # Create MultiIndex if not already present
+    if not isinstance(data.index, pd.MultiIndex):
+        data_indexed = data.set_index([entity_var, time_var])
+    else:
+        data_indexed = data.copy()
+    
+    # Use the formula from the spec but clean it for linearmodels
+    formula = spec.formula
+    
+    # Clean formula - remove any C() fixed effects patterns and add EntityEffects and TimeEffects
+    cleaned_formula = formula
+    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
+        cleaned_formula = re.sub(pattern, '', cleaned_formula)
+    
+    # Clean up extra spaces and operators
+    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
+    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
+    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
+    cleaned_formula = cleaned_formula.strip()
+    
+    # Add EntityEffects and TimeEffects to the formula for DiD
+    if 'EntityEffects' not in cleaned_formula:
+        cleaned_formula += ' + EntityEffects'
+    if 'TimeEffects' not in cleaned_formula:
+        cleaned_formula += ' + TimeEffects'
+    
+    # Set up clustering for DiD (cluster by entity)
+    cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
+    
+    # Fit model with entity and time effects (standard DiD setup)
+    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    
+    result = model.fit(**cluster_config)
+    
+    # Set the model field
+    spec.model = result
+    
+    # Print the model summary
+    print(result.summary)
+
+    return spec
+
+
+@make_transformable
+def fit_random_effects(spec: BaseSpec) -> BaseSpec:
+    """
+    Fit Random Effects regression using linearmodels.
+    
+    Args:
+        spec: A specification object with data and column information
+        
+    Returns:
+        Specification with model field set to the fitted RandomEffects model
+    """
+    data = spec.data
+    
+    # Extract entity and time variables from the specification
+    entity_var = getattr(spec, 'entity_col', 'id_unit')
+    time_var = getattr(spec, 'time_col', 'period')
+    
+    # Create MultiIndex if not already present
+    if not isinstance(data.index, pd.MultiIndex):
+        data_indexed = data.set_index([entity_var, time_var])
+    else:
+        data_indexed = data.copy()
+    
+    # Use the formula from the spec but clean it for linearmodels
+    formula = spec.formula
+    
+    # Clean formula - remove any C() fixed effects patterns
+    cleaned_formula = formula
+    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
+        cleaned_formula = re.sub(pattern, '', cleaned_formula)
+    
+    # Clean up extra spaces and operators
+    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
+    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
+    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
+    cleaned_formula = cleaned_formula.strip()
+    
+    # Fit model
+    model = RandomEffects.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    result = model.fit(cov_type='robust')
+    
+    # Set the model field
+    spec.model = result
+
+    # Print the model summary
+    print(result.summary)
+    
+    return spec
+
+
+@make_transformable
+def fit_first_difference(spec: BaseSpec) -> BaseSpec:
+    """
+    Fit First Difference regression using linearmodels.
+    
+    Args:
+        spec: A specification object with data and column information
+        
+    Returns:
+        Specification with model field set to the fitted FirstDifferenceOLS model
+    """
+    data = spec.data
+    
+    # Extract entity and time variables from the specification
+    entity_var = getattr(spec, 'entity_col', 'id_unit')
+    time_var = getattr(spec, 'time_col', 'period')
+    
+    # Create MultiIndex if not already present
+    if not isinstance(data.index, pd.MultiIndex):
+        data_indexed = data.set_index([entity_var, time_var])
+    else:
+        data_indexed = data.copy()
+    
+    # Use the formula from the spec but clean it for linearmodels
+    formula = spec.formula
+    
+    # Clean formula - remove any C() fixed effects patterns and constants (not needed for first difference)
+    cleaned_formula = formula
+    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+', r'\+ 1', r'1 \+']:
+        cleaned_formula = re.sub(pattern, '', cleaned_formula)
+    
+    # Clean up extra spaces and operators
+    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
+    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
+    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
+    cleaned_formula = cleaned_formula.strip()
+    
+    # Set up clustering
+    cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
+    
+    # Fit model
+    model = FirstDifferenceOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    result = model.fit(**cluster_config)
+    
+    # Set the model field
+    spec.model = result
+
+    # Print the model summary
+    print(result.summary)
+    
+    return spec
+
+
+@make_transformable
+def fit_between_estimator(spec: BaseSpec) -> BaseSpec:
+    """
+    Fit Between estimator regression using linearmodels.
+    
+    Args:
+        spec: A specification object with data and column information
+        
+    Returns:
+        Specification with model field set to the fitted BetweenOLS model
+    """
+    data = spec.data
+    
+    # Extract entity and time variables from the specification
+    entity_var = getattr(spec, 'entity_col', 'id_unit')
+    time_var = getattr(spec, 'time_col', 'period')
+    
+    # Create MultiIndex if not already present
+    if not isinstance(data.index, pd.MultiIndex):
+        data_indexed = data.set_index([entity_var, time_var])
+    else:
+        data_indexed = data.copy()
+    
+    # Use the formula from the spec but clean it for linearmodels
+    formula = spec.formula
+    
+    # Clean formula - remove any C() fixed effects patterns
+    cleaned_formula = formula
+    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
+        cleaned_formula = re.sub(pattern, '', cleaned_formula)
+    
+    # Clean up extra spaces and operators
+    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
+    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
+    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
+    cleaned_formula = cleaned_formula.strip()
+    
+    # Fit model
+    model = BetweenOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    result = model.fit(cov_type='robust')
+    
+    # Set the model field
+    spec.model = result
+
+    # Print the model summary
+    print(result.summary)
     
     return spec
 

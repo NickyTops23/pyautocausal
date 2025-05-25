@@ -1,6 +1,10 @@
 from pathlib import Path
 import pandas as pd
-from pyautocausal.pipelines.library.estimators import fit_ols, fit_weighted_ols, fit_double_lasso, fit_callaway_santanna_estimator, fit_callaway_santanna_nyt_estimator, fit_synthdid_estimator
+from pyautocausal.pipelines.library.estimators import (
+    fit_ols, fit_weighted_ols, fit_double_lasso, 
+    fit_callaway_santanna_estimator, fit_callaway_santanna_nyt_estimator, fit_synthdid_estimator,
+    fit_panel_ols, fit_did_panel, fit_random_effects, fit_first_difference, fit_between_estimator
+)
 from pyautocausal.pipelines.library.output import write_statsmodels_summary, write_statsmodels_summary_notebook
 from pyautocausal.pipelines.library.balancing import compute_synthetic_control_weights
 from pyautocausal.pipelines.library.specifications import (
@@ -112,9 +116,9 @@ def simple_graph(output_path: Path):
                     action_function=create_did_specification.transform({'df': 'data'}), 
                     predecessors=["multi_period"])
 
-    # Fit OLS on DiD specification
+    # Fit Panel DiD on DiD specification (using linearmodels)
     graph.create_node('ols_did', 
-                     action_function=fit_ols.transform({'did_spec': 'spec'}),
+                     action_function=fit_did_panel.transform({'did_spec': 'spec'}),
                      predecessors=["did_spec"])
     
     # Save DiD results
@@ -142,14 +146,14 @@ def simple_graph(output_path: Path):
                     action_function=create_staggered_did_specification.transform({'df': 'data'}), 
                     predecessors=["stag_treat"])
     
-    # Fit OLS on Event Study specification
+    # Fit Panel OLS on Event Study specification (using linearmodels)
     graph.create_node('ols_event', 
-                    action_function=fit_ols.transform({'event_spec': 'spec'}),
+                    action_function=fit_panel_ols.transform({'event_spec': 'spec'}),
                     predecessors=["event_spec"])
     
-    # Fit OLS on Staggered DiD specification
+    # Fit Panel OLS on Staggered DiD specification (using linearmodels)
     graph.create_node('ols_stag', 
-                     action_function=fit_ols.transform({'stag_spec': 'spec'}),
+                     action_function=fit_panel_ols.transform({'stag_spec': 'spec'}),
                      predecessors=["stag_spec"])
     
     # --------- Add Decision Node for Callaway & Sant'Anna ---------
@@ -173,7 +177,6 @@ def simple_graph(output_path: Path):
                          output_type=OutputType.TEXT
                      ),
                      save_node=True,
-                     display_function=display_cs_results_notebook,
                      predecessors=["cs_never_treated"])
     
     # Create Callaway and Sant'Anna (never-treated) event study plot
@@ -200,7 +203,6 @@ def simple_graph(output_path: Path):
                          output_type=OutputType.TEXT
                      ),
                      save_node=True,
-                     display_function=display_cs_results_notebook,
                      predecessors=["cs_not_yet_treated"])
     
     # Create Callaway and Sant'Anna (not-yet-treated) event study plot
