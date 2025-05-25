@@ -49,9 +49,6 @@ htmlcov/
 *.tar.gz
 *.whl
 
-# Poetry
-poetry.lock
-
 # Jupyter Notebook
 .ipynb_checkpoints
 
