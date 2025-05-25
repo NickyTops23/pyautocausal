@@ -3,8 +3,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import re
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Any
 from pyautocausal.persistence.parameter_mapper import make_transformable
+from pyautocausal.pipelines.library.callaway_santanna import CSResults
+from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 @make_transformable
 def event_study_plot(spec: Union[DiDSpec, StaggeredDiDSpec, EventStudySpec], 
@@ -37,10 +39,78 @@ def event_study_plot(spec: Union[DiDSpec, StaggeredDiDSpec, EventStudySpec],
     Returns:
         Matplotlib figure with the event study plot
     """
-    # Check if model exists and has results
+    # Check if model exists
     if spec.model is None:
         raise ValueError("Specification must contain a fitted model")
     
+    # Check if the model is a CSResults object (Callaway and Sant'Anna results)
+    if isinstance(spec.model, CSResults):
+        # Extract event-time results from the CS summary dataframe
+        cs_event_results = spec.model.summary[spec.model.summary['type'] == 'event_time'].copy()
+        
+        if not cs_event_results.empty:
+            # Create the plot with CS results
+            periods = cs_event_results['event_time'].tolist()
+            coeffs = cs_event_results['att'].tolist()
+            lower_ci = cs_event_results['lower_ci'].tolist()
+            upper_ci = cs_event_results['upper_ci'].tolist()
+            
+            # Create a DataFrame with coefficients and confidence intervals
+            results_df = pd.DataFrame({
+                'period': periods,
+                'coef': coeffs,
+                'lower': lower_ci,
+                'upper': upper_ci
+            })
+            
+            # Sort by period
+            results_df = results_df.sort_values('period')
+            
+            # Create figure
+            fig, ax = plt.subplots(figsize=figsize)
+            
+            # Plot coefficients with markers only (no connecting lines)
+            ax.plot(results_df['period'], results_df['coef'], 
+                    marker=marker, 
+                    color=effect_color, 
+                    linestyle='none',  # This removes the connecting lines
+                    label='ATT Estimate')
+            
+            # Add error bars (whiskers) with same color as points
+            yerr = [results_df['coef'] - results_df['lower'], results_df['upper'] - results_df['coef']]
+            ax.errorbar(results_df['period'], results_df['coef'], 
+                       yerr=yerr, 
+                       fmt='none',  # No additional markers
+                       ecolor=effect_color,  # Same color as points
+                       elinewidth=2,
+                       capsize=5,
+                       label=f'{int(confidence_level*100)}% CI')
+            
+            # Add zero reference line
+            ax.axhline(y=0, color=reference_line_color, linestyle=reference_line_style)
+            
+            # Add vertical line at period 0 (treatment time)
+            ax.axvline(x=0, color=reference_line_color, linestyle=reference_line_style, alpha=0.7)
+            
+            # Add labels and title
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("ATT Estimate")
+            ax.set_title(title + " (Callaway & Sant'Anna)")
+            
+            # Add grid
+            ax.grid(True, linestyle=':', alpha=0.6)
+            
+            # Add legend
+            ax.legend()
+            
+            # Adjust layout
+            plt.tight_layout()
+            
+            return fig
+        else:
+            raise ValueError("No event-time results found in the Callaway and Sant'Anna model")
+    
+    # For standard OLS models
     # Get model parameters and confidence intervals
     params = spec.model.params
     conf_int = spec.model.conf_int(alpha=1-confidence_level)
@@ -314,5 +384,37 @@ def create_did_plot(spec: DiDSpec,
     
     # Adjust layout
     plt.tight_layout()
+    
+    return fig
+
+@make_transformable
+def synthdid_plot(spec, output_config: Optional[OutputConfig] = None, **kwargs) -> plt.Figure:
+    """
+    Create a synthetic difference-in-differences plot.
+    
+    Args:
+        spec: A SynthDIDSpec object with fitted model
+        output_config: Configuration for saving the plot
+        **kwargs: Additional arguments passed to plot_synthdid
+        
+    Returns:
+        matplotlib figure object
+    """
+    from pyautocausal.pipelines.library.synthdid_py.plot import plot_synthdid
+    
+    if not hasattr(spec, 'model') or spec.model is None:
+        raise ValueError("Specification must have a fitted model")
+    
+    # Create the plot
+    fig, ax = plot_synthdid(spec.model, **kwargs)
+    
+    # Save if output config provided
+    if output_config:
+        if output_config.output_type == OutputType.PNG:
+            fig.savefig(f"{output_config.output_filename}.png", 
+                       dpi=300, bbox_inches='tight')
+        elif output_config.output_type == OutputType.PDF:
+            fig.savefig(f"{output_config.output_filename}.pdf", 
+                       bbox_inches='tight')
     
     return fig

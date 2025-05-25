@@ -369,5 +369,5 @@ class NotebookExporter:
         self._create_imports_cell(end_of_markdown)
         
         # Save the notebook
-        with open(filepath, 'w') as f:
+        with open(filepath, 'w', encoding='utf-8') as f:
             nbformat.write(self.nb, f) 

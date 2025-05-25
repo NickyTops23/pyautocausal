@@ -71,6 +71,21 @@ class StaggeredDiDSpec(BaseSpec):
     model: Optional[Any] = None
 
 
+@dataclass
+class SynthDIDSpec(BaseSpec):
+    """Synthetic Difference-in-Differences specification."""
+    outcome_col: str
+    treatment_cols: List[str]
+    control_cols: List[str]
+    time_col: str
+    unit_col: str
+    Y: np.ndarray  # Outcome matrix (N x T)
+    N0: int  # Number of control units
+    T0: int  # Number of pre-treatment periods
+    X: Optional[np.ndarray] = None  # Covariates matrix (N x T x C)
+    model: Optional[Any] = None
+
+
 def validate_and_prepare_data(
     data: pd.DataFrame,
     outcome_col: str,
@@ -528,6 +543,105 @@ def create_staggered_did_specification(
         control_cols=control_cols,
         data=data,
         formula=formula
+    )
+
+
+@make_transformable
+def create_synthdid_specification(
+    data: pd.DataFrame, 
+    outcome_col: str = 'y', 
+    treatment_cols: List[str] = ['treat'],
+    time_col: str = 't',
+    unit_col: str = 'id_unit',
+    control_cols: Optional[List[str]] = None
+) -> SynthDIDSpec:
+    """
+    Create a Synthetic Difference-in-Differences specification.
+    
+    Args:
+        data: DataFrame with outcome, treatment, time, and unit identifiers
+        outcome_col: Name of outcome column
+        treatment_cols: List of treatment column names (only first is used)
+        time_col: Name of time column
+        unit_col: Name of unit identifier column
+        control_cols: List of control variable columns
+        
+    Returns:
+        SynthDIDSpec object with synthetic DiD specification information
+    """
+    from pyautocausal.pipelines.library.synthdid_py.utils import panel_matrices
+    
+    # Use first treatment column for now
+    treatment_col = treatment_cols[0]
+    
+    # Validate and prepare data
+    data, control_cols = validate_and_prepare_data(
+        data=data,
+        outcome_col=outcome_col,
+        treatment_cols=treatment_cols,
+        required_columns=[time_col, unit_col],
+        control_cols=control_cols,
+        excluded_cols=[time_col, unit_col]
+    )
+    
+    # Check that we have exactly one treated unit
+    treated_units = data[data[treatment_col] == 1][unit_col].unique()
+    if len(treated_units) == 0:
+        raise ValueError("No treated units found in data")
+    if len(treated_units) > 1:
+        raise ValueError("Synthetic DiD requires exactly one treated unit")
+    
+    # Convert to panel format expected by synthdid
+    try:
+        panel_result = panel_matrices(
+            data, 
+            unit=unit_col, 
+            time=time_col, 
+            outcome=outcome_col, 
+            treatment=treatment_col
+        )
+        
+        Y = panel_result['Y']
+        N0 = panel_result['N0']
+        T0 = panel_result['T0']
+        
+        # Handle covariates if provided
+        X = None
+        if control_cols:
+            # Create 3D covariate matrix
+            n_units, n_times = Y.shape
+            X = np.zeros((n_units, n_times, len(control_cols)))
+            
+            for k, cov_col in enumerate(control_cols):
+                # Reshape covariate data to matrix form
+                cov_matrix = data.pivot_table(
+                    index=unit_col, 
+                    columns=time_col, 
+                    values=cov_col, 
+                    fill_value=0
+                ).values
+                X[:, :, k] = cov_matrix
+        
+    except Exception as e:
+        raise ValueError(f"Error converting data to panel format: {str(e)}")
+    
+    # Create a simple formula for compatibility
+    formula = f"{outcome_col} ~ {treatment_col}"
+    if control_cols:
+        formula += " + " + " + ".join(control_cols)
+    
+    return SynthDIDSpec(
+        data=data,
+        formula=formula,
+        outcome_col=outcome_col,
+        treatment_cols=treatment_cols,
+        control_cols=control_cols,
+        time_col=time_col,
+        unit_col=unit_col,
+        Y=Y,
+        N0=N0,
+        T0=T0,
+        X=X
     )
 
 

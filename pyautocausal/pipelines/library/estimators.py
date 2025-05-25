@@ -19,6 +19,7 @@ from pyautocausal.pipelines.library.specifications import (
     StaggeredDiDSpec,
 )
 from pyautocausal.pipelines.library.base_estimator import format_statsmodels_result
+from pyautocausal.pipelines.library.callaway_santanna import fit_callaway_santanna as cs_fit
 
 
 def create_model_matrices(spec: BaseSpec) -> Tuple[np.ndarray, np.ndarray]:
@@ -219,4 +220,66 @@ def fit_double_lasso(
     ).fit(cov_type='HC1')
     
     return final_model
+
+
+@make_transformable
+def fit_callaway_santanna_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDSpec:
+    """
+    Wrapper function to fit the Callaway and Sant'Anna (2021) DiD estimator using never-treated units as the control group.
+    
+    This function is a simple wrapper around the implementation in the callaway_santanna module,
+    designed to maintain consistency with other estimator functions.
+    
+    Args:
+        spec: A StaggeredDiDSpec object with data and column information
+        
+    Returns:
+        StaggeredDiDSpec with fitted model
+    """
+    return cs_fit(spec, control_group="never_treated")
+
+
+@make_transformable
+def fit_callaway_santanna_nyt_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDSpec:
+    """
+    Wrapper function to fit the Callaway and Sant'Anna (2021) DiD estimator using not-yet-treated units as the control group.
+    
+    This function is a simple wrapper around the implementation in the callaway_santanna module,
+    designed to maintain consistency with other estimator functions.
+    
+    Args:
+        spec: A StaggeredDiDSpec object with data and column information
+        
+    Returns:
+        StaggeredDiDSpec with fitted model
+    """
+    return cs_fit(spec, control_group="not_yet_treated")
+
+
+@make_transformable
+def fit_synthdid_estimator(spec) -> object:
+    """
+    Fit a Synthetic Difference-in-Differences estimator.
+    
+    Args:
+        spec: A SynthDIDSpec object with data and matrix information
+        
+    Returns:
+        SynthDIDSpec with fitted model (SynthDIDEstimate object)
+    """
+    from pyautocausal.pipelines.library.synthdid_py.synthdid import synthdid_estimate
+    
+    # Extract matrices from spec
+    Y = spec.Y
+    N0 = spec.N0
+    T0 = spec.T0
+    X = spec.X
+    
+    # Fit the synthetic DiD model
+    estimate = synthdid_estimate(Y, N0, T0, X=X)
+    
+    # Store the estimate in the spec
+    spec.model = estimate
+    
+    return spec
 

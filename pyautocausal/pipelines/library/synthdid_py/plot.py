@@ -63,7 +63,8 @@ def plot_synthdid(est, effect_curve=None, figsize=(10, 6), title=None,
     fig, ax : tuple
         Figure and axis objects
     """
-    from synthdid_py import synthdid_effect_curve, synthdid_se
+    from .synthdid import synthdid_effect_curve
+    from .vcov import synthdid_se
     
     # Extract setup
     Y = est.setup["Y"]
