@@ -163,6 +163,9 @@ class NotebookExporter:
             # Add both the target and wrapper with proper imports
             return comment + target_source
         
+        # For regular functions, collect imports
+        self._get_function_imports(func)
+        
         # Handle lambdas
         source = inspect.getsource(func)
         if source.strip().startswith('lambda'):
@@ -324,7 +327,7 @@ class NotebookExporter:
         calls the display function on the node's output."""
         return f"# Display Result\n{node.display_function.__name__}({node.name}_output)"
 
-    def _create_input_node_cells(self, node: InputNode) -> None:
+    def _create_input_node_cells(self, node: InputNode, has_data_loading: bool = False) -> None:
         """Create cells for a single input node's execution."""
         # Add markdown cell with node info
         info = f"## Node: {node.name}\n"
@@ -332,16 +335,42 @@ class NotebookExporter:
             info += f"{node.node_description}\n"
         self.nb.cells.append(new_markdown_cell(info))
         
-        # Add execution cell which is just a comment telling the user to provide the input
-        exec_code = f"# TODO: Load your input data for '{node.name}' here\n{node.name}_output = None  # Replace with your data"
+        if has_data_loading:
+            # Use the loaded data
+            exec_code = f"{node.name}_output = input_data['{node.name}']"
+        else:
+            # Add execution cell which is just a comment telling the user to provide the input
+            exec_code = f"# TODO: Load your input data for '{node.name}' here\n{node.name}_output = None  # Replace with your data"
+        
         self.nb.cells.append(new_code_cell(exec_code))
-    
-    def export_notebook(self, filepath: str) -> None:
+
+    def _extract_imports_from_loading_function(self, loading_function: str) -> None:
+        """Extract and add necessary imports based on the loading function string."""
+        # Common patterns for import detection
+        import_patterns = {
+            'pd.': 'import pandas as pd',
+            'pandas.': 'import pandas as pd',
+            'np.': 'import numpy as np',
+            'numpy.': 'import numpy as np',
+            'pickle.': 'import pickle',
+            'json.': 'import json',
+            'yaml.': 'import yaml',
+            'torch.': 'import torch',
+            'joblib.': 'import joblib',
+        }
+        
+        for pattern, import_stmt in import_patterns.items():
+            if pattern in loading_function:
+                self.needed_imports.add(import_stmt)
+
+    def export_notebook(self, filepath: str, data_path: Optional[str] = None, loading_function: Optional[str] = None) -> None:
         """
         Export the graph execution as a Jupyter notebook.
         
         Args:
             filepath: Path where the notebook should be saved
+            data_path: Optional path to data file to load
+            loading_function: Optional function string to load the data (e.g., 'pd.read_csv')
         """
         # Create header
         self._create_header()
@@ -352,21 +381,32 @@ class NotebookExporter:
         markdown_content = "\n".join(markdown_content.split("\n")[1:])
         self.nb.cells.append(new_markdown_cell(markdown_content))
 
-        end_of_markdown = len(self.nb.cells)
+        # Extract imports from data loading function (if provided)
+        if data_path and loading_function:
+            self._extract_imports_from_loading_function(loading_function)
 
-        # Process nodes in topological order
+        # Process nodes in topological order (this will collect imports as we go)
         for node in self._get_topological_order():
             # Skip decision nodes
             if isinstance(node, DecisionNode):
                 continue
                 
+            # Only export completed nodes
             if node.is_completed():
                 if isinstance(node, InputNode):
-                    self._create_input_node_cells(node)
+                    self._create_input_node_cells(node, data_path is not None and loading_function is not None)
                 else:
                     self._create_node_cells(node)
 
-        self._create_imports_cell(end_of_markdown)
+        # Now insert imports cell at the right position (after header/visualization, before everything else)
+        imports_position = 2  # After header (0) and visualization (1)
+        self._create_imports_cell(imports_position)
+
+        # Add data loading cell after imports (if both parameters are provided)
+        if data_path and loading_function:
+            data_loading_position = imports_position + 1  # Right after imports
+            self.nb.cells.insert(data_loading_position, new_code_cell(f"""# Load input data
+input_data = {loading_function}('{data_path}')"""))
         
         # Save the notebook
         with open(filepath, 'w') as f:
