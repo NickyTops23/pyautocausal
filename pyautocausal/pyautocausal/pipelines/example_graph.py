@@ -77,7 +77,6 @@ def simple_graph(output_path: Path):
                     action_function=write_statsmodels_summary.transform({'ols_did': 'res'}),
                     output_config=OutputConfig(output_filename='save_ols_did', output_type=OutputType.TEXT),
                     save_node=True,
-                    display_function = write_statsmodels_summary_notebook,
                     predecessors=["ols_did"])
     
     # If False, use synthetic control
@@ -139,3 +138,11 @@ if __name__ == "__main__":
     exporter = NotebookExporter(graph)
     exporter.export_notebook(path / "simple_graph.ipynb")
     print("Notebook exported")
+
+    # Test running the notebook and creating HTML
+    html_path = exporter.export_and_run_to_html(
+        notebook_filepath=path / "simple_graph_runnable.ipynb",
+        data_path="simple_graph_data.csv",
+        loading_function="pd.read_csv"
+    )
+    print(f"Successfully created executed HTML report: {html_path}")
