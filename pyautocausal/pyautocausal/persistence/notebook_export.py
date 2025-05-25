@@ -445,11 +445,7 @@ input_data = {loading_function}('{data_path}')"""
             self.nb.cells.insert(data_loading_position, new_code_cell(data_loading_code))
         
         # Save the notebook
-<<<<<<< HEAD
         with open(filepath, 'w', encoding='utf-8') as f:
-            nbformat.write(self.nb, f) 
-=======
-        with open(filepath, 'w') as f:
             nbformat.write(self.nb, f)
     
     def export_and_run_to_html(
@@ -546,4 +542,3 @@ input_data = {loading_function}('{data_path}')"""
             kernel_name=kernel_name,
             working_directory=notebook_filepath.parent
         ) 
->>>>>>> ytchokni/notebook-export
