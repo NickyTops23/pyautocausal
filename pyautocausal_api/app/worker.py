@@ -1,4 +1,3 @@
-from celery.utils.log import get_task_logger
 import pandas as pd
 from pathlib import Path
 import shutil
@@ -16,8 +15,11 @@ import s3fs
 from pyautocausal.pipelines.example_graph import simple_graph
 from pyautocausal.persistence.notebook_export import NotebookExporter
 
-# Set up enhanced logging
-logger = get_task_logger(__name__)
+# Add standard Python logging
+import logging
+
+# Replace Celery logger with standard Python logger
+logger = logging.getLogger(__name__)
 
 # Configuration from Environment Variables
 S3_OUTPUT_DIR = os.getenv("S3_BUCKET_OUTPUT")
@@ -93,7 +95,7 @@ def run_graph_job(job_id: str, input_s3_uri: str, task_store: dict) -> None:
         logger.error(f"[{job_id}] Error in run_graph_job: {e}", exc_info=True)
         task_store[job_id]["status"] = Status.FAILED
         task_store[job_id]["error"] = str(e)
-        raise # Re-raise the error to be handled by Celery
+        raise  # Re-raise the error to be handled by FastAPI
     
 def _run_graph_job(job_id: str, input_s3_uri: str):
     """
