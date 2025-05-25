@@ -20,6 +20,9 @@ linearmodels = "^6.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.2"
+jupyter = "^1.1.1"
+nbconvert = "^7.16.6"
+nbclient = "^0.10.2"
 
 [build-system]
 requires = ["poetry-core"]
