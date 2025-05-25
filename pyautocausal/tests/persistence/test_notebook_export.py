@@ -397,7 +397,7 @@ def test_data_loading_csv(sample_graph, test_data_files, tmp_path):
     assert "import pandas as pd" in source_text
     
     # Check that input nodes use loaded data
-    assert "input_data['data']" in source_text
+    assert "data_output = input_data" in source_text
 
 
 def test_data_loading_pickle(sample_graph, test_data_files, tmp_path):
