@@ -75,6 +75,21 @@ class SynthDIDSpec(BaseSpec):
     X: Optional[np.ndarray] = None  # Covariates matrix (N x T x C)
     model: Optional[Any] = None
 
+@dataclass
+class SynthDIDSpec(BaseSpec):
+    """Synthetic Difference-in-Differences specification."""
+    outcome_col: str
+    treatment_cols: List[str]
+    control_cols: List[str]
+    time_col: str
+    unit_col: str
+    Y: np.ndarray  # Outcome matrix (N x T)
+    N0: int  # Number of control units
+    T0: int  # Number of pre-treatment periods
+    X: Optional[np.ndarray] = None  # Covariates matrix (N x T x C)
+    model: Optional[Any] = None
+
+
 def validate_and_prepare_data(
     data: pd.DataFrame,
     outcome_col: str,

@@ -24,6 +24,7 @@ optional = true
 
 [tool.poetry.group.io.dependencies]
 cloudpickle = "^3.0.0"
+ipykernel = "^6.29.5"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.2"

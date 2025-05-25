@@ -57,3 +57,7 @@ def write_sklearn_summary(res: BaseEstimator) -> str:
 
 def write_statsmodels_summary_notebook(output: Any) -> None:
     print(output)
+
+def display_cs_results_notebook(output: Any) -> None:
+    """Display Callaway & Sant'Anna results in a notebook."""
+    print(output)
