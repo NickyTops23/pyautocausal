@@ -1,5 +1,4 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Path as FastAPIPath, Request, BackgroundTasks
-from celery.result import AsyncResult
 from pydantic import BaseModel, Field
 import uuid
 from pathlib import Path
@@ -16,6 +15,7 @@ from enum import Enum
 # This assumes main.py and worker.py are in the same 'app' directory.
 from .worker import run_graph_job
 from .utils.file_io import s3_client
+from fastapi.middleware.cors import CORSMiddleware
 
 # Import our file utilities
 from .utils.file_io import (
@@ -43,6 +43,19 @@ app = FastAPI(
     title="PyAutoCausal Jobs API",
     description="API for submitting and monitoring PyAutoCausal graph processing jobs.",
     version="0.1.0"
+)
+
+# Add CORS middleware to allow requests from the front-end running on localhost:9000 (and other origins during development)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:9000",  # local dev server for the UI
+        "http://127.0.0.1:9000",  # alternative localhost notation
+        "*"  # TODO: tighten this list in production
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 job_status_store = {}
