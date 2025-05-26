@@ -1,4 +1,4 @@
-pyautocausal.com {
+api.pyautocausal.com {
     encode gzip
 
     # Forward all requests to FastAPI service inside the compose network
