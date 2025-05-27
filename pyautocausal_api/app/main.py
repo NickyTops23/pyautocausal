@@ -16,6 +16,7 @@ from enum import Enum
 from .worker import run_graph_job
 from .utils.file_io import s3_client
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # Import our file utilities
 from .utils.file_io import (
@@ -56,6 +57,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_hosts="*"
 )
 
 job_status_store = {}
