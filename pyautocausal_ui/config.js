@@ -4,6 +4,7 @@
 
 window.PYAUTOCAUSAL_UI_CONFIG = {
   // Base URL where the FastAPI backend is running
+
   apiBaseUrl: "https://api.pyautocausal.com",  // Updated to point to remote FastAPI instance on port 8000
 
   // AWS / S3 configuration

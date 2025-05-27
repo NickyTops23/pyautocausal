@@ -64,7 +64,7 @@ def test_basic_decision_node_true_path():
     assert graph.get("decision").is_completed()
     assert graph.get("true_path").is_completed()
     assert graph.get("true_path").output.result_dict == {'true_path': 15}  # 5 + 10
-    assert graph.get("false_path").state == NodeState.PENDING  # Should not execute
+    assert graph.get("false_path").state == NodeState.PASSED  # Should be marked as PASSED now
 
 def test_basic_decision_node_false_path():
     """
@@ -99,7 +99,7 @@ def test_basic_decision_node_false_path():
     assert graph.get("decision").is_completed() 
     assert graph.get("false_path").is_completed()
     assert graph.get("false_path").output.result_dict == {'false_path': -15}  # -5 - 10
-    assert graph.get("true_path").state == NodeState.PENDING  # Should not execute
+    assert graph.get("true_path").state == NodeState.PASSED  # Should be marked as PASSED now
 
 def test_multi_branch_execution():
     """
@@ -139,8 +139,8 @@ def test_multi_branch_execution():
     assert graph.get("true_path1").output.result_dict == {'true_path1': 15}  # 5 + 10
     assert graph.get("true_path2").is_completed()
     assert graph.get("true_path2").output.result_dict == {'true_path2': 10}  # 5 * 2
-    assert graph.get("false_path1").state == NodeState.PENDING
-    assert graph.get("false_path2").state == NodeState.PENDING
+    assert graph.get("false_path1").state == NodeState.PASSED
+    assert graph.get("false_path2").state == NodeState.PASSED
 
 def test_decision_node_passthrough():
     """
@@ -248,10 +248,10 @@ def test_chained_decisions():
     assert graph.get("source").is_completed()
     assert graph.get("decision1").is_completed()
     assert graph.get("decision2").is_completed()
-    assert graph.get("negative").state == NodeState.PENDING
+    assert graph.get("negative").state == NodeState.PASSED
     assert graph.get("small_positive").is_completed()
     assert graph.get("small_positive").output.result_dict == {'small_positive': 'small positive'}
-    assert graph.get("large_positive").state == NodeState.PENDING
+    assert graph.get("large_positive").state == NodeState.PASSED
 
 def test_complex_decision_with_input_nodes():
     """
@@ -283,7 +283,7 @@ def test_complex_decision_with_input_nodes():
     graph.fit(number=20)
     assert graph.get("positive_branch").is_completed()
     assert graph.get("positive_branch").output.result_dict == {'positive_branch': 30}
-    assert graph.get("negative_branch").state == NodeState.PENDING
+    assert graph.get("negative_branch").state == NodeState.PASSED
     
 
 
@@ -316,6 +316,6 @@ def test_complex_decision_with_input_nodes_negative():
     # Test with positive input
     graph.fit(number=-20)
     assert graph.get("negative_branch").is_completed()
-    assert graph.get("positive_branch").state == NodeState.PENDING
+    assert graph.get("positive_branch").state == NodeState.PASSED
     assert graph.get("negative_branch").output.result_dict == {'negative_branch': -30}
     

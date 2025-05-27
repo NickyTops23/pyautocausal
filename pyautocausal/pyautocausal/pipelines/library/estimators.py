@@ -12,7 +12,7 @@ from statsmodels.base.model import Results
 
 
 from pyautocausal.persistence.parameter_mapper import make_transformable
-from .specifications import (
+from pyautocausal.pipelines.library.specifications import (
     BaseSpec,
     DiDSpec,
     EventStudySpec,
