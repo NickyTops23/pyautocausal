@@ -333,7 +333,7 @@ def fit_panel_ols(spec: BaseSpec) -> BaseSpec:
     cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
     
     # Fit model using from_formula with special effects variables
-    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True, check_rank=False)
     
     result = model.fit(**cluster_config)
     
@@ -393,13 +393,13 @@ def fit_did_panel(spec: BaseSpec) -> BaseSpec:
     cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
     
     # Fit model with entity and time effects (standard DiD setup)
-    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True, check_rank=False)
     
     result = model.fit(**cluster_config)
     
     # Set the model field
     spec.model = result
-    
+
     # Print the model summary
     print(result.summary)
 

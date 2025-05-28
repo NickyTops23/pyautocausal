@@ -72,12 +72,47 @@ def generate_mock_data(
     data = []
     
     # Determine treatment timing (only matters for panel data with n_periods > 1)
-    if staggered_treatment and n_pre_periods > 0 and n_periods > 1:
-        # Staggered treatment: units start treatment at different times
-        treatment_starts = np.random.randint(
-            n_pre_periods, n_pre_periods + max(1, n_post_periods - 1), 
-            size=n_treated
-        )
+    if staggered_treatment and n_periods > 1:
+        # Create proper staggered treatment with guaranteed different cohorts
+        if n_pre_periods == 0:
+            # If not specified, use reasonable defaults for staggered treatment
+            n_pre_periods = max(1, n_periods // 3)  # At least 1 pre-period
+            n_post_periods = n_periods - n_pre_periods
+        
+        # Create distinct treatment cohorts
+        # Ensure we have at least 2 different treatment start times for staggered effect
+        available_treatment_times = list(range(n_pre_periods, n_periods))
+        
+        if len(available_treatment_times) < 2:
+            # Not enough periods for proper staggered treatment, fall back to single timing
+            treatment_starts = np.full(n_treated, n_pre_periods)
+        else:
+            # Create cohorts with different treatment start times
+            cohort_size = max(1, n_treated // len(available_treatment_times))
+            treatment_starts = []
+            
+            for i, start_time in enumerate(available_treatment_times):
+                # Assign units to this cohort
+                start_idx = i * cohort_size
+                end_idx = min((i + 1) * cohort_size, n_treated)
+                
+                # Add some units to this cohort
+                cohort_units = end_idx - start_idx
+                treatment_starts.extend([start_time] * cohort_units)
+            
+            # If we have remaining units, assign them to the last cohort
+            while len(treatment_starts) < n_treated:
+                treatment_starts.append(available_treatment_times[-1])
+            
+            # Convert to numpy array and shuffle to avoid systematic assignment
+            treatment_starts = np.array(treatment_starts[:n_treated])
+            np.random.shuffle(treatment_starts)
+            
+        # Always include some never-treated units if we have enough total units
+        # This is important for the Callaway & Sant'Anna estimator
+        never_treated_ratio = 0.2  # 20% never treated
+        n_never_treated = min(n_units - n_treated, int(n_units * never_treated_ratio))
+        
     else:
         # All treated units start treatment at the same time
         treatment_starts = np.full(n_treated, n_pre_periods if n_periods > 1 else 0)
@@ -114,7 +149,8 @@ def generate_mock_data(
         # Get treatment start time for this unit
         if is_treated:
             if staggered_treatment and n_periods > 1:
-                treatment_start = treatment_starts[min(i, len(treatment_starts)-1)]
+                # Use the correct index for treatment starts
+                treatment_start = treatment_starts[i] if i < len(treatment_starts) else treatment_starts[0]
             else:
                 treatment_start = n_pre_periods if n_periods > 1 else 0
         else:
