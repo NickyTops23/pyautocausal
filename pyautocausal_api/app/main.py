@@ -16,6 +16,7 @@ from enum import Enum
 from .worker import run_graph_job
 from .utils.file_io import s3_client
 from fastapi.middleware.cors import CORSMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # Import our file utilities
 from .utils.file_io import (
@@ -51,11 +52,18 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:9000",  # local dev server for the UI
         "http://127.0.0.1:9000",  # alternative localhost notation
-        "*"  # TODO: tighten this list in production
+        "https://www.pyautocausal.com",  # production UI
+        "https://pyautocausal.com",      # bare domain if used
+        "https://api.pyautocausal.com"    # API domain for SSR or direct requests
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_hosts="*"
 )
 
 job_status_store = {}

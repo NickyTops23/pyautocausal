@@ -55,3 +55,7 @@ htmlcov/
 # OS specific
 .DS_Store
 Thumbs.db 
+
+# VScode settings
+.vscode/
+
