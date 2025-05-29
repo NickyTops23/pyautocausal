@@ -5,7 +5,7 @@ from typing import Optional, Any, Dict, List, Union, Tuple
 from dataclasses import dataclass, field
 from pyautocausal.persistence.output_config import OutputType, OutputConfig
 from pyautocausal.persistence.parameter_mapper import make_transformable
-from .output import write_statsmodels_summary
+from pyautocausal.pipelines.library.output import write_statsmodels_summary
 from sklearn.linear_model import LogisticRegression, Lasso
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
@@ -39,6 +39,8 @@ class DiDSpec(BaseSpec):
     post_col: str
     include_unit_fe: bool
     include_time_fe: bool
+    model: Optional[Any] = None
+
 @dataclass
 class EventStudySpec(BaseSpec):
     """Event Study specification."""
@@ -50,6 +52,7 @@ class EventStudySpec(BaseSpec):
     relative_time_col: str
     event_cols: List[str]
     reference_period: int
+    model: Optional[Any] = None
 
 
 @dataclass
@@ -65,6 +68,22 @@ class StaggeredDiDSpec(BaseSpec):
     cohort_cols: List[str]
     post_cols: List[str]
     interaction_cols: List[str]
+    model: Optional[Any] = None
+
+
+@dataclass
+class SynthDIDSpec(BaseSpec):
+    """Synthetic Difference-in-Differences specification."""
+    outcome_col: str
+    treatment_cols: List[str]
+    control_cols: List[str]
+    time_col: str
+    unit_col: str
+    Y: np.ndarray  # Outcome matrix (N x T)
+    N0: int  # Number of control units
+    T0: int  # Number of pre-treatment periods
+    X: Optional[np.ndarray] = None  # Covariates matrix (N x T x C)
+    model: Optional[Any] = None
 
 
 def validate_and_prepare_data(
@@ -268,25 +287,26 @@ def create_did_specification(
     )
 
 
+@make_transformable
 def create_event_study_specification(
     data: pd.DataFrame, 
-    control_cols: List[str],
-    pre_periods,
-    post_periods,
     outcome_col: str = 'y', 
-    treatment_col: str = 'treat',
+    treatment_cols: List[str] = ['treat'],
     time_col: str = 't',
     unit_col: str = 'id_unit',
     treatment_time_col: Optional[str] = None,
     relative_time_col: Optional[str] = None,
-) -> EventStudySpec:  # Eventually returns EventStudySpec
+    pre_periods: int = 3,
+    post_periods: int = 3,
+    control_cols: Optional[List[str]] = None
+) -> EventStudySpec:
     """
     Create an Event Study specification.
     
     Args:
-        df: DataFrame with outcome, treatment, time, and unit identifiers
+        data: DataFrame with outcome, treatment, time, and unit identifiers
         outcome_col: Name of outcome column
-        treatment_col: Name of treatment column
+        treatment_cols: List of treatment column names
         time_col: Name of time column
         unit_col: Name of unit identifier column
         treatment_time_col: Name of treatment timing column
@@ -296,15 +316,26 @@ def create_event_study_specification(
         control_cols: List of control variable columns
         
     Returns:
-        Dictionary with Event Study specification information
+        EventStudySpec object with event study specification information
     """
+    # Use first treatment column for now (may extend to multiple in future)
+    treatment_col = treatment_cols[0]
+    
     # Validate and prepare data
+    # Ensure 'post' is excluded if it exists to avoid issues with event dummies + time FEs
+    current_excluded_cols = [time_col, unit_col]
+    if 'post' in data.columns:
+        current_excluded_cols.append('post')
+
     data, control_cols = validate_and_prepare_data(
         data=data,
         outcome_col=outcome_col,
-        treatment_col=treatment_col,
-        control_cols=control_cols
+        treatment_cols=treatment_cols,
+        required_columns=[time_col, unit_col],
+        control_cols=control_cols, # Pass user-provided or None
+        excluded_cols=current_excluded_cols
     )
+    
     # Create relative time column if not provided
     if relative_time_col is None:
         # If treatment_time_col is provided, use it to create relative time
@@ -328,68 +359,77 @@ def create_event_study_specification(
         min_period = -pre_periods if pre_periods > 0 else None
         max_period = post_periods if post_periods > 0 else None
         
+        # Keep rows that either match the filter or have NaN in relative_time_col
         if min_period is not None and max_period is not None:
-            data = data[(data[relative_time_col] >= min_period) & (data[relative_time_col] <= max_period)]
+            data = data[(data[relative_time_col].isna()) | 
+                       ((data[relative_time_col] >= min_period) & (data[relative_time_col] <= max_period))]
         elif min_period is not None:
-            data = data[data[relative_time_col] >= min_period]
+            data = data[(data[relative_time_col].isna()) | (data[relative_time_col] >= min_period)]
         elif max_period is not None:
-            data = data[data[relative_time_col] <= max_period]
-    
-    # If control_cols not specified, use all numeric columns except required ones
-    if control_cols is None:
-        numeric_cols = data.select_dtypes(include=[np.number]).columns
-        control_cols = [col for col in numeric_cols if col not in [
-            outcome_col, treatment_col, time_col, unit_col, relative_time_col
-        ]]
+            data = data[(data[relative_time_col].isna()) | (data[relative_time_col] <= max_period)]
     
     # Create event time dummies
-    data = pd.get_dummies(data, columns=[relative_time_col], prefix='event')
-    event_cols = [col for col in data.columns if col.startswith('event_')]
+    # Need to create event time columns with statsmodels-friendly names (no negative signs)
+    event_periods = sorted(data[relative_time_col].dropna().unique())
+    event_cols = []
+    
+    # Create a mapping from periods to column names
+    period_to_col = {}
+    
+    for period in event_periods:
+        # Create columns with a format that statsmodels can handle
+        if period < 0:
+            col_name = f"event_m{abs(int(period))}"  # m for minus (e.g., event_m1 for -1)
+        else:
+            col_name = f"event_p{int(period)}"  # p for plus (e.g., event_p1 for +1)
+        
+        # Create indicator variable
+        data[col_name] = (data[relative_time_col] == period).astype(int)
+        event_cols.append(col_name)
+        period_to_col[period] = col_name
     
     # Omit reference period (usually -1) for identification
-    omit_period = -1
-    omit_col = f'event_{omit_period}'
-    if omit_col in event_cols:
-        event_cols.remove(omit_col)
+    reference_period = -1
+    reference_col = period_to_col.get(reference_period)
+    if reference_col in event_cols:
+        event_cols.remove(reference_col)
     
     # Construct formula
     formula_parts = [outcome_col, "~"]
-    formula_parts.extend(event_cols)
+    formula_parts.append(" + ".join(event_cols))
     formula_parts.append("+ C(" + unit_col + ")")
+    formula_parts.append("+ C(" + time_col + ")")
     
     if control_cols:
-        formula_parts.extend(["+ " + " + ".join(control_cols)])
+        formula_parts.append("+ " + " + ".join(control_cols))
     
-    formula = " + ".join(formula_parts)
+    formula = " ".join(formula_parts)
     
-    # Create specification
-    spec = EventStudySpec(
-        type="event_study",
+    # Create and return the EventStudySpec object
+    return EventStudySpec(
         outcome_col=outcome_col,
-        treatment_col=treatment_col,
+        treatment_cols=treatment_cols,
+        control_cols=control_cols,
         time_col=time_col,
         unit_col=unit_col,
         relative_time_col=relative_time_col,
         event_cols=event_cols,
-        control_cols=control_cols,
-        reference_period=omit_period,
+        reference_period=reference_period,
         data=data,
         formula=formula
     )
-    
-    # For now, return a dictionary for backward compatibility
-    # Eventually should directly return EventStudySpec
-    return {'data': data, 'specification': spec}
 
 
+@make_transformable
 def create_staggered_did_specification(
     data: pd.DataFrame, 
-    control_cols: List[str],
     outcome_col: str = 'y', 
-    treatment_col: str = 'treat',
+    treatment_cols: List[str] = ['treat'],
     time_col: str = 't',
     unit_col: str = 'id_unit',
     treatment_time_col: Optional[str] = None,
+    control_cols: Optional[List[str]] = None,
+    pre_periods: int = 4  
 ) -> StaggeredDiDSpec:
     """
     Create a Staggered DiD specification.
@@ -397,26 +437,29 @@ def create_staggered_did_specification(
     Follows the cohort-based approach for staggered treatment adoption.
     
     Args:
-        df: DataFrame with outcome, treatment, time, and unit identifiers
+        data: DataFrame with outcome, treatment, time, and unit identifiers
         outcome_col: Name of outcome column
-        treatment_col: Name of treatment column
+        treatment_cols: List of treatment column names
         time_col: Name of time column
         unit_col: Name of unit identifier column
         treatment_time_col: Name of treatment timing column
         control_cols: List of control variable columns
+        pre_periods: Number of pre-treatment periods to include for testing parallel trends
         
     Returns:
         StaggeredDiDSpec object with specification information
     """
+    # Use first treatment column for now (may extend to multiple in future)
+    treatment_col = treatment_cols[0]
     
-    treatment_cols = [col for col in data.columns if col.startswith(treatment_col)]
-
     # Validate and prepare data
     data, control_cols = validate_and_prepare_data(
         data=data,
         outcome_col=outcome_col,
         treatment_cols=treatment_cols,
-        control_cols=control_cols
+        required_columns=[time_col, unit_col],
+        control_cols=control_cols,
+        excluded_cols=[time_col, unit_col]
     )
     
     # Determine treatment cohorts
@@ -427,47 +470,64 @@ def create_staggered_did_specification(
         treatment_time_col = 'treatment_time'
     
     # Identify cohorts based on treatment timing
-    cohorts = data[treatment_time_col].unique()
-    cohorts = sorted(cohorts)
+    cohorts = sorted(data[treatment_time_col].dropna().unique())
+    if len(cohorts) == 0:
+        raise ValueError("No treatment cohorts identified. Ensure treated units have valid treatment times.")
     
     # Create cohort indicators
     for cohort in cohorts:
-        cohort_col = f'cohort_{cohort}'
+        cohort_col = f'cohort_{int(cohort)}'
         data[cohort_col] = (data[treatment_time_col] == cohort).astype(int)
     
-    cohort_cols = [f'cohort_{cohort}' for cohort in cohorts]
+    cohort_cols = [f'cohort_{int(cohort)}' for cohort in cohorts]
     
-    # Create post-treatment indicators for each cohort
+    # Get minimum cohort period for normalization
+    min_cohort = min(int(cohort) for cohort in cohorts)
+    
+    # Create relative time variable
+    data['relative_time'] = data[time_col] - data[treatment_time_col]
+    
+    # Create pre-treatment and post-treatment indicators by event time
+    pre_period_cols = []
+    post_cols = []
+    
+    # Add post indicator for each cohort
     for cohort in cohorts:
-        post_col = f'post_{cohort}'
+        post_col = f'post_{int(cohort)}'
         data[post_col] = (data[time_col] >= cohort).astype(int)
+        post_cols.append(post_col)
     
-    post_cols = [f'post_{cohort}' for cohort in cohorts]
-    
-    # Create cohort-specific treatment effects
+    # Create event time dummies for pre-periods
     interaction_cols = []
+    
+    # Pre-treatment periods
+    for period in range(1, pre_periods + 1):
+        # Negative period (pre-treatment)
+        event_col = f'event_m{period}'
+        
+        # Instead of looking for treated==1 in pre-periods (which is impossible),
+        # identify units that will eventually be treated and are in the pre-period
+        # "Eventually treated" means treatment_time_col is not NaN
+        data[event_col] = ((data['relative_time'] == -period) & 
+                          data[treatment_time_col].notna()).astype(int)
+        
+        pre_period_cols.append(event_col)
+        interaction_cols.append(event_col)
+    
+    # Add post-treatment effects (one per cohort)
     for cohort in cohorts:
-        interaction_col = f'effect_{cohort}'
-        data[interaction_col] = data[f'cohort_{cohort}'] * data[f'post_{cohort}']
+        interaction_col = f'effect_{int(cohort)}'
+        data[interaction_col] = data[f'cohort_{int(cohort)}'] * data[f'post_{int(cohort)}']
         interaction_cols.append(interaction_col)
     
-    # If control_cols not specified, use all numeric columns except generated ones
-    if control_cols is None:
-        numeric_cols = data.select_dtypes(include=[np.number]).columns
-        excluded_cols = [outcome_col, treatment_col, time_col, unit_col, treatment_time_col] + cohort_cols + post_cols + interaction_cols
-        control_cols = [col for col in numeric_cols if col not in excluded_cols]
-    
     # Construct formula
-    formula_parts = [outcome_col, "~", " + ".join(interaction_cols)]
+    formula = f"{outcome_col} ~ {' + '.join(interaction_cols)}"
     
     # Add unit and time fixed effects
-    formula_parts.append("+ C(" + unit_col + ")")
-    formula_parts.append("+ C(" + time_col + ")")
+    formula += f" + C({unit_col}) + C({time_col})"
     
     if control_cols:
-        formula_parts.extend(["+ " + " + ".join(control_cols)])
-    
-    formula = " + ".join(formula_parts)
+        formula += f" + {' + '.join(control_cols)}"
     
     # Create and return specification
     return StaggeredDiDSpec(
@@ -476,13 +536,112 @@ def create_staggered_did_specification(
         time_col=time_col,
         unit_col=unit_col,
         treatment_time_col=treatment_time_col,
-        cohorts=cohorts,
+        cohorts=list(cohorts),  # Convert numpy array to list if needed
         cohort_cols=cohort_cols,
         post_cols=post_cols,
         interaction_cols=interaction_cols,
         control_cols=control_cols,
         data=data,
         formula=formula
+    )
+
+
+@make_transformable
+def create_synthdid_specification(
+    data: pd.DataFrame, 
+    outcome_col: str = 'y', 
+    treatment_cols: List[str] = ['treat'],
+    time_col: str = 't',
+    unit_col: str = 'id_unit',
+    control_cols: Optional[List[str]] = None
+) -> SynthDIDSpec:
+    """
+    Create a Synthetic Difference-in-Differences specification.
+    
+    Args:
+        data: DataFrame with outcome, treatment, time, and unit identifiers
+        outcome_col: Name of outcome column
+        treatment_cols: List of treatment column names (only first is used)
+        time_col: Name of time column
+        unit_col: Name of unit identifier column
+        control_cols: List of control variable columns
+        
+    Returns:
+        SynthDIDSpec object with synthetic DiD specification information
+    """
+    from pyautocausal.pipelines.library.synthdid_py.utils import panel_matrices
+    
+    # Use first treatment column for now
+    treatment_col = treatment_cols[0]
+    
+    # Validate and prepare data
+    data, control_cols = validate_and_prepare_data(
+        data=data,
+        outcome_col=outcome_col,
+        treatment_cols=treatment_cols,
+        required_columns=[time_col, unit_col],
+        control_cols=control_cols,
+        excluded_cols=[time_col, unit_col]
+    )
+    
+    # Check that we have exactly one treated unit
+    treated_units = data[data[treatment_col] == 1][unit_col].unique()
+    if len(treated_units) == 0:
+        raise ValueError("No treated units found in data")
+    if len(treated_units) > 1:
+        raise ValueError("Synthetic DiD requires exactly one treated unit")
+    
+    # Convert to panel format expected by synthdid
+    try:
+        panel_result = panel_matrices(
+            data, 
+            unit=unit_col, 
+            time=time_col, 
+            outcome=outcome_col, 
+            treatment=treatment_col
+        )
+        
+        Y = panel_result['Y']
+        N0 = panel_result['N0']
+        T0 = panel_result['T0']
+        
+        # Handle covariates if provided
+        X = None
+        if control_cols:
+            # Create 3D covariate matrix
+            n_units, n_times = Y.shape
+            X = np.zeros((n_units, n_times, len(control_cols)))
+            
+            for k, cov_col in enumerate(control_cols):
+                # Reshape covariate data to matrix form
+                cov_matrix = data.pivot_table(
+                    index=unit_col, 
+                    columns=time_col, 
+                    values=cov_col, 
+                    fill_value=0
+                ).values
+                X[:, :, k] = cov_matrix
+        
+    except Exception as e:
+        raise ValueError(f"Error converting data to panel format: {str(e)}")
+    
+    # Create a simple formula for compatibility
+    formula = f"{outcome_col} ~ {treatment_col}"
+    if control_cols:
+        formula += " + " + " + ".join(control_cols)
+    
+    return SynthDIDSpec(
+        data=data,
+        formula=formula,
+        outcome_col=outcome_col,
+        treatment_cols=treatment_cols,
+        control_cols=control_cols,
+        time_col=time_col,
+        unit_col=unit_col,
+        Y=Y,
+        N0=N0,
+        T0=T0,
+        X=X
     )
 
 
