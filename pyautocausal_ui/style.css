@@ -56,4 +56,22 @@ button:disabled {
   margin-top: 15px;
   min-height: 24px;
   font-size: 0.9rem;
+}
+
+.pipeline-section {
+  margin-bottom: 20px;
+}
+
+.mapping-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+}
+
+.mapping-table td {
+  padding: 4px 6px;
+}
+
+.mapping-row.required select:invalid {
+  border: 1px solid #dc3545; /* red */
 } 
