@@ -9,10 +9,11 @@ import json
 from datetime import datetime
 from .utils.file_io import Status, parse_s3_uri, join_paths
 import s3fs
+from .utils.pipeline_registry import load_deployed_pipelines
 
 # --- pyautocausal Import ---
 # This should work if pyautocausal is installed via poetry from the local path
-from pyautocausal.pipelines.example_graph import simple_graph
+# from pyautocausal.pipelines.example_graph import simple_graph
 from pyautocausal.persistence.notebook_export import NotebookExporter
 
 # Add standard Python logging
@@ -76,7 +77,7 @@ def _get_file_size(file_path: Path) -> int:
         logger.error(f"Error getting file size for {file_path}: {e}")
         return 0 # Or raise
 
-def run_graph_job(job_id: str, input_s3_uri: str, task_store: dict) -> None:
+def run_graph_job(job_id: str, input_s3_uri: str, pipeline_name: str, column_mapping: dict, task_store: dict) -> None:
     """
     FastAPI background task to download data from S3, run simple_graph, and upload outputs to S3.
     This is a wrapper around the _run_graph_job function that updates the task store with the status and result.
@@ -86,7 +87,7 @@ def run_graph_job(job_id: str, input_s3_uri: str, task_store: dict) -> None:
 
     # Run the graph job
     try:
-        output_s3_uri = _run_graph_job(job_id, input_s3_uri)
+        output_s3_uri = _run_graph_job(job_id, input_s3_uri, pipeline_name, column_mapping)
         task_store[job_id]["status"] = Status.SUCCESS
         task_store[job_id]["result"] = output_s3_uri
         return
@@ -97,15 +98,22 @@ def run_graph_job(job_id: str, input_s3_uri: str, task_store: dict) -> None:
         task_store[job_id]["error"] = str(e)
         raise  # Re-raise the error to be handled by FastAPI
     
-def _run_graph_job(job_id: str, input_s3_uri: str):
+def _run_graph_job(job_id: str, input_s3_uri: str, pipeline_name: str, column_mapping: dict):
     """
     FastAPI background task to download data from S3, run simple_graph, and upload outputs to S3.
     """
     task_start_time = time.time()
-    logger.info(f"[{job_id}] FastAPI background task 'run_graph_job' started for input: {input_s3_uri}")
+    logger.info(f"[{job_id}] FastAPI background task 'run_graph_job' started for input: {input_s3_uri}, pipeline: {pipeline_name}")
     
+    # Load pipeline registry and obtain graph_uri & column requirements
+    pipelines_dict = load_deployed_pipelines()
+    if pipeline_name not in pipelines_dict:
+        raise ValueError(f"Unknown pipeline_name '{pipeline_name}'")
+    pipeline_meta = pipelines_dict[pipeline_name]
+    graph_uri = pipeline_meta.get("graph_uri")
+    if not graph_uri:
+        raise ValueError(f"graph_uri missing for pipeline '{pipeline_name}' in registry")
 
-    
     # Configuration validation
     if not S3_OUTPUT_DIR:
         logger.error(f"[{job_id}] S3_OUTPUT_BUCKET environment variable is not set. Cannot proceed.")
@@ -134,6 +142,22 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
         setup_start = time.time()
         os.makedirs(local_output_job_path, exist_ok=True)
 
+        # 0. Download and load the ExecutableGraph
+        local_graph_path = local_output_job_path / "pipeline.pkl"
+        try:
+            logger.info(f"[{job_id}] Downloading pipeline graph from {graph_uri} → {local_graph_path}")
+            s3.get(graph_uri, str(local_graph_path))  # s3fs get
+        except Exception as e:
+            logger.error(f"[{job_id}] Failed to download graph: {e}")
+            raise
+
+        try:
+            from pyautocausal.orchestration.graph import ExecutableGraph
+            graph: ExecutableGraph = ExecutableGraph.load(local_graph_path)
+        except Exception as e:
+            logger.error(f"[{job_id}] Failed to load ExecutableGraph: {e}")
+            raise
+
         # 1. Download data from S3 and load it
         logger.info(f"[{job_id}] Downloading and loading data from {input_s3_uri}.")
         if input_s3_uri.endswith(".csv"):
@@ -141,34 +165,33 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
         else:
             raise ValueError(f"Input file must be a CSV file: {input_s3_uri}")
 
-        # 3. Initialize and run the graph (outputs to local_output_job_path)
-        logger.info(f"[{job_id}] Initializing and fitting the causal graph.")
+        # 2. Apply column mapping (rename)
+        if column_mapping:
+            data = data.rename(columns=column_mapping)
 
-        try:
-            graph_start = time.time()
-            
-            # Create graph with progress reporting
-            graph = simple_graph(output_path=local_output_job_path)
-            
-            # Log graph initialization
-            logger.debug(f"[{job_id}] Graph initialized with output path: {local_output_job_path}")
-            
-            # Fit the graph
-            graph.fit(df=data)
-            
-            graph_duration = (time.time() - graph_start) * 1000  # ms
-            
-            log_worker_event(
-                event_type="graph_fitting_complete",
-                job_id=job_id,
-                duration_ms=graph_duration,
-                nodes_count=len(graph.nodes) if hasattr(graph, 'nodes') else None
-            )
-            
-            logger.info(f"[{job_id}] Graph fitting complete in {graph_duration:.2f}ms")
-        except Exception as e:
-            logger.error(f"[{job_id}] Error during graph fitting: {e}", exc_info=True)
-            raise ValueError(f"Error during causal graph fitting: {e}")
+        # Validate required columns in renamed df
+        required_cols = set(pipeline_meta["required_columns"])
+        if missing := required_cols - set(data.columns):
+            raise ValueError(f"CSV missing required columns after mapping: {missing}")
+
+        # 3. Configure runtime and fit graph
+        logger.info(f"[{job_id}] Configuring runtime and fitting pipeline graph.")
+        graph.configure_runtime(output_path=local_output_job_path)
+
+        # Fit the loaded pipeline
+        graph_start = time.time()
+        graph.fit(df=data)
+        
+        graph_duration = (time.time() - graph_start) * 1000  # ms
+        
+        log_worker_event(
+            event_type="graph_fitting_complete",
+            job_id=job_id,
+            duration_ms=graph_duration,
+            nodes_count=len(graph.nodes) if hasattr(graph, 'nodes') else None
+        )
+        
+        logger.info(f"[{job_id}] Graph fitting complete in {graph_duration:.2f}ms")
 
         # 4. Export Notebook locally
         logger.info(f"[{job_id}] Exporting graph to Jupyter Notebook locally.")
@@ -267,8 +290,6 @@ def _run_graph_job(job_id: str, input_s3_uri: str):
         else:
             logger.info(f"[{job_id}] Successfully uploaded {uploaded_files_count} result files ({total_uploaded_bytes} bytes) to {s3_uri} in {upload_duration:.2f}ms")
 
-
-                    
         # Record total job time
         total_job_duration = (time.time() - task_start_time) * 1000  # ms
             

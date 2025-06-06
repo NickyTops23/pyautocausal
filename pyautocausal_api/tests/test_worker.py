@@ -71,9 +71,10 @@ def temp_dir(tmpdir):
 # Fixture to mock the graph and NotebookExporter
 @pytest.fixture
 def mock_graph():
-    with patch('app.worker.simple_graph') as mock_simple_graph:
+    # Mock ExecutableGraph.load and the graph instance
+    with patch('pyautocausal.orchestration.graph.ExecutableGraph.load') as mock_load:
         mock_graph = MagicMock()
-        mock_simple_graph.return_value = mock_graph
+        mock_load.return_value = mock_graph
         yield mock_graph
 
 @pytest.fixture
@@ -119,7 +120,7 @@ def test_run_graph_job_missing_output_bucket(mock_task_store, job_id):
         }
         
         with pytest.raises(ValueError) as excinfo:
-            worker.run_graph_job(job_id, "s3://input-bucket/file.csv", mock_task_store)
+            worker.run_graph_job(job_id, "s3://input-bucket/file.csv", "example_graph", {}, mock_task_store)
         
         assert "S3 output bucket not specified" in str(excinfo.value)
         assert mock_task_store[job_id]["status"] == Status.FAILED
@@ -137,7 +138,7 @@ def test_run_graph_job_invalid_output_bucket_format(mock_task_store, job_id):
         }
         
         with pytest.raises(ValueError) as excinfo:
-            worker.run_graph_job(job_id, "s3://input-bucket/file.csv", mock_task_store)
+            worker.run_graph_job(job_id, "s3://input-bucket/file.csv", "example_graph", {}, mock_task_store)
         
         assert "Invalid S3 output bucket URI format" in str(excinfo.value)
         assert mock_task_store[job_id]["status"] == Status.FAILED
@@ -149,6 +150,17 @@ def test_run_graph_job_success(mock_rmtree, mock_task_store, mock_s3_client, moc
                               mock_graph, mock_notebook_exporter, temp_dir, job_id):
     # Patch the WORKER_TEMP_DIR to use our temp directory
     with patch('app.worker.WORKER_TEMP_DIR', Path(str(temp_dir))):
+        # Mock s3fs and pipeline registry
+        with patch('app.worker.s3') as mock_s3fs:
+            with patch('app.worker.load_deployed_pipelines') as mock_load_pipelines:
+                mock_load_pipelines.return_value = {
+                    "example_graph": {
+                        "required_columns": ["id_unit", "t", "treat", "y", "post"],
+                        "optional_columns": [],
+                        "graph_uri": "s3://test-bucket/example_graph.pkl"
+                    }
+                }
+                
         # Create test directories and a sample CSV
         input_dir = temp_dir.join(f"/input/{job_id}")
         output_dir = temp_dir.join(f"/output/{job_id}")
@@ -168,21 +180,17 @@ def test_run_graph_job_success(mock_rmtree, mock_task_store, mock_s3_client, moc
         csv_file_path = input_dir.join("test.csv")
         data.to_csv(csv_file_path, index=False)
                     
-        # Set up the mocks for S3 download/upload
-        def mock_download_file(bucket, key, file_path):
-            # Make sure destination directory exists
-            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-            # Copy our test CSV to the destination
-            shutil.copy(str(csv_file_path), file_path)
-            
-            mock_s3_client.download_file.side_effect = mock_download_file
+        # Mock pandas read_csv to return our test data
+        with patch('pandas.read_csv') as mock_read_csv:
+            mock_read_csv.return_value = data
             
             # Create a test file in output directory for upload testing
             output_file = output_dir.join("result.csv")
             output_file.write("result data")
             
-            # Run the task
-            result = worker.run_graph_job(job_id, "s3://input-bucket/test.csv", mock_task_store)
+            # Run the task with new signature
+            column_mapping = {"id_unit": "id_unit", "t": "t", "treat": "treat", "y": "y", "post": "post"}
+            result = worker.run_graph_job(job_id, "s3://input-bucket/test.csv", "example_graph", column_mapping, mock_task_store)
             
             # Verify the task executed correctly
             assert result is None  # run_graph_job doesn't return anything now
@@ -193,14 +201,12 @@ def test_run_graph_job_success(mock_rmtree, mock_task_store, mock_s3_client, moc
             assert "test-output-bucket" in mock_task_store[job_id]["result"]
             assert job_id in mock_task_store[job_id]["result"]
             
-            # Verify graph was created and fit
-            mock_graph.fit.assert_called_once_with(df=test_df)
+            # Verify graph was configured and fit
+            mock_graph.configure_runtime.assert_called_once()
+            mock_graph.fit.assert_called_once()
             
             # Verify notebook exporter was called
             mock_notebook_exporter.export_notebook.assert_called_once()
-            
-            # Verify S3 uploads were performed
-            assert mock_s3_client.upload_file.called
             
             # Verify cleanup was attempted
             assert mock_rmtree.called

@@ -16,6 +16,8 @@ from enum import Enum
 from .worker import run_graph_job
 from .utils.file_io import s3_client
 from fastapi.middleware.cors import CORSMiddleware
+import yaml
+from .utils.pipeline_registry import load_deployed_pipelines
 
 # Import our file utilities
 from .utils.file_io import (
@@ -51,6 +53,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:9000",  # local dev server for the UI
         "http://127.0.0.1:9000",  # alternative localhost notation
+        "http://localhost:5173",  # Vite dev server
         "*"  # TODO: tighten this list in production
     ],
     allow_credentials=True,
@@ -145,6 +148,8 @@ async def submit_job(
     request: Request,
     background_tasks: BackgroundTasks, # To construct full status URL
     input_path: str = Form(...),
+    pipeline_name: str = Form(...),
+    column_mapping: str = Form(..., description="JSON mapping of user CSV columns to pipeline columns"),
 ):
     """
     Submit a new job to process a data file with the PyAutoCausal simple_graph.
@@ -156,10 +161,32 @@ async def submit_job(
     start_time = time.time()
     job_id = str(uuid.uuid4())
     
-    # Validate that we have either a file upload or an input path
+    # Basic validation of required form fields
     if not input_path:
-        logger.warning(f"[{job_id}] Job submission missing both file and input_path")
-        raise HTTPException(status_code=400, detail="You must provide either a file upload or an input_path")
+        raise HTTPException(status_code=400, detail="input_path is required")
+
+    # Validate pipeline_name exists
+    pipelines_dict = load_deployed_pipelines()
+    if pipeline_name not in pipelines_dict:
+        raise HTTPException(status_code=400, detail=f"Unknown pipeline_name '{pipeline_name}'.")
+
+    # Parse column_mapping JSON
+    try:
+        mapping_dict: dict = json.loads(column_mapping)
+        if not isinstance(mapping_dict, dict):
+            raise ValueError
+    except Exception:
+        raise HTTPException(status_code=400, detail="column_mapping must be a valid JSON object.")
+
+    # Ensure all required columns are mapped (values side)
+    required_cols = set(pipelines_dict[pipeline_name]["required_columns"])
+    mapped_values = set(mapping_dict.values())
+    missing_required = required_cols - mapped_values
+    if missing_required:
+        raise HTTPException(status_code=422, detail={
+            "error": "Missing required column mappings",
+            "missing_columns": list(missing_required),
+        })
 
     # Determine original filename and set up paths
     original_filename = extract_filename(input_path)
@@ -172,8 +199,10 @@ async def submit_job(
         # Use FastAPI's BackgroundTasks instead of Celery
         background_tasks.add_task(
             run_graph_job,
-            job_id=job_id, 
-            input_s3_uri=input_path, 
+            job_id=job_id,
+            input_s3_uri=input_path,
+            pipeline_name=pipeline_name,
+            column_mapping=mapping_dict,
             task_store=job_status_store
         )
         
@@ -183,7 +212,9 @@ async def submit_job(
             "task_submitted", 
             job_id=job_id, 
             duration_ms=task_init_duration,
-            input_path=input_path
+            input_path=input_path,
+            pipeline_name=pipeline_name,
+            column_mapping=column_mapping
         )
 
     except Exception as e:
@@ -199,6 +230,8 @@ async def submit_job(
         "status": Status.PENDING,
         "original_filename": original_filename,
         "input_path": input_path,
+        "pipeline_name": pipeline_name,
+        "column_mapping": mapping_dict,
         "result": None,
         "error": None
     }
@@ -340,3 +373,24 @@ async def health_check():
 async def read_root():
     logger.debug("Root endpoint accessed")
     return {"message": "PyAutoCausal API is running. Submit jobs to /jobs."}
+
+# ----------------------
+# Endpoint: List Pipelines (uses shared util)
+# ----------------------
+
+@app.get("/pipelines", summary="List deployed pipelines and their required/optional columns")
+async def list_pipelines():
+    """Return a mapping of pipeline names to their required and optional columns.
+
+    Response example::
+
+        {
+            "example_graph": {
+                "required_columns": ["id_unit", "t", "treat", "y", "post"],
+                "optional_columns": []
+            }
+        }
+    """
+
+    pipelines_definition = load_deployed_pipelines()
+    return pipelines_definition

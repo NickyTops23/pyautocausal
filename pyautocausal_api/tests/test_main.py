@@ -12,6 +12,7 @@ import pytest
 # Import the FastAPI app and other necessary components
 from app.main import app, parse_s3_uri, job_status_store
 from app.utils.file_io import Status
+from app.utils.pipeline_registry import load_deployed_pipelines
 
 # Create a TestClient for the FastAPI app
 client = TestClient(app)
@@ -94,9 +95,18 @@ def test_submit_job_success(
     job_status_store.clear()
 
     input_s3_path = "s3://test-bucket/source/test.csv"
+    pipelines = load_deployed_pipelines()
+    pipeline_name = list(pipelines.keys())[0]
+    required_cols = pipelines[pipeline_name]["required_columns"]
+    # create mapping user_col_i -> required_col
+    mapping = {f"col{i}": col for i, col in enumerate(required_cols)}
     response = client.post(
         "/jobs",
-        data={"input_path": input_s3_path}
+        data={
+            "input_path": input_s3_path,
+            "pipeline_name": pipeline_name,
+            "column_mapping": json.dumps(mapping),
+        }
     )
     
     assert response.status_code == 202
@@ -109,12 +119,15 @@ def test_submit_job_success(
     args = mock_add_task.call_args[1]
     assert args["job_id"] == job_id_fixture
     assert args["input_s3_uri"] == input_s3_path
+    assert args["pipeline_name"] == pipeline_name
+    assert args["column_mapping"] == mapping
     assert args["task_store"] is job_status_store
     
     assert job_id_fixture in job_status_store
     assert job_status_store[job_id_fixture]["status"] == Status.PENDING
     assert job_status_store[job_id_fixture]["original_filename"] == "test.csv"
     assert job_status_store[job_id_fixture]["input_path"] == input_s3_path
+    assert job_status_store[job_id_fixture]["pipeline_name"] == pipeline_name
 
 # Test S3 upload failure (mocking write_to)
 # This test is no longer relevant as the endpoint doesn't do the intermediate write.
@@ -142,6 +155,31 @@ def test_submit_job_success(
 # Test Background Task submission failure
 @patch('uuid.uuid4')
 @patch.object(BackgroundTasks, 'add_task')
+def test_submit_job_validation_failure(
+    mock_add_task, mock_uuid_func,
+    mock_s3_env_vars, job_id_fixture
+):
+    mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
+
+    job_status_store.clear()
+
+    response = client.post(
+        "/jobs",
+        data={
+            "input_path": "s3://test-bucket/source/test.csv",
+            "pipeline_name": list(load_deployed_pipelines().keys())[0],
+            "column_mapping": json.dumps({}),
+        }
+    )
+        
+    assert response.status_code == 422
+    assert "Missing required column mappings" in response.json()["detail"]["error"]
+    
+    assert job_id_fixture not in job_status_store
+
+# Test actual Background Task submission failure
+@patch('uuid.uuid4')
+@patch.object(BackgroundTasks, 'add_task')
 def test_submit_job_task_submission_failure(
     mock_add_task, mock_uuid_func,
     mock_s3_env_vars, job_id_fixture
@@ -151,9 +189,19 @@ def test_submit_job_task_submission_failure(
 
     job_status_store.clear()
 
+    # Use valid mapping to pass validation
+    pipelines = load_deployed_pipelines()
+    pipeline_name = list(pipelines.keys())[0]
+    required_cols = pipelines[pipeline_name]["required_columns"]
+    mapping = {f"col{i}": col for i, col in enumerate(required_cols)}
+
     response = client.post(
         "/jobs",
-        data={"input_path": "s3://test-bucket/source/test.csv"}
+        data={
+            "input_path": "s3://test-bucket/source/test.csv",
+            "pipeline_name": pipeline_name,
+            "column_mapping": json.dumps(mapping),
+        }
     )
         
     assert response.status_code == 503
