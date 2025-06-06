@@ -119,6 +119,11 @@ class JobStatusResponse(BaseModel):
     result_path: str | None = None # Path to results if job COMPLETED
     error_details: str | None = None
 
+class JobSubmissionRequest(BaseModel):
+    input_path: str
+    pipeline_name: str
+    column_mapping: dict
+
 class InputPathSubmission(BaseModel):
     input_path: str = Field(..., description="Path to input file (S3 URI or local path)")
     original_filename: str | None = Field(None, description="Original filename (optional, extracted from path if not provided)")
@@ -152,19 +157,22 @@ def log_event(event_type, job_id=None, duration_ms=None, status=None, error=None
 async def submit_job(
     request: Request,
     background_tasks: BackgroundTasks, # To construct full status URL
-    input_path: str = Form(...),
-    pipeline_name: str = Form(...),
-    column_mapping: str = Form(..., description="JSON mapping of user CSV columns to pipeline columns"),
+    job_details: JobSubmissionRequest,
 ):
     """
     Submit a new job to process a data file with the PyAutoCausal simple_graph.
     
-    You can either:
-    1. Upload a file directly using the 'file' parameter, or
-    2. Specify the path to an existing file using 'input_path' (can be S3 URI or local path)
+    The request body should be a JSON object with the following fields:
+    - input_path: Path to input file (S3 URI)
+    - pipeline_name: Name of the pipeline to use
+    - column_mapping: JSON object mapping user CSV columns to pipeline columns
     """
     start_time = time.time()
     job_id = str(uuid.uuid4())
+
+    input_path = job_details.input_path
+    pipeline_name = job_details.pipeline_name
+    mapping_dict = job_details.column_mapping
     
     # Basic validation of required form fields
     if not input_path:
@@ -175,18 +183,12 @@ async def submit_job(
     if pipeline_name not in pipelines_dict:
         raise HTTPException(status_code=400, detail=f"Unknown pipeline_name '{pipeline_name}'.")
 
-    # Parse column_mapping JSON
-    try:
-        mapping_dict: dict = json.loads(column_mapping)
-        if not isinstance(mapping_dict, dict):
-            raise ValueError
-    except Exception:
-        raise HTTPException(status_code=400, detail="column_mapping must be a valid JSON object.")
+    # Pydantic has already validated column_mapping is a dict
 
-    # Ensure all required columns are mapped (values side)
+    # Ensure all required columns are mapped
     required_cols = set(pipelines_dict[pipeline_name]["required_columns"])
-    mapped_values = set(mapping_dict.values())
-    missing_required = required_cols - mapped_values
+    mapped_keys = set(mapping_dict.keys())
+    missing_required = required_cols - mapped_keys
     if missing_required:
         raise HTTPException(status_code=422, detail={
             "error": "Missing required column mappings",
@@ -219,7 +221,7 @@ async def submit_job(
             duration_ms=task_init_duration,
             input_path=input_path,
             pipeline_name=pipeline_name,
-            column_mapping=column_mapping
+            column_mapping=mapping_dict
         )
 
     except Exception as e:

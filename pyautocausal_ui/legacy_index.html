@@ -23,6 +23,8 @@
                 <option value="">Loading pipelines…</option>
             </select>
             <p id="pipeline-description" class="pipeline-description"></p>
+            <label for="file-input" style="display: block; margin-top: 1rem;">Upload data file:</label>
+            <input type="file" id="file-input" accept=".csv" />
         </section>
 
         <!-- BEGIN Column mapping UI (hidden until both file & pipeline chosen) -->
@@ -37,7 +39,6 @@
 
         <!-- Upload section -->
         <div class="upload-section">
-            <input type="file" id="file-input" accept=".csv" />
             <button id="upload-btn" disabled>Run Analysis</button>
         </div>
 
