@@ -197,16 +197,17 @@ def sample_graph_with_wrapper(tmp_path):
         })
     
     # Build a simple graph
-    graph = (ExecutableGraph(output_path=tmp_path)
-        .create_node(
-            "data",
-            create_data,
-        )
-        .create_node(
-            "stats_processor",
-            stats_wrapper,
-            predecessors=["data"],
-        )
+    graph = (ExecutableGraph()
+             .configure_runtime(output_path=tmp_path)
+             .create_node(
+                 "data",
+                 create_data,
+             )
+             .create_node(
+                 "stats_processor",
+                 stats_wrapper,
+                 predecessors=["data"],
+             )
     )
     
     # Execute the graph
@@ -296,8 +297,9 @@ def incomplete_graph(tmp_path):
     def process_func_action(transform: pd.DataFrame) -> str:
         return f"Processed {len(transform)} rows"
     
-    graph = (ExecutableGraph(output_path=tmp_path)
-        .create_input_node("data", input_dtype=pd.DataFrame)
+    graph = (ExecutableGraph()
+             .configure_runtime(output_path=tmp_path)
+             .create_input_node("data", input_dtype=pd.DataFrame)
         .create_node(
             "transform",
             transform_func,

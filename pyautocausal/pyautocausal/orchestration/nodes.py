@@ -189,7 +189,7 @@ class Node(BaseNode):
         
         # For any missing required parameters, try to get them from run context
         
-        if missing_required and hasattr(self.graph, 'run_context'):
+        if missing_required and hasattr(self.graph, 'run_context') and self.graph.run_context is not None:
             for param in missing_required:
                 if hasattr(self.graph.run_context, param):
                     required_params[param] = getattr(self.graph.run_context, param)
@@ -210,7 +210,7 @@ class Node(BaseNode):
         for param_name, current_value in optional_params.items():
             if param_name in missing_optional:
                 # Try run context
-                if hasattr(self.graph, 'run_context') and hasattr(self.graph.run_context, param_name):
+                if hasattr(self.graph, 'run_context') and self.graph.run_context is not None and hasattr(self.graph.run_context, param_name):
                     optional_params[param_name] = getattr(self.graph.run_context, param_name)
                     missing_optional.remove(param_name)
                 else: 

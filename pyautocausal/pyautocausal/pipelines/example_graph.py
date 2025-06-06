@@ -27,7 +27,10 @@ def simple_graph(output_path: Path):
     """Create a simplified causal graph without complex decision logic"""
     
     # Create the main executable graph
-    graph = ExecutableGraph(output_path=output_path)
+    graph = ExecutableGraph()
+    
+    # Configure runtime settings
+    graph.configure_runtime(output_path=output_path)
     
     # Add the input node for the dataframe
     
@@ -94,6 +97,7 @@ def simple_graph(output_path: Path):
 
     graph.create_node('save_wols_did_synth',
                      action_function=write_statsmodels_summary.transform({'wols_did_synth': 'res'}),
+                     display_function=write_statsmodels_summary_notebook,
                      output_config=OutputConfig(output_filename='save_wols_did_synth', output_type=OutputType.TEXT),
                      save_node=True,
                      predecessors=["wols_did_synth"])

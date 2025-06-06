@@ -40,7 +40,8 @@ def pipeline_graph(tmp_path):
     def create_plot_action(compute_average: pd.Series) -> Figure:
         return create_plot(compute_average)
 
-    graph = (ExecutableGraph(output_path=tmp_path / 'outputs')
+    graph = (ExecutableGraph()
+             .configure_runtime(output_path=tmp_path / 'outputs')
         .create_node(
             "create_data", 
             create_sample_data,
