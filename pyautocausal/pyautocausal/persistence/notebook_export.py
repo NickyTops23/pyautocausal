@@ -56,79 +56,103 @@ class NotebookExporter:
     def _get_function_imports(self, func) -> None:
         """Extract import statements needed for a given function."""
         try:
-            # First analyze the module to track imports and their aliases
+            # First analyze the module to get all its imports and namespace
             module = inspect.getmodule(func)
+            
+            # Track imports from the module
+            import_mapping = {}  # Maps name -> import statement
+            import_aliases = {}  # Maps alias -> (module, original_name)
+            
             try:
                 module_source = inspect.getsource(module)
                 module_tree = ast.parse(module_source)
                 
-                # Track imports and their aliases
-                import_aliases = {}  # Maps aliases to (module, original_name)
-                
                 for node in ast.walk(module_tree):
-                    # Handle from x import y as z
                     if isinstance(node, ast.ImportFrom):
                         module_name = node.module
-                        for name in node.names:
-                            alias = name.asname or name.name
-                            import_aliases[alias] = (module_name, name.name)
+                        for alias in node.names:
+                            name = alias.name
+                            asname = alias.asname or name
+                            
+                            # Store the import statement
+                            if alias.asname:
+                                import_mapping[asname] = f"from {module_name} import {name} as {asname}"
+                            else:
+                                import_mapping[name] = f"from {module_name} import {name}"
+                            
+                            # Store alias mapping
+                            import_aliases[asname] = (module_name, name)
                     
-                    # Handle import x as y
                     elif isinstance(node, ast.Import):
-                        for name in node.names:
-                            alias = name.asname or name.name
-                            import_aliases[alias] = (name.name, None)
+                        for alias in node.names:
+                            name = alias.name
+                            asname = alias.asname or name
+                            
+                            if alias.asname:
+                                import_mapping[asname] = f"import {name} as {asname}"
+                            else:
+                                import_mapping[name] = f"import {name}"
+                            
+                            import_aliases[asname] = (name, None)
+                            
             except Exception:
-                # If module source parsing fails, continue with function analysis only
-                import_aliases = {}
+                # If module parsing fails, fallback to namespace analysis
+                pass
             
-            # Get function source code and parse it
+            # Get function source and parse it
             source = inspect.getsource(func)
             tree = ast.parse(source)
             
-            # Process Name nodes (simple references)
+            # Collect all names used in the function
+            used_names = set()
+            
             for node in ast.walk(tree):
                 if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                    name = node.id
-                    
-                    # Check if it's an imported alias
-                    if name in import_aliases:
-                        module_name, original_name = import_aliases[name]
-                        if original_name:
-                            self.needed_imports.add(f"from {module_name} import {original_name}{' as ' + name if original_name != name else ''}")
-                        else:
-                            self.needed_imports.add(f"import {module_name}{' as ' + name if module_name != name else ''}")
-                    
-                    # Check if it's a function/object from another module
-                    elif name in module.__dict__:
-                        obj = module.__dict__[name]
-                        if hasattr(obj, '__module__'):
-                            module_name = obj.__module__
-                            if (module_name != 'builtins' and 
-                                not module_name.startswith('_')):
-                                self.needed_imports.add(f"from {module_name} import {name}")
-                
-                # Handle attribute access (like package.function)
+                    used_names.add(node.id)
                 elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-                    pkg_name = node.value.id
-                    attr_name = node.attr
+                    # For attribute access like PanelOLS.from_formula, we need the base name
+                    used_names.add(node.value.id)
+            
+            # For each used name, determine if we need an import
+            for name in used_names:
+                # Skip built-ins and function parameters
+                if name in ['self', 'cls'] or name in dir(__builtins__):
+                    continue
+                
+                # Check if we have this import from the module's import statements
+                if name in import_mapping:
+                    self.needed_imports.add(import_mapping[name])
+                    continue
+                
+                # Check if it's in the module's namespace
+                if hasattr(module, name):
+                    obj = getattr(module, name)
                     
-                    # Check if the base is an imported package
-                    if pkg_name in import_aliases:
-                        module_name, _ = import_aliases[pkg_name]
-                        self.needed_imports.add(f"import {module_name}{' as ' + pkg_name if module_name != pkg_name else ''}")
+                    # If it's a module, import it
+                    if inspect.ismodule(obj):
+                        self.needed_imports.add(f"import {obj.__name__}")
                     
-                    # Check if it's a direct module in the module namespace
-                    elif pkg_name in module.__dict__:
-                        obj = module.__dict__[pkg_name]
-                        if hasattr(obj, '__name__'):
-                            module_name = obj.__name__
-                            self.needed_imports.add(f"import {module_name}{' as ' + pkg_name if module_name != pkg_name else ''}")
-    
+                    # If it has a module attribute, try to import from there
+                    elif hasattr(obj, '__module__') and obj.__module__:
+                        obj_module = obj.__module__
+                        
+                        # Don't import built-ins
+                        if obj_module == 'builtins':
+                            continue
+                            
+                        # Try to import from the object's module
+                        try:
+                            # Check if this is a class/function we can import
+                            if (inspect.isclass(obj) or inspect.isfunction(obj) or 
+                                callable(obj)):
+                                self.needed_imports.add(f"from {obj_module} import {name}")
+                        except Exception:
+                            # If import fails, try just importing the module
+                            self.needed_imports.add(f"import {obj_module}")
         
         except Exception as e:
-            # Fallback in case of any errors
-            return f"# Import analysis failed: {str(e)}\n"
+            # Fallback: just add a comment about the error
+            self.needed_imports.add(f"# Import analysis failed: {str(e)}")
     
     def _format_function_definition(self, node: Node) -> str:
         """Format the function definition for a node."""
@@ -445,7 +469,7 @@ input_data = {loading_function}('{data_path}')"""
             self.nb.cells.insert(data_loading_position, new_code_cell(data_loading_code))
         
         # Save the notebook
-        with open(filepath, 'w') as f:
+        with open(filepath, 'w', encoding='utf-8') as f:
             nbformat.write(self.nb, f)
     
     def export_and_run_to_html(
