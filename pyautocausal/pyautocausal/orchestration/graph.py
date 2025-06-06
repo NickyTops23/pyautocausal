@@ -17,21 +17,46 @@ from networkx import DiGraph
 
 
 class ExecutableGraph(nx.DiGraph):
-    def __init__(
-            self,
-            output_handler: Optional[OutputHandler] = None,
-            output_path: Optional[Union[Path, str]] = None,
-            run_context: Optional[RunContext] = None
-        ):
+    def __init__(self):
+        """Initialize an empty ExecutableGraph with just the graph structure.
+        
+        Runtime configuration (output handlers, run context) should be set
+        separately using configure_runtime() before execution.
+        """
         super().__init__()
         self.logger = get_class_logger(self.__class__.__name__)
-        self.run_context = run_context or RunContext()
         self._input_nodes = {}
         self._nodes_by_name = {}  # New dictionary to track nodes by name
         
+        # Runtime configuration - not serialized
+        self.run_context = None
+        self.output_handler = None
+        self.save_node_outputs = False
+
+    def configure_runtime(
+        self,
+        output_handler: Optional[OutputHandler] = None,
+        output_path: Optional[Union[Path, str]] = None,
+        run_context: Optional[RunContext] = None
+    ) -> 'ExecutableGraph':
+        """Configure runtime settings for graph execution.
+        
+        This method should be called before executing the graph to set up
+        output handling and execution context. These settings are not
+        persisted when the graph is serialized.
+        
+        Args:
+            output_handler: Custom output handler for saving node outputs
+            output_path: Path for default LocalOutputHandler (mutually exclusive with output_handler)
+            run_context: Runtime context for execution
+            
+        Returns:
+            self for method chaining
+        """
         if output_path is not None and output_handler is not None:
             raise ValueError("Cannot provide both output_path and output_handler")
 
+        self.run_context = run_context or RunContext()
         self.save_node_outputs = False
         
         if output_handler is not None:
@@ -45,6 +70,8 @@ class ExecutableGraph(nx.DiGraph):
             self.logger.info(f"Local output handler created with path {output_path}")
         else:
             self.logger.warning("No output handler provided, node outputs will not be saved")
+            
+        return self
 
     @property
     def input_nodes(self) -> Dict[str, 'InputNode']:
@@ -73,7 +100,7 @@ class ExecutableGraph(nx.DiGraph):
     def save_node_output(self, node: Node):
         """Save node output if configured to do so"""
         from .nodes import InputNode  # Import here to avoid circular import
-        if self.save_node_outputs & ~isinstance(node, InputNode): # Input nodes are not saved
+        if self.save_node_outputs and self.output_handler is not None and ~isinstance(node, InputNode): # Input nodes are not saved
             if (
                 getattr(node, 'output_config', None) is not None
                 and node.output is not None
@@ -699,3 +726,64 @@ class ExecutableGraph(nx.DiGraph):
             raise ValueError(f"Node '{decision_node_name}' is not a DecisionNode")
         decision_node.add_execute_when_false(self.get(ewf_node_name))
         return self
+
+    def __getstate__(self):
+        """Custom serialization to exclude runtime configuration."""
+        state = self.__dict__.copy()
+        # Remove runtime configuration that shouldn't be serialized
+        state['run_context'] = None
+        state['output_handler'] = None
+        state['save_node_outputs'] = False
+        # Remove logger as it's not serializable
+        if 'logger' in state:
+            del state['logger']
+        return state
+
+    def __setstate__(self, state):
+        """Custom deserialization to restore object state."""
+        self.__dict__.update(state)
+        # Restore logger
+        self.logger = get_class_logger(self.__class__.__name__)
+        # Runtime configuration will be None and needs to be set via configure_runtime()
+
+    # Add serialization methods
+    def save(self, filepath: Union[str, Path], *, protocol: int | None = None) -> Path:
+        """Serialize this graph to disk via pickle."""
+        from pathlib import Path
+        import pickle
+        import cloudpickle
+
+        path = Path(filepath).expanduser().resolve()
+        # Validate extension
+        if path.suffix.lower() not in {".pkl", ".pickle"}:
+            raise ValueError(
+                f"Unsupported file extension: {path.suffix}. Only '.pkl' or '.pickle' are supported."
+            )
+        protocol = protocol or pickle.HIGHEST_PROTOCOL
+        # Ensure parent directory exists
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Dump graph
+        with path.open("wb") as fh:
+            cloudpickle.dump(self, fh, protocol=protocol)
+        return path
+
+    @classmethod
+    def load(cls, filepath: Union[str, Path]) -> "ExecutableGraph":
+        """Load a previously serialized ExecutableGraph from disk."""
+        from pathlib import Path
+        import cloudpickle
+
+        path = Path(filepath).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(path)
+        if path.suffix.lower() not in {".pkl", ".pickle"}:
+            raise ValueError(
+                f"Unsupported file extension: {path.suffix}. Only '.pkl' or '.pickle' are supported."
+            )
+        with path.open("rb") as fh:
+            graph = cloudpickle.load(fh)
+        if not isinstance(graph, cls):
+            raise TypeError(
+                f"Deserialized object is of type {type(graph)}, expected {cls}."
+            )
+        return graph

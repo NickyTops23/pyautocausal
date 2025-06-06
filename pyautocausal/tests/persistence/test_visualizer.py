@@ -23,7 +23,8 @@ def node2_action(node1_output: pd.DataFrame) -> pd.Series:
 def simple_graph(tmp_path):
     """Create a simple test graph with a few nodes"""
     
-    graph = (ExecutableGraph(output_path=tmp_path)
+    graph = (ExecutableGraph()
+             .configure_runtime(output_path=tmp_path)
         .create_input_node("input")
         .create_node(
             "node1",

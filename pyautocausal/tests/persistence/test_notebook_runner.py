@@ -49,7 +49,8 @@ def sample_graph_with_data(tmp_path):
         data['z'] = data['x'] + data['y']
         return data
     
-    graph = ExecutableGraph(output_path=tmp_path)
+    graph = ExecutableGraph()
+    graph.configure_runtime(output_path=tmp_path)
     graph.create_input_node("data", input_dtype=pd.DataFrame)
     graph.create_node("transform", simple_transform, predecessors=["data"])
     
