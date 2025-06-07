@@ -272,11 +272,11 @@ def _run_graph_job(job_id: str, input_s3_uri: str, graph: ExecutableGraph, colum
             event_type="job_completed_successfully",
             job_id=job_id,
             duration_ms=total_job_duration,
-            output_s3_uri=s3_uri
+            output_s3_uri=s3_output_key_prefix
         )
             
-        logger.info(f"[{job_id}] Task 'run_graph_job' completed successfully in {total_job_duration:.2f}ms. Output at {s3_uri}")
-        return s3_uri
+        logger.info(f"[{job_id}] Task 'run_graph_job' completed successfully in {total_job_duration:.2f}ms. Output at {s3_output_key_prefix}")
+        return s3_output_key_prefix
 
     except Exception as e:
         # Log failure with full details
