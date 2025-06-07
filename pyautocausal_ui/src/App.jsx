@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Papa from 'papaparse';
 import usePipelines from './hooks/usePipelines';
 import PipelineSelect from './components/PipelineSelect';
@@ -12,8 +12,17 @@ export default function App() {
   const [csvHeaders, setCsvHeaders] = useState([]);
   const [columnMapping, setColumnMapping] = useState({});
   const [jobStatus, setJobStatus] = useState('');
+  const pollIntervalRef = useRef(null);
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
 
   const handleFileSelect = (file) => {
+    stopPolling();
     setSelectedFile(file);
     setColumnMapping({}); // Reset mapping when file changes
     setJobStatus(''); // Reset status
@@ -29,6 +38,13 @@ export default function App() {
     } else {
       setCsvHeaders([]);
     }
+  };
+
+  const handlePipelineChange = (pipelineName) => {
+    stopPolling();
+    setSelectedPipeline(pipelineName);
+    setColumnMapping({}); // Also reset mapping
+    setJobStatus('');
   };
 
   const handleMappingChange = (pipelineColumn, csvColumn) => {
@@ -64,9 +80,40 @@ export default function App() {
     return `s3://${s3Bucket}/${key}`;
   };
 
+  const pollJobStatus = async (statusUrl) => {
+    try {
+      const res = await fetch(statusUrl);
+      if (!res.ok) {
+        // Stop polling on persistent errors, but not transient ones
+        if (res.status === 404 || res.status === 403) {
+          stopPolling();
+          setJobStatus(`Error: Job status endpoint not found. Polling stopped.`);
+        }
+        return; // Otherwise, keep trying
+      }
+
+      const data = await res.json();
+      setJobStatus(`Job Status: ${data.status} – ${data.message}`);
+
+      if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+        stopPolling();
+        if (data.status === 'COMPLETED') {
+            setJobStatus(`Job completed! Result available at: ${data.result_path}`);
+        } else {
+            setJobStatus(`Job failed: ${data.error_details || 'Unknown error'}`);
+        }
+      }
+    } catch (err) {
+      console.error('Polling error:', err);
+      stopPolling();
+      setJobStatus('Error fetching job status due to network issue. Polling stopped.');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!isSubmittable || !selectedFile) return;
 
+    stopPolling();
     setJobStatus('Uploading file...');
     try {
       const s3Uri = await uploadFileToS3(selectedFile);
@@ -90,15 +137,32 @@ export default function App() {
       }
 
       const jobResult = await res.json();
-      setJobStatus(`Job submitted! You can monitor its status.`);
-      // In a real app, we'd start polling jobResult.status_url
-      console.log('Job status URL:', jobResult.status_url);
+      setJobStatus('Job submitted! Monitoring status...');
+      
+      let statusUrl = jobResult.status_url;
+      // If we're hitting the production API, ensure we poll over HTTPS,
+      // as Caddy will redirect HTTP->HTTPS and cause issues with fetch.
+      const url = new URL(statusUrl);
+      if (url.hostname === 'api.pyautocausal.com' && url.protocol === 'http:') {
+        url.protocol = 'https';
+        statusUrl = url.toString();
+      }
+      
+      // Start polling
+      pollIntervalRef.current = setInterval(() => {
+        pollJobStatus(statusUrl);
+      }, 3000); // Poll every 3 seconds
 
     } catch (err) {
       console.error(err);
       setJobStatus(`Error: ${err.message}`);
     }
   };
+
+  // Cleanup effect to stop polling when the component unmounts
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
 
   const showMapping = selectedPipeline && selectedFile && csvHeaders.length > 0;
   const pipelineObject = getSelectedPipelineObject();
@@ -118,7 +182,7 @@ export default function App() {
           loading={loading}
           error={error}
           value={selectedPipeline}
-          onChange={setSelectedPipeline}
+          onChange={handlePipelineChange}
         />
         <FileInput onFileSelect={handleFileSelect} />
       </div>
