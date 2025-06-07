@@ -10,6 +10,7 @@ from datetime import datetime
 from .utils.file_io import Status, parse_s3_uri, join_paths
 import s3fs
 from .utils.pipeline_registry import load_deployed_pipelines
+from pyautocausal.orchestration.graph import ExecutableGraph
 
 # --- pyautocausal Import ---
 # This should work if pyautocausal is installed via poetry from the local path
@@ -77,9 +78,9 @@ def _get_file_size(file_path: Path) -> int:
         logger.error(f"Error getting file size for {file_path}: {e}")
         return 0 # Or raise
 
-def run_graph_job(job_id: str, input_s3_uri: str, pipeline_name: str, column_mapping: dict, task_store: dict) -> None:
+def run_graph_job(job_id: str, input_s3_uri: str, graph: ExecutableGraph, column_mapping: dict, required_columns: list[str], task_store: dict) -> None:
     """
-    FastAPI background task to download data from S3, run simple_graph, and upload outputs to S3.
+    FastAPI background task to download data from S3, run a given pipeline graph, and upload outputs to S3.
     This is a wrapper around the _run_graph_job function that updates the task store with the status and result.
     """
     # Update the task status in the task store
@@ -87,7 +88,7 @@ def run_graph_job(job_id: str, input_s3_uri: str, pipeline_name: str, column_map
 
     # Run the graph job
     try:
-        output_s3_uri = _run_graph_job(job_id, input_s3_uri, pipeline_name, column_mapping)
+        output_s3_uri = _run_graph_job(job_id, input_s3_uri, graph, column_mapping, required_columns)
         task_store[job_id]["status"] = Status.SUCCESS
         task_store[job_id]["result"] = output_s3_uri
         return
@@ -98,22 +99,13 @@ def run_graph_job(job_id: str, input_s3_uri: str, pipeline_name: str, column_map
         task_store[job_id]["error"] = str(e)
         raise  # Re-raise the error to be handled by FastAPI
     
-def _run_graph_job(job_id: str, input_s3_uri: str, pipeline_name: str, column_mapping: dict):
+def _run_graph_job(job_id: str, input_s3_uri: str, graph: ExecutableGraph, column_mapping: dict, required_columns: list[str]):
     """
-    FastAPI background task to download data from S3, run simple_graph, and upload outputs to S3.
+    FastAPI background task to download data from S3, run a given pipeline graph, and upload outputs to S3.
     """
     task_start_time = time.time()
-    logger.info(f"[{job_id}] FastAPI background task 'run_graph_job' started for input: {input_s3_uri}, pipeline: {pipeline_name}")
+    logger.info(f"[{job_id}] FastAPI background task 'run_graph_job' started for input: {input_s3_uri}, graph: {graph.name if hasattr(graph, 'name') else 'unnamed'}")
     
-    # Load pipeline registry and obtain graph_uri & column requirements
-    pipelines_dict = load_deployed_pipelines()
-    if pipeline_name not in pipelines_dict:
-        raise ValueError(f"Unknown pipeline_name '{pipeline_name}'")
-    pipeline_meta = pipelines_dict[pipeline_name]
-    graph_uri = pipeline_meta.get("graph_uri")
-    if not graph_uri:
-        raise ValueError(f"graph_uri missing for pipeline '{pipeline_name}' in registry")
-
     # Configuration validation
     if not S3_OUTPUT_DIR:
         logger.error(f"[{job_id}] S3_OUTPUT_BUCKET environment variable is not set. Cannot proceed.")
@@ -139,24 +131,7 @@ def _run_graph_job(job_id: str, input_s3_uri: str, pipeline_name: str, column_ma
 
     try:
         # Create local directories for processing
-        setup_start = time.time()
         os.makedirs(local_output_job_path, exist_ok=True)
-
-        # 0. Download and load the ExecutableGraph
-        local_graph_path = local_output_job_path / "pipeline.pkl"
-        try:
-            logger.info(f"[{job_id}] Downloading pipeline graph from {graph_uri} → {local_graph_path}")
-            s3.get(graph_uri, str(local_graph_path))  # s3fs get
-        except Exception as e:
-            logger.error(f"[{job_id}] Failed to download graph: {e}")
-            raise
-
-        try:
-            from pyautocausal.orchestration.graph import ExecutableGraph
-            graph: ExecutableGraph = ExecutableGraph.load(local_graph_path)
-        except Exception as e:
-            logger.error(f"[{job_id}] Failed to load ExecutableGraph: {e}")
-            raise
 
         # 1. Download data from S3 and load it
         logger.info(f"[{job_id}] Downloading and loading data from {input_s3_uri}.")
@@ -170,7 +145,7 @@ def _run_graph_job(job_id: str, input_s3_uri: str, pipeline_name: str, column_ma
             data = data.rename(columns=column_mapping)
 
         # Validate required columns in renamed df
-        required_cols = set(pipeline_meta["required_columns"])
+        required_cols = set(required_columns)
         if missing := required_cols - set(data.columns):
             raise ValueError(f"CSV missing required columns after mapping: {missing}")
 

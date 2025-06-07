@@ -18,6 +18,9 @@ from .utils.file_io import s3_client
 from fastapi.middleware.cors import CORSMiddleware
 import yaml
 from .utils.pipeline_registry import load_deployed_pipelines
+from pyautocausal.orchestration.graph import ExecutableGraph
+import s3fs
+import tempfile
 
 # Import our file utilities
 from .utils.file_io import (
@@ -85,6 +88,7 @@ s3_client = boto3.client(
         retries={'max_attempts': 3}
     )
 )
+s3 = s3fs.S3FileSystem(anon=False) # For loading graph objects
 
 # Function to parse S3 URI into bucket and path components
 def parse_s3_uri(s3_uri):
@@ -183,17 +187,37 @@ async def submit_job(
     if pipeline_name not in pipelines_dict:
         raise HTTPException(status_code=400, detail=f"Unknown pipeline_name '{pipeline_name}'.")
 
-    # Pydantic has already validated column_mapping is a dict
+    pipeline_meta = pipelines_dict[pipeline_name]
+    graph_uri = pipeline_meta.get("graph_uri")
+    if not graph_uri:
+        raise HTTPException(status_code=500, detail=f"Graph URI not configured for pipeline '{pipeline_name}'.")
 
     # Ensure all required columns are mapped
-    required_cols = set(pipelines_dict[pipeline_name]["required_columns"])
-    mapped_keys = set(mapping_dict.keys())
-    missing_required = required_cols - mapped_keys
+    required_cols = set(pipeline_meta["required_columns"])
+    mapped_values = set(mapping_dict.values())
+    missing_required = required_cols - mapped_values
     if missing_required:
         raise HTTPException(status_code=422, detail={
             "error": "Missing required column mappings",
             "missing_columns": list(missing_required),
         })
+
+    # Load graph from S3
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=True) as tmp_graph_file:
+            local_graph_path = tmp_graph_file.name
+            logger.info(f"[{job_id}] Downloading pipeline graph from {graph_uri} to {local_graph_path}")
+            s3.get(graph_uri, local_graph_path)
+            
+            logger.info(f"[{job_id}] Loading ExecutableGraph from {local_graph_path}")
+            graph = ExecutableGraph.load(local_graph_path)
+            
+    except FileNotFoundError:
+        logger.error(f"[{job_id}] Graph file not found at S3 URI: {graph_uri}")
+        raise HTTPException(status_code=500, detail=f"Could not load pipeline graph from {graph_uri}")
+    except Exception as e:
+        logger.error(f"[{job_id}] Failed to download or load graph: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to initialize pipeline: {e}")
 
     # Determine original filename and set up paths
     original_filename = extract_filename(input_path)
@@ -208,8 +232,9 @@ async def submit_job(
             run_graph_job,
             job_id=job_id,
             input_s3_uri=input_path,
-            pipeline_name=pipeline_name,
+            graph=graph,
             column_mapping=mapping_dict,
+            required_columns=list(required_cols),
             task_store=job_status_store
         )
         
