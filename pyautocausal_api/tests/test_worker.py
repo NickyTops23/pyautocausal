@@ -8,6 +8,7 @@ import shutil
 from unittest.mock import patch, MagicMock, Mock
 from botocore.exceptions import NoCredentialsError, ClientError
 import time
+import io
 
 # Import the worker functions
 from app import worker
@@ -109,7 +110,7 @@ def test_parse_s3_uri():
     assert key == ''
 
 # Test _run_graph_job missing S3_OUTPUT_BUCKET
-def test_run_graph_job_missing_output_bucket(mock_task_store, job_id):
+def test_run_graph_job_missing_output_bucket(mock_task_store, job_id, mock_graph):
     with patch('app.worker.S3_OUTPUT_DIR', None):
         mock_task_store[job_id] = {
             "status": Status.PENDING,
@@ -120,14 +121,14 @@ def test_run_graph_job_missing_output_bucket(mock_task_store, job_id):
         }
         
         with pytest.raises(ValueError) as excinfo:
-            worker.run_graph_job(job_id, "s3://input-bucket/file.csv", "example_graph", {}, mock_task_store)
+            worker.run_graph_job(job_id, "s3://input-bucket/file.csv", mock_graph, {}, [], mock_task_store)
         
         assert "S3 output bucket not specified" in str(excinfo.value)
         assert mock_task_store[job_id]["status"] == Status.FAILED
         assert "S3 output bucket not specified" in mock_task_store[job_id]["error"]
 
 # Test _run_graph_job with invalid S3_OUTPUT_BUCKET format
-def test_run_graph_job_invalid_output_bucket_format(mock_task_store, job_id):
+def test_run_graph_job_invalid_output_bucket_format(mock_task_store, job_id, mock_graph):
     with patch('app.worker.S3_OUTPUT_DIR', 'invalid-format'):
         mock_task_store[job_id] = {
             "status": Status.PENDING,
@@ -138,7 +139,7 @@ def test_run_graph_job_invalid_output_bucket_format(mock_task_store, job_id):
         }
         
         with pytest.raises(ValueError) as excinfo:
-            worker.run_graph_job(job_id, "s3://input-bucket/file.csv", "example_graph", {}, mock_task_store)
+            worker.run_graph_job(job_id, "s3://input-bucket/file.csv", mock_graph, {}, [], mock_task_store)
         
         assert "Invalid S3 output bucket URI format" in str(excinfo.value)
         assert mock_task_store[job_id]["status"] == Status.FAILED
@@ -146,25 +147,29 @@ def test_run_graph_job_invalid_output_bucket_format(mock_task_store, job_id):
 
 # Test successful execution (end-to-end)
 @patch('shutil.rmtree')  # Mock rmtree to avoid actual directory removal
-def test_run_graph_job_success(mock_rmtree, mock_task_store, mock_s3_client, mock_s3_env, 
+@patch('shutil.make_archive')
+@patch('app.worker.get_s3_fs')
+def test_run_graph_job_success(mock_get_s3, mock_make_archive, mock_rmtree, mock_task_store, mock_s3_client, mock_s3_env, 
                               mock_graph, mock_notebook_exporter, temp_dir, job_id):
+    
+    # Configure the mock for get_s3_fs
+    mock_s3fs = MagicMock()
+    mock_get_s3.return_value = mock_s3fs
+    
     # Patch the WORKER_TEMP_DIR to use our temp directory
     with patch('app.worker.WORKER_TEMP_DIR', Path(str(temp_dir))):
-        # Mock s3fs and pipeline registry
-        with patch('app.worker.s3') as mock_s3fs:
-            with patch('app.worker.load_deployed_pipelines') as mock_load_pipelines:
-                mock_load_pipelines.return_value = {
-                    "example_graph": {
-                        "required_columns": ["id_unit", "t", "treat", "y", "post"],
-                        "optional_columns": [],
-                        "graph_uri": "s3://test-bucket/example_graph.pkl"
-                    }
+        # We no longer need to patch 'app.worker.s3' here
+        with patch('app.worker.load_deployed_pipelines') as mock_load_pipelines:
+            mock_load_pipelines.return_value = {
+                "example_graph": {
+                    "required_columns": ["id_unit", "t", "treat", "y", "post"],
+                    "optional_columns": [],
+                    "graph_uri": "s3://test-bucket/example_graph.pkl"
                 }
+            }
                 
-        # Create test directories and a sample CSV
-        input_dir = temp_dir.join(f"/input/{job_id}")
-        output_dir = temp_dir.join(f"/output/{job_id}")
-        input_dir.ensure_dir()
+        # Create test directories
+        output_dir = temp_dir.join(f"output/{job_id}")
         output_dir.ensure_dir()
         
         mock_task_store[job_id] = {
@@ -175,41 +180,44 @@ def test_run_graph_job_success(mock_rmtree, mock_task_store, mock_s3_client, moc
             "error": None
         }
         
-        # Create a test CSV file
-        data = generate_mock_data(n_units=2000, n_periods=2, n_treated=500)
-        csv_file_path = input_dir.join("test.csv")
-        data.to_csv(csv_file_path, index=False)
-                    
-        # Mock pandas read_csv to return our test data
-        with patch('pandas.read_csv') as mock_read_csv:
-            mock_read_csv.return_value = data
+        # Create a test CSV data
+        data = generate_mock_data(n_units=200, n_periods=2, n_treated=50)
+        
+        # Mock the path to the created archive
+        archive_name = f"pyautocausal_results_{job_id}.zip"
+        archive_path = temp_dir.join("output").join(archive_name)
+        archive_path.write("zip_content") # create a dummy zip file
+        mock_make_archive.return_value = str(archive_path)
             
-            # Create a test file in output directory for upload testing
-            output_file = output_dir.join("result.csv")
-            output_file.write("result data")
-            
-            # Run the task with new signature
-            column_mapping = {"id_unit": "id_unit", "t": "t", "treat": "treat", "y": "y", "post": "post"}
-            result = worker.run_graph_job(job_id, "s3://input-bucket/test.csv", "example_graph", column_mapping, mock_task_store)
-            
-            # Verify the task executed correctly
-            assert result is None  # run_graph_job doesn't return anything now
-            
-            # Check the task store was updated correctly
-            assert mock_task_store[job_id]["status"] == Status.SUCCESS
-            assert mock_task_store[job_id]["result"].startswith("s3://")
-            assert "test-output-bucket" in mock_task_store[job_id]["result"]
-            assert job_id in mock_task_store[job_id]["result"]
-            
-            # Verify graph was configured and fit
-            mock_graph.configure_runtime.assert_called_once()
-            mock_graph.fit.assert_called_once()
-            
-            # Verify notebook exporter was called
-            mock_notebook_exporter.export_notebook.assert_called_once()
-            
-            # Verify cleanup was attempted
-            assert mock_rmtree.called
+        # Mock the s3fs open method to simulate reading a CSV from S3
+        mock_s3fs.open.return_value.__enter__.return_value = io.StringIO(data.to_csv(index=False))
+
+        # Run the task with new signature
+        column_mapping = {"id_unit": "id_unit", "t": "t", "treat": "treat", "y": "y", "post": "post"}
+        required_columns = list(column_mapping.values())
+        worker.run_graph_job(job_id, "s3://input-bucket/test.csv", mock_graph, column_mapping, required_columns, mock_task_store)
+        
+        # Check the task store was updated correctly
+        assert mock_task_store[job_id]["status"] == Status.SUCCESS
+        final_result_uri = mock_task_store[job_id]["result"]
+        assert final_result_uri.startswith("s3://test-output-bucket/output/path")
+        assert final_result_uri.endswith(f"/{job_id}/{archive_name}")
+        
+        # Verify graph was configured and fit
+        mock_graph.configure_runtime.assert_called_once()
+        mock_graph.fit.assert_called_once()
+        
+        # Verify notebook exporter was called
+        mock_notebook_exporter.export_notebook.assert_called_once()
+
+        # Verify that make_archive was called correctly
+        mock_make_archive.assert_called_once()
+        
+        # Verify s3fs.put was called to upload the archive
+        mock_s3fs.put.assert_called_once_with(str(archive_path), final_result_uri)
+        
+        # Verify cleanup was attempted
+        assert mock_rmtree.called
 
 # --- Test for _get_file_size ---
 def test_get_file_size_success(temp_dir):

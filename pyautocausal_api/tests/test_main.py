@@ -207,7 +207,8 @@ def test_get_job_status_pending(job_id_fixture):
     assert json_response["job_id"] == job_id_fixture
     assert json_response["status"] == "PENDING"
     assert "queued and waiting" in json_response["message"]
-    assert json_response["result_path"] is None
+    assert json_response["result_s3_uri"] is None
+    assert json_response["download_url"] is None
     assert json_response["error_details"] is None
         
     job_status_store.pop(job_id_fixture, None)
@@ -230,15 +231,20 @@ def test_get_job_status_running(job_id_fixture):
     assert json_response["job_id"] == job_id_fixture
     assert json_response["status"] == "RUNNING"
     assert "currently running" in json_response["message"]
-    assert json_response["result_path"] is None
+    assert json_response["result_s3_uri"] is None
+    assert json_response["download_url"] is None
     assert json_response["error_details"] is None
         
     job_status_store.pop(job_id_fixture, None)
 
 # Test job status retrieval for job in SUCCESS state
-def test_get_job_status_success(job_id_fixture):
+@patch('app.main.s3_client.generate_presigned_url')
+def test_get_job_status_success(mock_generate_url, job_id_fixture):
     job_status_store.clear()
-    output_s3_path = "s3://output-bucket/outputs/test-job-id/"
+    output_s3_path = f"s3://output-bucket/outputs/{job_id_fixture}/results.zip"
+    presigned_url = f"https://s3.amazonaws.com/output-bucket/outputs/{job_id_fixture}/results.zip?AWSAccessKeyId=..."
+    mock_generate_url.return_value = presigned_url
+    
     job_status_store[job_id_fixture] = {
         "status": Status.SUCCESS,
         "original_filename": "test.csv",
@@ -253,9 +259,17 @@ def test_get_job_status_success(job_id_fixture):
     json_response = response.json()
     assert json_response["job_id"] == job_id_fixture
     assert json_response["status"] == "COMPLETED"
-    assert "completed successfully" in json_response["message"]
-    assert json_response["result_path"] == output_s3_path
+    assert "Click the link to download" in json_response["message"]
+    assert json_response["result_s3_uri"] == output_s3_path
+    assert json_response["download_url"] == presigned_url
     assert json_response["error_details"] is None
+    
+    bucket_name, key = parse_s3_uri(output_s3_path)
+    mock_generate_url.assert_called_once_with(
+        'get_object',
+        Params={'Bucket': bucket_name, 'Key': key},
+        ExpiresIn=3600
+    )
         
     job_status_store.pop(job_id_fixture, None)
 
@@ -278,7 +292,8 @@ def test_get_job_status_failure(job_id_fixture):
     assert json_response["job_id"] == job_id_fixture
     assert json_response["status"] == "FAILED"
     assert "failed" in json_response["message"]
-    assert json_response["result_path"] is None
+    assert json_response["result_s3_uri"] is None
+    assert json_response["download_url"] is None
     assert error_message in json_response["error_details"]
         
     job_status_store.pop(job_id_fixture, None)
