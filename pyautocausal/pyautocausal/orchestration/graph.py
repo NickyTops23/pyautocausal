@@ -749,9 +749,16 @@ class ExecutableGraph(nx.DiGraph):
     # Add serialization methods
     def save(self, filepath: Union[str, Path], *, protocol: int | None = None) -> Path:
         """Serialize this graph to disk via pickle."""
+        try:
+            import cloudpickle
+        except ImportError:
+            raise ImportError(
+                "cloudpickle is required for saving graphs. "
+                "Please install it with `pip install pyautocausal[io]`."
+            )
+
         from pathlib import Path
         import pickle
-        import cloudpickle
 
         path = Path(filepath).expanduser().resolve()
         # Validate extension
@@ -770,8 +777,14 @@ class ExecutableGraph(nx.DiGraph):
     @classmethod
     def load(cls, filepath: Union[str, Path]) -> "ExecutableGraph":
         """Load a previously serialized ExecutableGraph from disk."""
+        try:
+            import cloudpickle
+        except ImportError:
+            raise ImportError(
+                "cloudpickle is required for loading graphs. "
+                "Please install it with `pip install pyautocausal[io]`."
+            )
         from pathlib import Path
-        import cloudpickle
 
         path = Path(filepath).expanduser().resolve()
         if not path.exists():
