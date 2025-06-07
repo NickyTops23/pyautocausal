@@ -120,7 +120,8 @@ class JobStatusResponse(BaseModel):
     job_id: str
     status: str # Celery states: PENDING, STARTED, RETRY, FAILURE, SUCCESS, or custom PROCESSING
     message: str | None = None
-    result_path: str | None = None # Path to results if job COMPLETED
+    result_s3_uri: str | None = None
+    download_url: str | None = None # Pre-signed URL for downloading results
     error_details: str | None = None
 
 class JobSubmissionRequest(BaseModel):
@@ -301,19 +302,36 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
 
     current_status_from_store: Status = job_info.get("status", Status.UNKNOWN) # Default to UNKNOWN if status somehow missing
     
-    result_data_path: str | None = None
+    result_s3_uri: str | None = None
+    download_url: str | None = None
     user_message: str = f"Job '{job_id}' status is {str(current_status_from_store).split('.')[-1]}." # Default message
     error_info_details: str | None = None
 
     if current_status_from_store == Status.SUCCESS:
         user_friendly_status = "COMPLETED"
-        result_data_path = job_info.get("result")
-        user_message = f"Job '{job_id}' completed successfully."
-        if result_data_path:
-             logger.info(f"[{job_id}] Job completed successfully, result path: {result_data_path}")
+        result_s3_uri = job_info.get("result")
+        
+        if result_s3_uri:
+            try:
+                # Generate a pre-signed URL for the result archive
+                bucket_name, key = parse_s3_uri(result_s3_uri)
+                if bucket_name and key:
+                    download_url = s3_client.generate_presigned_url(
+                        'get_object',
+                        Params={'Bucket': bucket_name, 'Key': key},
+                        ExpiresIn=3600  # URL expires in 1 hour
+                    )
+                    user_message = "Job completed successfully. Click the link to download your results."
+                    logger.info(f"[{job_id}] Generated pre-signed URL for {result_s3_uri}")
+                else:
+                    user_message = "Job completed, but result path is invalid."
+                    logger.warning(f"[{job_id}] Could not parse bucket/key from result URI: {result_s3_uri}")
+            except Exception as e:
+                user_message = "Job completed, but failed to generate download link."
+                logger.error(f"[{job_id}] Failed to generate pre-signed URL: {e}", exc_info=True)
         else:
+            user_message = "Job completed successfully, but the result path is missing."
             logger.warning(f"[{job_id}] Job status is SUCCESS but no result path found.")
-            user_message += " However, the result path is missing."
             
     elif current_status_from_store == Status.FAILED:
         user_friendly_status = "FAILED"
@@ -357,7 +375,8 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
         job_id=job_id,
         status=user_friendly_status,
         message=user_message,
-        result_path=result_data_path,
+        result_s3_uri=result_s3_uri,
+        download_url=download_url,
         error_details=error_info_details
     )
 

@@ -38,8 +38,15 @@ s3_client = boto3.client(
     )
 )
 
-# Near s3_client initialization, or where appropriate
-s3 = s3fs.S3FileSystem(anon=False) # anon=False by default, uses boto3 credentials
+_s3_fs_instance = None
+
+def get_s3_fs():
+    """Get a singleton s3fs.S3FileSystem instance."""
+    global _s3_fs_instance
+    if _s3_fs_instance is None:
+        # Use anon=False to ensure boto3 credentials are used
+        _s3_fs_instance = s3fs.S3FileSystem(anon=False)
+    return _s3_fs_instance
 
 # Helper function for structured logging
 def log_worker_event(event_type, job_id, duration_ms=None, status=None, error=None, **kwargs):
@@ -133,10 +140,13 @@ def _run_graph_job(job_id: str, input_s3_uri: str, graph: ExecutableGraph, colum
         # Create local directories for processing
         os.makedirs(local_output_job_path, exist_ok=True)
 
+        s3 = get_s3_fs()
+
         # 1. Download data from S3 and load it
         logger.info(f"[{job_id}] Downloading and loading data from {input_s3_uri}.")
         if input_s3_uri.endswith(".csv"):
-            data = pd.read_csv(input_s3_uri)
+            with s3.open(input_s3_uri, 'r') as f:
+                data = pd.read_csv(f)
         else:
             raise ValueError(f"Input file must be a CSV file: {input_s3_uri}")
 
@@ -199,72 +209,47 @@ def _run_graph_job(job_id: str, input_s3_uri: str, graph: ExecutableGraph, colum
             )   
             # Non-critical failure for notebook export, proceed to upload other results
 
-        logger.info(f"[{job_id}] Uploading results from {local_output_job_path} to S3 bucket {output_bucket_name} with prefix {s3_output_key_prefix}")
+        # --- New: Zip results and upload as a single archive ---
+        logger.info(f"[{job_id}] Zipping results from {local_output_job_path} for upload.")
+        
+        try:
+            # Create a zip archive of the output directory
+            zip_file_name = f"pyautocausal_results_{job_id}"
+            # Place archive in parent of output dir to avoid zipping the archive itself
+            archive_path_base = os.path.join(WORKER_TEMP_DIR, "output", zip_file_name)
+            archive_local_path_str = shutil.make_archive(
+                base_name=archive_path_base,
+                format='zip',
+                root_dir=local_output_job_path
+            )
+            archive_local_path = Path(archive_local_path_str)
+            archive_file_size = _get_file_size(archive_local_path)
+            
+            # Define S3 path for the zip file
+            output_bucket_name, output_base_path = parse_s3_uri(S3_OUTPUT_DIR)
+            archive_s3_key = f"{output_base_path.strip('/')}/{job_id}/{archive_local_path.name}"
+            archive_s3_uri = f"s3://{output_bucket_name}/{archive_s3_key}"
 
-        upload_start = time.time()
-        uploaded_files_count = 0
-        total_uploaded_bytes = 0
-        
-        # Find all files to upload first
-        output_files = list(local_output_job_path.rglob('*'))
-        output_files = [f for f in output_files if f.is_file()]
-        
-        if not output_files:
-            logger.warning(f"[{job_id}] No files found in {local_output_job_path} to upload to S3.")
-        else:
-            logger.info(f"[{job_id}] Found {len(output_files)} files in {local_output_job_path} to upload to S3")
-        
-        # Upload each file with progress tracking
-        for item in output_files:
-            if item.is_file():
-                logger.info(f"Joining {s3_output_key_prefix.strip('/')} and {str(item.relative_to(local_output_job_path)).strip('/')} to get {s3_output_key_prefix.strip('/') + '/' + str(item.relative_to(local_output_job_path)).strip('/')}")
-                s3_uri = s3_output_key_prefix.strip('/') + '/' + str(item.relative_to(local_output_job_path)).strip('/')
-                file_size = item.stat().st_size
-                    
-                try:
-                    logger.debug(f"[{job_id}] Uploading {item.name} ({file_size} bytes) to {s3_uri} using s3fs")
-                    file_upload_start = time.time()
-                    
-                    s3.put(str(item), s3_uri) # Use s3fs.put()
-                    
-                    time_now = time.time()
-                    file_upload_duration = (time_now - file_upload_start) * 1000  # ms
-                    
-                    log_worker_event(
-                        event_type="file_upload_complete",
-                        job_id=job_id,
-                        duration_ms=file_upload_duration,
-                        file_name=item.name,
-                        file_size_bytes=file_size,
-                        s3_key=s3_uri
-                    )
-                    
-                    logger.debug(f"[{job_id}] Uploaded {item.name} to bucket: {output_bucket_name}, key: {s3_uri} in {file_upload_duration:.2f}ms")
-                    uploaded_files_count += 1
-                    total_uploaded_bytes += file_size
-                except NoCredentialsError:
-                    logger.error(f"[{job_id}] AWS credentials not found for S3 upload of {item.name}.")
-                    raise # Critical error
-                except ClientError as e:
-                    logger.error(f"[{job_id}] S3 upload failed for {item.name}: {e}", exc_info=True)
-                    # Decide if one failed upload should fail the whole job
-                    # For now, we'll log and continue, but this might need adjustment
+            logger.info(f"[{job_id}] Uploading result archive ({archive_file_size} bytes) to {archive_s3_uri}")
+            upload_start = time.time()
             
-        upload_duration = (time.time() - upload_start) * 1000  # ms
+            s3.put(str(archive_local_path), archive_s3_uri)
             
-        log_worker_event(
-            event_type="s3_uploads_complete",
-            job_id=job_id,
-            duration_ms=upload_duration,
-            files_count=uploaded_files_count,
-            total_bytes=total_uploaded_bytes
-        )
+            upload_duration = (time.time() - upload_start) * 1000
             
-        if uploaded_files_count == 0:
-            logger.warning(f"[{job_id}] No files were uploaded to S3.")
-        else:
-            logger.info(f"[{job_id}] Successfully uploaded {uploaded_files_count} result files ({total_uploaded_bytes} bytes) to {s3_uri} in {upload_duration:.2f}ms")
+            log_worker_event(
+                event_type="archive_upload_complete",
+                job_id=job_id,
+                duration_ms=upload_duration,
+                archive_size_bytes=archive_file_size,
+                s3_uri=archive_s3_uri
+            )
+            logger.info(f"[{job_id}] Successfully uploaded result archive to {archive_s3_uri} in {upload_duration:.2f}ms")
 
+        except Exception as e:
+            logger.error(f"[{job_id}] Failed to create or upload result archive: {e}", exc_info=True)
+            raise  # Re-raise to fail the job
+        
         # Record total job time
         total_job_duration = (time.time() - task_start_time) * 1000  # ms
             
@@ -272,11 +257,11 @@ def _run_graph_job(job_id: str, input_s3_uri: str, graph: ExecutableGraph, colum
             event_type="job_completed_successfully",
             job_id=job_id,
             duration_ms=total_job_duration,
-            output_s3_uri=s3_output_key_prefix
+            output_s3_uri=archive_s3_uri
         )
             
-        logger.info(f"[{job_id}] Task 'run_graph_job' completed successfully in {total_job_duration:.2f}ms. Output at {s3_output_key_prefix}")
-        return s3_output_key_prefix
+        logger.info(f"[{job_id}] Task 'run_graph_job' completed successfully in {total_job_duration:.2f}ms. Output at {archive_s3_uri}")
+        return archive_s3_uri
 
     except Exception as e:
         # Log failure with full details
