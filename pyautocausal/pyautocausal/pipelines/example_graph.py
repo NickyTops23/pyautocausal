@@ -18,12 +18,15 @@ from pyautocausal.pipelines.library.estimators import (
     fit_callaway_santanna_estimator, 
     fit_callaway_santanna_nyt_estimator, 
     fit_synthdid_estimator,
+    fit_hainmueller_synth_estimator,
+    fit_hainmueller_placebo_test,
     fit_panel_ols, 
     fit_did_panel
 )
 from pyautocausal.pipelines.library.output import (
     write_statsmodels_summary, 
-    write_statsmodels_summary_notebook
+    write_statsmodels_summary_notebook,
+    write_hainmueller_summary
 )
 from pyautocausal.pipelines.library.specifications import (
     create_cross_sectional_specification, 
@@ -39,10 +42,12 @@ from pyautocausal.pipelines.library.conditions import (
     has_sufficient_never_treated_units, 
     has_single_treated_unit
 )
-from pyautocausal.pipelines.library.plots import event_study_plot, synthdid_plot
-from pyautocausal.pipelines.library.callaway_santanna import (
-    format_callaway_santanna_results, 
-    event_study_plot_callaway
+from pyautocausal.pipelines.library.plots import event_study_plot, synthdid_plot, hainmueller_synth_plot
+
+from pyautocausal.pipelines.library.plots import (
+    callaway_santanna_event_study_plot,
+    callaway_santanna_group_plot,
+    callaway_santanna_diagnostic_plots
 )
 
 from pyautocausal.persistence.visualizer import visualize_graph
@@ -158,6 +163,47 @@ def _create_synthetic_did_branch(graph: ExecutableGraph, abs_plots_dir: Path) ->
     )
 
 
+def _create_hainmueller_synth_branch(graph: ExecutableGraph, abs_plots_dir: Path, abs_text_dir: Path) -> None:
+    """Create nodes for Hainmueeller Synthetic Control analysis branch."""
+    # Hainmueeller Synthetic Control specification (reuses synthdid_spec)
+    graph.create_node(
+        'hainmueller_fit', 
+        action_function=fit_hainmueller_synth_estimator.transform({'synthdid_spec': 'spec'}),
+        predecessors=["synthdid_spec"]
+    )
+    
+    # Placebo test for Hainmueeller method
+    graph.create_node(
+        'hainmueller_placebo',
+        action_function=fit_hainmueller_placebo_test.transform({'hainmueller_fit': 'spec'}),
+        predecessors=["hainmueller_fit"]
+    )
+    
+    # Text output for Hainmueeller results
+    graph.create_node(
+        'hainmueller_output',
+        action_function=write_hainmueller_summary.transform({'hainmueller_placebo': 'spec'}),
+        output_config=OutputConfig(
+            output_filename=abs_text_dir / 'hainmueller_output', 
+            output_type=OutputType.TEXT
+        ),
+        save_node=True,
+        predecessors=["hainmueller_placebo"]
+    )
+    
+    # Plot with placebo results
+    graph.create_node(
+        'hainmueller_plot',
+        action_function=hainmueller_synth_plot.transform({'hainmueller_placebo': 'spec'}),
+        output_config=OutputConfig(
+            output_filename=abs_plots_dir / 'hainmueller_synth_plot', 
+            output_type=OutputType.PNG
+        ),
+        save_node=True,
+        predecessors=["hainmueller_placebo"]
+    )
+
+
 def _create_did_branch(graph: ExecutableGraph, abs_text_dir: Path) -> None:
     """Create nodes for standard DiD analysis branch."""
     # Standard DiD specification and analysis
@@ -263,25 +309,22 @@ def _create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs
         predecessors=["has_never_treated"]
     )
     
+    
     graph.create_node(
-        'save_cs_never_treated',
-        action_function=format_callaway_santanna_results.transform({'cs_never_treated': 'spec'}),
-        output_config=OutputConfig(
-            output_filename=abs_text_dir / 'callaway_santanna_never_treated_results',
-            output_type=OutputType.TEXT
-        ),
-        save_node=True,
+        'cs_never_treated_event_plot',
+        action_function=callaway_santanna_event_study_plot.transform({'cs_never_treated': 'spec'}),
         predecessors=["cs_never_treated"]
     )
     
     graph.create_node(
-        'cs_never_treated_plot',
-        action_function=event_study_plot_callaway.transform({'cs_never_treated': 'spec'}),
-        output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'callaway_santanna_never_treated_plot',
-            output_type=OutputType.PNG
-        ),
-        save_node=True,
+        'cs_never_treated_group_plot',
+        action_function=callaway_santanna_group_plot.transform({'cs_never_treated': 'spec'}),
+        predecessors=["cs_never_treated"]
+    )
+    
+    graph.create_node(
+        'cs_never_treated_diagnostics',
+        action_function=callaway_santanna_diagnostic_plots.transform({'cs_never_treated': 'spec'}),
         predecessors=["cs_never_treated"]
     )
     
@@ -293,24 +336,20 @@ def _create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs
     )
     
     graph.create_node(
-        'save_cs_not_yet_treated',
-        action_function=format_callaway_santanna_results.transform({'cs_not_yet_treated': 'spec'}),
-        output_config=OutputConfig(
-            output_filename=abs_text_dir / 'callaway_santanna_not_yet_treated_results',
-            output_type=OutputType.TEXT
-        ),
-        save_node=True,
+        'cs_not_yet_treated_event_plot',
+        action_function=callaway_santanna_event_study_plot.transform({'cs_not_yet_treated': 'spec'}),
         predecessors=["cs_not_yet_treated"]
     )
     
     graph.create_node(
-        'cs_not_yet_treated_plot',
-        action_function=event_study_plot_callaway.transform({'cs_not_yet_treated': 'spec'}),
-        output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'callaway_santanna_not_yet_treated_plot',
-            output_type=OutputType.PNG
-        ),
-        save_node=True,
+        'cs_not_yet_treated_group_plot',
+        action_function=callaway_santanna_group_plot.transform({'cs_not_yet_treated': 'spec'}),
+        predecessors=["cs_not_yet_treated"]
+    )
+    
+    graph.create_node(
+        'cs_not_yet_treated_diagnostics',
+        action_function=callaway_santanna_diagnostic_plots.transform({'cs_not_yet_treated': 'spec'}),
         predecessors=["cs_not_yet_treated"]
     )
     
@@ -345,7 +384,7 @@ def _configure_decision_paths(graph: ExecutableGraph) -> None:
     graph.when_true("multi_period", "single_treated_unit")
     graph.when_true("multi_period", "did_spec")
 
-    # Single treated unit routing
+    # Single treated unit routing - both synthetic control methods run in parallel
     graph.when_true("single_treated_unit", "synthdid_spec")
     graph.when_false("single_treated_unit", "multi_post_periods")
 
@@ -369,6 +408,7 @@ def causal_pipeline(output_path: Path) -> ExecutableGraph:
     The pipeline supports:
     - Cross-sectional analysis (single period)
     - Synthetic DiD (single treated unit, multiple periods)
+    - Hainmueeller Synthetic Control with in-space placebo tests (single treated unit, multiple periods)
     - Standard DiD (multiple periods, insufficient for staggered)
     - Event study (multiple periods, non-staggered treatment)
     - Staggered DiD with Callaway & Sant'Anna methods
@@ -387,6 +427,7 @@ def causal_pipeline(output_path: Path) -> ExecutableGraph:
     _create_basic_nodes(graph, abs_text_dir)
     _create_cross_sectional_branch(graph, abs_text_dir)
     _create_synthetic_did_branch(graph, abs_plots_dir)
+    _create_hainmueller_synth_branch(graph, abs_plots_dir, abs_text_dir)
     _create_did_branch(graph, abs_text_dir)
     _create_event_study_branch(graph, abs_text_dir, abs_plots_dir)
     _create_staggered_did_branch(graph, abs_text_dir, abs_plots_dir)
@@ -414,7 +455,10 @@ def _print_execution_summary(graph: ExecutableGraph) -> None:
     print(f"Skipped nodes (due to branching): {skipped_nodes}")
 
 
-def _export_outputs(graph: ExecutableGraph, output_path: Path) -> None:
+def _export_outputs(graph: ExecutableGraph, 
+                    output_path: Path, 
+                    datafile_name: str
+                    ) -> None:
     """Export graph visualization, notebook, and HTML report."""
     # Graph visualization
     md_visualization_path = output_path / "text" / "causal_pipeline_visualization.md"
@@ -422,16 +466,18 @@ def _export_outputs(graph: ExecutableGraph, output_path: Path) -> None:
     print(f"Graph visualization saved to {md_visualization_path}")
     
     # Notebook and HTML export
-    notebook_path = output_path / "notebooks" / "causal_pipeline_execution.ipynb"
-    html_path = output_path / "notebooks" / "causal_pipeline_execution.html"
-    data_csv_path = output_path / "notebooks" / "causal_pipeline_data.csv"
+    name = datafile_name.replace(".csv", "")
+
+    notebook_path = output_path / "notebooks" / f"{name}.ipynb"
+    html_path = output_path / "notebooks" / f"{name}.html"
+    data_csv_path = output_path / "notebooks" / f"{datafile_name}"
     
     exporter = NotebookExporter(graph)
     
     # Export notebook
     exporter.export_notebook(
         str(notebook_path),
-        data_path="causal_pipeline_data.csv",  # Relative path for notebook execution
+        data_path=f"{datafile_name}",  # Relative path for notebook execution
         loading_function="pd.read_csv"
     )
     print(f"Notebook exported to {notebook_path}")
@@ -443,7 +489,7 @@ def _export_outputs(graph: ExecutableGraph, output_path: Path) -> None:
             html_output_path = exporter.export_and_run_to_html(
                 notebook_filepath=notebook_path,
                 html_filepath=html_path,
-                data_path="causal_pipeline_data.csv",  # Relative path from notebooks directory
+                data_path=f"{datafile_name}",  # Relative path from notebooks directory
                 loading_function="pd.read_csv",
                 timeout=300  # 5 minutes timeout
             )
@@ -516,7 +562,7 @@ def main():
     _print_execution_summary(graph)
     print("-" * 50)
     
-    _export_outputs(graph, output_path)
+    _export_outputs(graph, output_path, name="causal_pipeline_execution")
     print("\n======= Example Graph Run Finished =======")
 
 

@@ -8,6 +8,7 @@ import numpy as np
 from typing import Optional, Union, Tuple
 import re
 import warnings
+import scipy.stats as stats
 
 from pyautocausal.pipelines.library.specifications import (
     BaseSpec, DiDSpec, StaggeredDiDSpec, EventStudySpec
@@ -15,7 +16,7 @@ from pyautocausal.pipelines.library.specifications import (
 from pyautocausal.persistence.parameter_mapper import make_transformable
 from pyautocausal.pipelines.library.callaway_santanna import CSResults
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-
+from pyautocausal.pipelines.library.synthdid.plot import plot_synthdid
 
 def _get_confidence_intervals(model, confidence_level: float):
     """
@@ -63,101 +64,71 @@ def _extract_cs_results(cs_model: CSResults) -> pd.DataFrame:
     })
 
 
-def _extract_event_study_results(spec: EventStudySpec, params: pd.Series, conf_int: pd.DataFrame) -> pd.DataFrame:
-    """Extract event study results from EventStudySpec."""
+def _extract_event_study_results(spec: Union[EventStudySpec, StaggeredDiDSpec], params: pd.Series, conf_int: pd.DataFrame) -> pd.DataFrame:
+    """Extract event study results from EventStudySpec or StaggeredDiDSpec."""
     periods = []
     coeffs = []
     lower_ci = []
     upper_ci = []
     
-    event_pattern_minus = re.compile(r'event_m(\d+)')  # For negative periods: event_m1 = -1
-    event_pattern_plus = re.compile(r'event_p(\d+)')   # For positive periods: event_p1 = +1
+    event_pattern_pre = re.compile(r'event_pre(\d+)')   # For negative periods: event_pre1 = -1
+    event_pattern_post = re.compile(r'event_post(\d+)') # For positive periods: event_post1 = +1
     
-    # Process event columns in chronological order
-    for col in sorted(spec.event_cols):
-        # Check for negative period (m prefix)
-        match_minus = event_pattern_minus.match(col)
-        if match_minus and col in params.index:
-            period = -int(match_minus.group(1))  # Convert back to negative number
-            periods.append(period)
-            coeffs.append(params[col])
-            lower_ci.append(conf_int.loc[col, 'lower'])
-            upper_ci.append(conf_int.loc[col, 'upper'])
+    # Determine which parameters to check
+    if isinstance(spec, EventStudySpec):
+        # For EventStudySpec, use the specific event columns
+        param_names = sorted(spec.event_cols)
+    else:
+        # For StaggeredDiDSpec, check all parameters
+        param_names = sorted(params.index)
+    
+    # Process parameters to find event study coefficients
+    for param_name in param_names:
+        if param_name not in params.index:
             continue
             
-        # Check for positive/zero period (p prefix)
-        match_plus = event_pattern_plus.match(col)
-        if match_plus and col in params.index:
-            period = int(match_plus.group(1))  # Already positive
-            periods.append(period)
-            coeffs.append(params[col])
-            lower_ci.append(conf_int.loc[col, 'lower'])
-            upper_ci.append(conf_int.loc[col, 'upper'])
-    
-    # Reference period should have zero effect by definition
-    if spec.reference_period not in periods:
-        periods.append(spec.reference_period)
-        coeffs.append(0)
-        lower_ci.append(0)
-        upper_ci.append(0)
-    
-    return pd.DataFrame({
-        'period': periods,
-        'coef': coeffs,
-        'lower': lower_ci,
-        'upper': upper_ci
-    })
-
-
-def _extract_staggered_did_results(spec: StaggeredDiDSpec, params: pd.Series, conf_int: pd.DataFrame) -> pd.DataFrame:
-    """Extract event study results from StaggeredDiDSpec."""
-    if not (len(spec.interaction_cols) > 0 and any(col in params.index for col in spec.interaction_cols)):
-        raise ValueError("No interaction columns found in the StaggeredDiD model parameters")
-    
-    periods = []
-    coeffs = []
-    lower_ci = []
-    upper_ci = []
-    
-    # Extract pre-period effects directly from event_m* columns
-    event_pattern_minus = re.compile(r'event_m(\d+)')
-    for param_name in sorted(params.index):
-        match = event_pattern_minus.match(param_name)
-        if match and param_name in params.index:
-            period = -int(match.group(1))  # Convert back to negative number
+        # Check for pre-treatment period (pre prefix)
+        match_pre = event_pattern_pre.match(param_name)
+        if match_pre:
+            period = -int(match_pre.group(1))  # Convert to negative number
             periods.append(period)
             coeffs.append(params[param_name])
             lower_ci.append(conf_int.loc[param_name, 'lower'])
             upper_ci.append(conf_int.loc[param_name, 'upper'])
-    
-    # Add treatment period (time 0) as reference with 0 effect
-    periods.append(0)
-    coeffs.append(0.0)
-    lower_ci.append(0.0)
-    upper_ci.append(0.0)
-    
-    # Extract post-treatment effects
-    effect_pattern = re.compile(r'effect_(\d+)')
-    
-    # Get minimum cohort period for normalization
-    min_cohort = min(int(cohort) for cohort in spec.cohorts)
-    
-    # Process each effect parameter
-    for param_name in sorted(params.index):
-        match = effect_pattern.match(param_name)
-        if match:
-            # Get the period number from the effect name
-            raw_period = int(match.group(1))
+            continue
             
-            # Transform to relative period (relative to first treatment time)
-            # If effect_5, effect_6, etc. make them relative time 1, 2, etc.
-            relative_period = raw_period - min_cohort + 1
-            
-            # Add the effect parameters
-            periods.append(relative_period)
+        # Check for post-treatment period (post prefix)
+        match_post = event_pattern_post.match(param_name)
+        if match_post:
+            period = int(match_post.group(1))  # Already positive
+            periods.append(period)
             coeffs.append(params[param_name])
             lower_ci.append(conf_int.loc[param_name, 'lower'])
             upper_ci.append(conf_int.loc[param_name, 'upper'])
+            continue
+        
+        # Check for event_period0 (t=0)
+        if param_name == 'event_period0':
+            periods.append(0)
+            coeffs.append(params[param_name])
+            lower_ci.append(conf_int.loc[param_name, 'lower'])
+            upper_ci.append(conf_int.loc[param_name, 'upper'])
+    
+    # Handle reference period
+    if isinstance(spec, EventStudySpec):
+        # For EventStudySpec, use the specified reference period
+        if spec.reference_period not in periods:
+            periods.append(spec.reference_period)
+            coeffs.append(0)
+            lower_ci.append(0)
+            upper_ci.append(0)
+    else:
+        # For StaggeredDiDSpec, add treatment period (time 0) as reference if not present
+        if 0 not in periods:
+            periods.append(0)
+            coeffs.append(0.0)
+            lower_ci.append(0.0)
+            upper_ci.append(0.0)
     
     return pd.DataFrame({
         'period': periods,
@@ -169,21 +140,51 @@ def _extract_staggered_did_results(spec: StaggeredDiDSpec, params: pd.Series, co
 
 def _extract_generic_results(params: pd.Series, conf_int: pd.DataFrame) -> pd.DataFrame:
     """Extract results from generic model with event patterns or treat_post fallback."""
-    # Look for any event_* columns in parameters as fallback
-    event_pattern = re.compile(r'event_(-?\d+)')
     periods = []
     coeffs = []
     lower_ci = []
     upper_ci = []
     
+    # Look for event_pre* columns (pre-treatment periods)
+    event_pattern_pre = re.compile(r'event_pre(\d+)')
     for param_name in params.index:
-        match = event_pattern.match(param_name)
+        match = event_pattern_pre.match(param_name)
         if match:
-            period = int(match.group(1))
+            period = -int(match.group(1))  # Negative for pre-periods
             periods.append(period)
             coeffs.append(params[param_name])
             lower_ci.append(conf_int.loc[param_name, 'lower'])
             upper_ci.append(conf_int.loc[param_name, 'upper'])
+    
+    # Look for event_post* columns (post-treatment periods)
+    event_pattern_post = re.compile(r'event_post(\d+)')
+    for param_name in params.index:
+        match = event_pattern_post.match(param_name)
+        if match:
+            period = int(match.group(1))  # Positive for post-periods
+            periods.append(period)
+            coeffs.append(params[param_name])
+            lower_ci.append(conf_int.loc[param_name, 'lower'])
+            upper_ci.append(conf_int.loc[param_name, 'upper'])
+    
+    # Check for event_period0 (t=0)
+    if 'event_period0' in params.index:
+        periods.append(0)
+        coeffs.append(params['event_period0'])
+        lower_ci.append(conf_int.loc['event_period0', 'lower'])
+        upper_ci.append(conf_int.loc['event_period0', 'upper'])
+    
+    # Fallback to old event_* pattern for backward compatibility
+    if not periods:
+        event_pattern_old = re.compile(r'event_(-?\d+)')
+        for param_name in params.index:
+            match = event_pattern_old.match(param_name)
+            if match:
+                period = int(match.group(1))
+                periods.append(period)
+                coeffs.append(params[param_name])
+                lower_ci.append(conf_int.loc[param_name, 'lower'])
+                upper_ci.append(conf_int.loc[param_name, 'upper'])
     
     if not periods:
         # Final fallback - if treat_post exists, create basic DiD plot
@@ -195,6 +196,13 @@ def _extract_generic_results(params: pd.Series, conf_int: pd.DataFrame) -> pd.Da
         else:
             raise ValueError("Could not identify any event time indicators in the model parameters")
     
+    # Add reference period (time 0) if not already present
+    if 0 not in periods:
+        periods.append(0)
+        coeffs.append(0.0)
+        lower_ci.append(0.0)
+        upper_ci.append(0.0)
+    
     return pd.DataFrame({
         'period': periods,
         'coef': coeffs,
@@ -203,17 +211,46 @@ def _extract_generic_results(params: pd.Series, conf_int: pd.DataFrame) -> pd.Da
     })
 
 
-def _create_event_plot(results_df: pd.DataFrame, 
-                      confidence_level: float = 0.95,
-                      figsize: tuple = (12, 8),
-                      title: str = "Event Study Plot",
-                      xlabel: str = "Event Time",
-                      ylabel: str = "Coefficient Estimate",
-                      reference_line_color: str = "gray",
-                      reference_line_style: str = "--",
-                      effect_color: str = "blue",
-                      marker: str = "o") -> plt.Figure:
-    """Create the actual event study plot from standardized results DataFrame."""
+@make_transformable
+def event_study_plot(spec: Union[StaggeredDiDSpec, EventStudySpec], 
+                    confidence_level: float = 0.95,
+                    figsize: tuple = (12, 8),
+                    title: str = "Event Study Plot",
+                    xlabel: str = "Event Time",
+                    ylabel: str = "Coefficient Estimate",
+                    reference_line_color: str = "gray",
+                    reference_line_style: str = "--",
+                    effect_color: str = "blue",
+                    marker: str = "o") -> plt.Figure:
+    """
+    Create an event study plot from a specification with a fitted model.
+    
+    Args:
+        spec: A specification object with fitted model
+        confidence_level: Confidence level for intervals (default: 0.95)
+        figsize: Figure size as (width, height)
+        title: Plot title
+        xlabel: X-axis label
+        ylabel: Y-axis label
+        reference_line_color: Color for the zero reference line
+        reference_line_style: Line style for the zero reference line
+        effect_color: Color for the effect point estimates
+        marker: Marker style for point estimates
+        
+    Returns:
+        Matplotlib figure with the event study plot
+    """
+    # Check if model exists
+    if spec.model is None:
+        raise ValueError("Specification must contain a fitted model")
+
+    # For standard OLS models
+    params = spec.model.params
+    conf_int = _get_confidence_intervals(spec.model, confidence_level)
+    
+    # Extract results from the specification
+    results_df = _extract_event_study_results(spec, params, conf_int)
+
     # Sort by period
     results_df = results_df.sort_values('period')
     
@@ -258,74 +295,6 @@ def _create_event_plot(results_df: pd.DataFrame,
     plt.tight_layout()
     
     return fig
-
-
-@make_transformable
-def event_study_plot(spec: Union[DiDSpec, StaggeredDiDSpec, EventStudySpec], 
-                    confidence_level: float = 0.95,
-                    figsize: tuple = (12, 8),
-                    title: str = "Event Study Plot",
-                    xlabel: str = "Event Time",
-                    ylabel: str = "Coefficient Estimate",
-                    reference_line_color: str = "gray",
-                    reference_line_style: str = "--",
-                    effect_color: str = "blue",
-                    confidence_color: str = "lightblue",
-                    marker: str = "o") -> plt.Figure:
-    """
-    Create an event study plot from a specification with a fitted model.
-    
-    Args:
-        spec: A specification object with fitted model
-        confidence_level: Confidence level for intervals (default: 0.95)
-        figsize: Figure size as (width, height)
-        title: Plot title
-        xlabel: X-axis label
-        ylabel: Y-axis label
-        reference_line_color: Color for the zero reference line
-        reference_line_style: Line style for the zero reference line
-        effect_color: Color for the effect point estimates
-        confidence_color: Color for the confidence intervals
-        marker: Marker style for point estimates
-        
-    Returns:
-        Matplotlib figure with the event study plot
-    """
-    # Check if model exists
-    if spec.model is None:
-        raise ValueError("Specification must contain a fitted model")
-    
-    # Extract results based on model type
-    if isinstance(spec.model, CSResults):
-        results_df = _extract_cs_results(spec.model)
-        title = title + " (Callaway & Sant'Anna)"
-        ylabel = "ATT Estimate"
-    else:
-        # For standard OLS models
-        params = spec.model.params
-        conf_int = _get_confidence_intervals(spec.model, confidence_level)
-        
-        # Extract results based on specification type
-        if isinstance(spec, EventStudySpec):
-            results_df = _extract_event_study_results(spec, params, conf_int)
-        elif isinstance(spec, StaggeredDiDSpec):
-            results_df = _extract_staggered_did_results(spec, params, conf_int)
-        else:
-            results_df = _extract_generic_results(params, conf_int)
-    
-    # Create and return the plot
-    return _create_event_plot(
-        results_df=results_df,
-        confidence_level=confidence_level,
-        figsize=figsize,
-        title=title,
-        xlabel=xlabel,
-        ylabel=ylabel,
-        reference_line_color=reference_line_color,
-        reference_line_style=reference_line_style,
-        effect_color=effect_color,
-        marker=marker
-    )
 
 
 def create_did_plot(spec: DiDSpec, 
@@ -440,13 +409,504 @@ def synthdid_plot(spec, output_config: Optional[OutputConfig] = None, **kwargs) 
     Returns:
         matplotlib figure object
     """
-    from pyautocausal.pipelines.library.synthdid_py.plot import plot_synthdid
+    
     
     if not hasattr(spec, 'model') or spec.model is None:
         raise ValueError("Specification must have a fitted model")
     
     # Create the plot
     fig, ax = plot_synthdid(spec.model, **kwargs)
+    
+    # Save if output config provided
+    if output_config:
+        if output_config.output_type == OutputType.PNG:
+            fig.savefig(f"{output_config.output_filename}.png", 
+                       dpi=300, bbox_inches='tight')
+        elif output_config.output_type == OutputType.PDF:
+            fig.savefig(f"{output_config.output_filename}.pdf", 
+                       bbox_inches='tight')
+    
+    return fig
+
+
+@make_transformable
+def callaway_santanna_summary_table(spec: StaggeredDiDSpec) -> pd.DataFrame:
+    """
+    Create a comprehensive summary table for Callaway & Sant'Anna results.
+    
+    Args:
+        spec: StaggeredDiDSpec with fitted Callaway & Sant'Anna model using csdid
+        
+    Returns:
+        DataFrame with formatted results table
+    """
+    if spec.model is None or 'att_gt_object' not in spec.model:
+        raise ValueError("No Callaway & Sant'Anna csdid results found in spec.model")
+    
+    att_gt = spec.model['att_gt_object']
+    
+    # Get the summary table from the att_gt object
+    summary_table = att_gt.summary2.copy()
+    
+    # Round numerical columns for better presentation
+    numerical_cols = summary_table.select_dtypes(include=[np.number]).columns
+    for col in numerical_cols:
+        summary_table[col] = summary_table[col].round(4)
+    
+    return summary_table
+
+
+@make_transformable
+def callaway_santanna_event_study_plot(
+    spec: StaggeredDiDSpec,
+    confidence_level: float = 0.95,
+    figsize: tuple = (12, 8),
+    title: str = "Event Study Plot (Callaway & Sant'Anna - csdid)",
+    xlabel: str = "Event Time",
+    ylabel: str = "ATT Estimate",
+    reference_line_color: str = "gray",
+    reference_line_style: str = "--",
+    effect_color: str = "blue",
+    marker: str = "o",
+    save_path: Optional[str] = None
+) -> plt.Figure:
+    """
+    Create an enhanced event study plot using the csdid module's plotting functionality.
+    
+    Args:
+        spec: StaggeredDiDSpec with fitted Callaway & Sant'Anna model
+        confidence_level: Confidence level for intervals (default: 0.95)
+        figsize: Figure size as (width, height)
+        title: Plot title
+        xlabel: X-axis label
+        ylabel: Y-axis label
+        reference_line_color: Color for the zero reference line
+        reference_line_style: Line style for the zero reference line
+        effect_color: Color for the effect point estimates
+        marker: Marker style for point estimates
+        save_path: Optional path to save the plot
+        
+    Returns:
+        Matplotlib figure with the event study plot
+    """
+    if spec.model is None or 'att_gt_object' not in spec.model:
+        raise ValueError("No Callaway & Sant'Anna csdid results found in spec.model")
+    
+    att_gt = spec.model['att_gt_object']
+    dynamic_effects = spec.model.get('dynamic_effects')
+    
+    if dynamic_effects is None:
+        raise ValueError("No dynamic effects found. Run aggte with type='dynamic' first.")
+    
+    # Close any existing figures to avoid multiple windows
+    plt.close('all')
+    
+    # Use the ATTgt plotting method - it will create its own figure
+    fig = att_gt.plot_aggte(
+        title=title,
+        xlab=xlabel,
+        ylab=ylabel,
+        theming=True,
+        ref_line=0
+    )
+    
+    # Set the figure size
+    fig.set_size_inches(figsize)
+    
+    # Save if path provided
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    return fig
+    
+
+
+@make_transformable
+def callaway_santanna_group_plot(
+    spec: StaggeredDiDSpec,
+    figsize: tuple = (15, 10),
+    title: str = "Group-Time Treatment Effects (Callaway & Sant'Anna)",
+    xlabel: str = "Time Period",
+    ylabel: str = "ATT Estimate",
+    save_path: Optional[str] = None
+) -> plt.Figure:
+    """
+    Create group-specific treatment effect plots using the csdid module.
+    
+    Args:
+        spec: StaggeredDiDSpec with fitted Callaway & Sant'Anna model
+        figsize: Figure size as (width, height)
+        title: Plot title
+        xlabel: X-axis label
+        ylabel: Y-axis label
+        save_path: Optional path to save the plot
+        
+    Returns:
+        Matplotlib figure with group-specific plots
+    """
+    if spec.model is None or 'att_gt_object' not in spec.model:
+        raise ValueError("No Callaway & Sant'Anna csdid results found in spec.model")
+    
+    att_gt = spec.model['att_gt_object']
+    
+    # Close any existing figures to avoid multiple windows
+    plt.close('all')
+    
+    # Use the ATTgt plotting method - it will create its own figure
+    fig = att_gt.plot_attgt(
+        title=title,
+        xlab=xlabel,
+        ylab=ylabel,
+        theming=True,
+        ref_line=0,
+        legend=True
+    )
+    
+    # Set the figure size
+    fig.set_size_inches(figsize)
+    
+    # Save if path provided
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    return fig
+
+
+@make_transformable
+def callaway_santanna_comprehensive_results(spec: StaggeredDiDSpec) -> str:
+    """
+    Generate simplified results summary for Callaway & Sant'Anna estimation.
+    
+    Args:
+        spec: StaggeredDiDSpec with fitted Callaway & Sant'Anna model
+        
+    Returns:
+        Formatted string with key results
+    """
+    if spec.model is None or 'att_gt_object' not in spec.model:
+        raise ValueError("No Callaway & Sant'Anna csdid results found in spec.model")
+    
+    att_gt = spec.model['att_gt_object']
+    overall_effect = spec.model.get('overall_effect')
+    control_group = spec.model.get('control_group', 'unknown')
+    
+    import io
+    buffer = io.StringIO()
+    
+    # Header
+    buffer.write("=" * 60 + "\n")
+    buffer.write("CALLAWAY & SANT'ANNA DiD RESULTS\n")
+    buffer.write("=" * 60 + "\n")
+    buffer.write(f"Control Group: {control_group.replace('_', ' ').title()}\n")
+    buffer.write(f"Sample: {len(spec.data)} obs, {spec.data[spec.unit_col].nunique()} units\n\n")
+    
+    # Overall ATT - simplified and safer
+    if overall_effect is not None:
+        try:
+            overall_att = float(overall_effect.atte['overall_att'])
+            overall_se = float(overall_effect.atte['overall_se'])
+            
+            buffer.write("OVERALL TREATMENT EFFECT:\n")
+            buffer.write("-" * 30 + "\n")
+            buffer.write(f"ATT:        {overall_att:>8.4f}\n")
+            buffer.write(f"Std Error:  {overall_se:>8.4f}\n")
+            
+            # Calculate confidence intervals
+            ci_lower = overall_att - 1.96 * overall_se
+            ci_upper = overall_att + 1.96 * overall_se
+            buffer.write(f"95% CI:     [{ci_lower:>7.4f}, {ci_upper:>7.4f}]\n")
+            
+            # Simple significance test
+            if overall_se > 0:
+                t_stat = overall_att / overall_se
+                significance = "***" if abs(t_stat) > 2.58 else "**" if abs(t_stat) > 1.96 else "*" if abs(t_stat) > 1.64 else ""
+                buffer.write(f"Significant: {significance if significance else 'No'}\n")
+            
+            buffer.write("\n")
+        except Exception as e:
+            buffer.write(f"Overall effect formatting error: {str(e)}\n\n")
+    
+    # Simple summary table - just use the built-in summary
+    buffer.write("DETAILED RESULTS:\n")
+    buffer.write("-" * 30 + "\n")
+    try:
+        summary_table = att_gt.summary2
+        buffer.write(summary_table.to_string(index=False))
+        buffer.write("\n\n")
+    except Exception as e:
+        buffer.write(f"Summary table error: {str(e)}\n\n")
+    
+    buffer.write("=" * 60 + "\n")
+    buffer.write("Note: *** p<0.01, ** p<0.05, * p<0.1\n")
+    buffer.write("=" * 60 + "\n")
+    
+    return buffer.getvalue()
+
+
+@make_transformable  
+def callaway_santanna_diagnostic_plots(
+    spec: StaggeredDiDSpec,
+    figsize: tuple = (16, 12),
+    save_path: Optional[str] = None
+) -> plt.Figure:
+    """
+    Create comprehensive diagnostic plots for Callaway & Sant'Anna estimation.
+    
+    Args:
+        spec: StaggeredDiDSpec with fitted Callaway & Sant'Anna model
+        figsize: Figure size as (width, height)
+        save_path: Optional path to save the plot
+        
+    Returns:
+        Matplotlib figure with multiple diagnostic subplots
+    """
+    if spec.model is None or 'att_gt_object' not in spec.model:
+        raise ValueError("No Callaway & Sant'Anna csdid results found in spec.model")
+    
+    att_gt = spec.model['att_gt_object']
+    overall_effect = spec.model.get('overall_effect')
+    dynamic_effects = spec.model.get('dynamic_effects')
+    group_effects = spec.model.get('group_effects')
+    
+    # Create subplots
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    fig.suptitle('Callaway & Sant\'Anna DiD - Comprehensive Results', fontsize=16, fontweight='bold')
+    
+    # Plot 1: Event Study (Dynamic Effects)
+    if dynamic_effects is not None:
+        ax1 = axes[0, 0]
+        try:
+            dynamic_results = dynamic_effects.atte
+            event_times = [int(float(x)) for x in dynamic_results['egt']]
+            atts = [float(x) for x in dynamic_results['att_egt']]
+            ses = [float(x) for x in dynamic_results['se_egt']]
+            
+            # Plot with error bars
+            ax1.errorbar(event_times, atts, yerr=1.96*np.array(ses), 
+                        fmt='o', color='blue', capsize=5, capthick=2)
+            ax1.axhline(y=0, color='gray', linestyle='--')
+            ax1.axvline(x=0, color='gray', linestyle='--', alpha=0.7)
+            ax1.set_xlabel('Event Time')
+            ax1.set_ylabel('ATT')
+            ax1.set_title('Dynamic Treatment Effects')
+            ax1.grid(True, alpha=0.3)
+        except Exception as e:
+            ax1.text(0.5, 0.5, f"Dynamic effects plot error:\n{str(e)}", 
+                    transform=ax1.transAxes, ha='center', va='center')
+    
+    # Plot 2: Group-specific Effects
+    if group_effects is not None:
+        ax2 = axes[0, 1]
+        try:
+            group_results = group_effects.atte
+            groups = [int(float(x)) for x in group_results['egt']]
+            atts = [float(x) for x in group_results['att_egt']]
+            ses = [float(x) for x in group_results['se_egt']]
+            
+            # Plot with error bars
+            ax2.errorbar(groups, atts, yerr=1.96*np.array(ses), 
+                        fmt='s', color='red', capsize=5, capthick=2)
+            ax2.axhline(y=0, color='gray', linestyle='--')
+            ax2.set_xlabel('Treatment Group')
+            ax2.set_ylabel('ATT')
+            ax2.set_title('Group-Specific Effects')
+            ax2.grid(True, alpha=0.3)
+        except Exception as e:
+            ax2.text(0.5, 0.5, f"Group effects plot error:\n{str(e)}", 
+                    transform=ax2.transAxes, ha='center', va='center')
+    
+    # Plot 3: Treatment Effect Distribution
+    ax3 = axes[1, 0]
+    results = att_gt.results
+    all_atts = [att for att in results['att'] if not np.isnan(att)]
+    if all_atts:
+        ax3.hist(all_atts, bins=20, alpha=0.7, color='green', edgecolor='black')
+        ax3.axvline(x=np.mean(all_atts), color='red', linestyle='--', 
+                   label=f'Mean: {np.mean(all_atts):.3f}')
+        ax3.set_xlabel('ATT Estimates')
+        ax3.set_ylabel('Frequency')
+        ax3.set_title('Distribution of Group-Time ATT Estimates')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+    
+    # Plot 4: Summary Statistics Table as Text
+    ax4 = axes[1, 1]
+    ax4.axis('off')
+    
+    # Create summary text
+    summary_text = []
+    if overall_effect is not None:
+        overall_att = overall_effect.atte['overall_att']
+        overall_se = overall_effect.atte['overall_se']
+        summary_text.append(f"Overall ATT: {float(overall_att):.4f} ({float(overall_se):.4f})")
+    
+    if group_effects is not None:
+        n_groups = len(group_effects.atte['egt'])
+        summary_text.append(f"Number of Groups: {n_groups}")
+    
+    if dynamic_effects is not None:
+        n_periods = len(dynamic_effects.atte['egt'])
+        summary_text.append(f"Event Time Periods: {n_periods}")
+    
+    # Add data characteristics
+    data = spec.data
+    n_units = data[spec.unit_col].nunique()
+    n_periods = data[spec.time_col].nunique()
+    ever_treated = data[data['treat'] == 1][spec.unit_col].nunique()
+    
+    summary_text.extend([
+        f"Total Units: {n_units}",
+        f"Time Periods: {n_periods}",
+        f"Ever Treated Units: {ever_treated}",
+        f"Control Group: {spec.model.get('control_group', 'Unknown').title()}"
+    ])
+    
+    # Display summary text
+    text_str = '\n'.join(summary_text)
+    ax4.text(0.1, 0.9, 'Summary Statistics:', fontsize=14, fontweight='bold', 
+            transform=ax4.transAxes, verticalalignment='top')
+    ax4.text(0.1, 0.8, text_str, fontsize=11, transform=ax4.transAxes, 
+            verticalalignment='top', family='monospace')
+    
+    
+    # Save if path provided
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    plt.tight_layout()
+    return fig
+
+@make_transformable
+def hainmueller_synth_plot(spec, output_config: Optional[OutputConfig] = None, 
+                          figsize: tuple = (12, 8), **kwargs) -> plt.Figure:
+    """
+    Create a plot for Hainmueeller synthetic control results with placebo tests.
+    
+    Args:
+        spec: A SynthDIDSpec object with fitted Hainmueeller model
+        output_config: Configuration for saving the plot
+        figsize: Figure size as (width, height)
+        **kwargs: Additional arguments for plot customization
+        
+    Returns:
+        matplotlib figure object
+    """
+    
+    if not hasattr(spec, 'model') or spec.model is None:
+        raise ValueError("Specification must have a fitted Hainmueeller model")
+    
+    model = spec.model
+    if model.get('estimator') != 'hainmueller_synth':
+        raise ValueError("Model must be a Hainmueeller synthetic control model")
+    
+    # Extract data
+    treated_pre = model['treated_pre']
+    treated_post = model['treated_post']
+    synthetic_pre = model['synthetic_pre']
+    synthetic_post = model['synthetic_post']
+    effects_post = model['effects_post']
+    
+    # Get time dimensions
+    T0 = len(treated_pre)
+    T1 = len(treated_post)
+    T_total = T0 + T1
+    
+    # Create time axis
+    time_points = np.arange(T_total)
+    
+    # Combine pre and post data
+    treated_trajectory = np.concatenate([treated_pre, treated_post])
+    synthetic_trajectory = np.concatenate([synthetic_pre, synthetic_post])
+    
+    # Check if placebo results exist
+    has_placebo = 'placebo_results' in model
+    
+    if has_placebo:
+        # Create subplot layout for main plot + placebo results
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(figsize[0], figsize[1]), 
+                                      height_ratios=[2, 1], sharex=True)
+    else:
+        # Single plot
+        fig, ax1 = plt.subplots(figsize=figsize)
+    
+    # Main synthetic control plot
+    ax1.plot(time_points, treated_trajectory, 'b-', linewidth=2, label='Treated Unit', marker='o')
+    ax1.plot(time_points, synthetic_trajectory, 'r--', linewidth=2, label='Synthetic Control', marker='s')
+    
+    # Add vertical line at treatment time
+    ax1.axvline(x=T0, color='gray', linestyle=':', alpha=0.7, label='Treatment Start')
+    
+    # Add treatment effect arrows for post-treatment period
+    post_time_points = time_points[T0:]
+    for i, t in enumerate(post_time_points):
+        if i % 2 == 0:  # Show every other arrow to avoid clutter
+            ax1.annotate('', xy=(t, treated_trajectory[t]), xytext=(t, synthetic_trajectory[t]),
+                        arrowprops=dict(arrowstyle='<->', color='green', alpha=0.6))
+    
+    # Formatting for main plot
+    ax1.set_ylabel('Outcome')
+    ax1.set_title(f'Hainmueeller Synthetic Control\nATT = {model["estimate"]:.3f}, '
+                 f'Pre-RMSPE = {model["rmspe_pre"]:.3f}')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Add effect statistics box
+    effect_text = f'Average Effect: {model["estimate"]:.3f}\n'
+    effect_text += f'Pre-treatment RMSPE: {model["rmspe_pre"]:.3f}\n'
+    effect_text += f'Pre-treatment MAPE: {model["mape_pre"]:.3f}'
+    
+    if has_placebo:
+        placebo_results = model['placebo_results']
+        effect_text += f'\nP-value: {placebo_results["p_value"]:.3f}'
+        effect_text += f'\nRMSPE Ratio: {placebo_results["ratio_rmspe"]:.2f}'
+    
+    ax1.text(0.02, 0.98, effect_text, transform=ax1.transAxes, 
+            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
+            verticalalignment='top', fontsize=10)
+    
+    # Placebo test plot
+    if has_placebo:
+        placebo_results = model['placebo_results']
+        placebo_effects = placebo_results['placebo_effects']
+        actual_effect = placebo_results['actual_effect']
+        
+        # Plot histogram of placebo effects
+        ax2.hist(placebo_effects, bins=min(20, len(placebo_effects)), alpha=0.7, 
+                color='lightcoral', edgecolor='black', label='Placebo Effects')
+        
+        # Add vertical line for actual effect
+        ax2.axvline(x=actual_effect, color='blue', linewidth=3, 
+                   label=f'Actual Effect ({actual_effect:.3f})')
+        
+        # Add statistics
+        ax2.set_xlabel('Treatment Effect')
+        ax2.set_ylabel('Frequency')
+        ax2.set_title(f'Placebo Test Distribution (n={len(placebo_effects)}, p={placebo_results["p_value"]:.3f})')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Add text with p-value interpretation
+        if placebo_results['p_value'] < 0.05:
+            significance_text = 'Significant at 5% level'
+            text_color = 'green'
+        elif placebo_results['p_value'] < 0.10:
+            significance_text = 'Significant at 10% level'
+            text_color = 'orange'
+        else:
+            significance_text = 'Not significant'
+            text_color = 'red'
+            
+        ax2.text(0.02, 0.98, significance_text, transform=ax2.transAxes,
+                bbox=dict(boxstyle='round', facecolor=text_color, alpha=0.3),
+                verticalalignment='top', fontsize=10)
+    
+    # Set x-axis label
+    if has_placebo:
+        ax2.set_xlabel('Time Period')
+    else:
+        ax1.set_xlabel('Time Period')
+    
+    plt.tight_layout()
     
     # Save if output config provided
     if output_config:
