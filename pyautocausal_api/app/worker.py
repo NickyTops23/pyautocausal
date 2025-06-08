@@ -211,7 +211,8 @@ def _run_graph_job(job_id: str, input_s3_uri: str, graph: ExecutableGraph, colum
 
         # --- New: Zip results and upload as a single archive ---
         logger.info(f"[{job_id}] Zipping results from {local_output_job_path} for upload.")
-        
+        # list files in local_output_job_path
+        logger.info(f"[{job_id}] Files in {local_output_job_path}: {os.listdir(local_output_job_path)}")
         try:
             # Create a zip archive of the output directory
             zip_file_name = f"pyautocausal_results_{job_id}"
