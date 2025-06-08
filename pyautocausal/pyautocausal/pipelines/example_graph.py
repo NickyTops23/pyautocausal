@@ -154,11 +154,7 @@ def _create_synthetic_did_branch(graph: ExecutableGraph, abs_plots_dir: Path) ->
     graph.create_node(
         'synthdid_plot',
         action_function=synthdid_plot.transform({'synthdid_fit': 'spec'}),
-        output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'synthdid_plot', 
-            output_type=OutputType.PNG
-        ),
-        save_node=True,
+
         predecessors=["synthdid_fit"]
     )
 
@@ -186,18 +182,6 @@ def _create_hainmueller_synth_branch(graph: ExecutableGraph, abs_plots_dir: Path
         output_config=OutputConfig(
             output_filename=abs_text_dir / 'hainmueller_output', 
             output_type=OutputType.TEXT
-        ),
-        save_node=True,
-        predecessors=["hainmueller_placebo"]
-    )
-    
-    # Plot with placebo results
-    graph.create_node(
-        'hainmueller_plot',
-        action_function=hainmueller_synth_plot.transform({'hainmueller_placebo': 'spec'}),
-        output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'hainmueller_synth_plot', 
-            output_type=OutputType.PNG
         ),
         save_node=True,
         predecessors=["hainmueller_placebo"]
