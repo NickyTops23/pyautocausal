@@ -293,6 +293,6 @@ def plot_synthdid(est, effect_curve=None, figsize=(10, 6), title=None,
     ax.text(0.05, 0.95, est_text, transform=ax.transAxes, 
             bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'),
             verticalalignment='top')
+
     
-    plt.tight_layout()
     return fig, ax 

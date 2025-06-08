@@ -160,7 +160,8 @@ def fit_callaway_santanna(
     
     # Get all time periods and cohorts
     time_periods = sorted(data[time_col].unique())
-    cohorts = sorted([c for c in spec.cohorts if not pd.isna(c)])
+    # Extract cohorts from the treatment_time column (excluding 0 which represents never-treated)
+    cohorts = sorted([c for c in data[treatment_time_col].unique() if not pd.isna(c) and c != 0])
     
     # Compute ATT for each cohort-time combination
     att_dict = {}
@@ -507,9 +508,95 @@ def format_callaway_santanna_results(spec: StaggeredDiDSpec) -> str:
     Returns:
         Formatted string with results
     """
-    # Check if model exists
+    # Check for new csdid implementation first
+    if (spec.model is not None and 
+        isinstance(spec.model, dict) and 
+        'att_gt_object' in spec.model):
+        # Use enhanced formatting for csdid implementation
+        from pyautocausal.pipelines.library.plots import callaway_santanna_comprehensive_results
+        return callaway_santanna_comprehensive_results(spec)
+    
+    # Check if model exists (legacy implementation)
     if spec.model is None:
         return "No Callaway & Sant'Anna results found in spec.model"
     
-    # Return formatted results
-    return format_cs_results(spec.model) 
+    # Return formatted results for legacy implementation
+    return format_cs_results(spec.model)
+
+
+@make_transformable
+def export_callaway_santanna_table(spec: StaggeredDiDSpec, filename: str) -> str:
+    """
+    Export Callaway & Sant'Anna results table to CSV.
+    
+    Args:
+        spec: StaggeredDiDSpec with fitted Callaway & Sant'Anna model
+        filename: Output filename (without extension)
+        
+    Returns:
+        Path to the saved CSV file
+    """
+    from pyautocausal.pipelines.library.plots import callaway_santanna_summary_table
+    
+    try:
+        # Get the summary table
+        summary_table = callaway_santanna_summary_table(spec)
+        
+        # Save to CSV
+        csv_path = f"{filename}.csv"
+        summary_table.to_csv(csv_path, index=False)
+        
+        return csv_path
+    except Exception as e:
+        return f"Error exporting table: {str(e)}"
+
+
+@make_transformable
+def create_callaway_santanna_plots_suite(
+    spec: StaggeredDiDSpec, 
+    output_dir: str = ".",
+    filename_prefix: str = "callaway_santanna"
+) -> dict:
+    """
+    Create a comprehensive suite of Callaway & Sant'Anna plots.
+    
+    Args:
+        spec: StaggeredDiDSpec with fitted Callaway & Sant'Anna model
+        output_dir: Directory to save plots
+        filename_prefix: Prefix for plot filenames
+        
+    Returns:
+        Dictionary with paths to saved plots
+    """
+    from pyautocausal.pipelines.library.plots import (
+        callaway_santanna_event_study_plot,
+        callaway_santanna_group_plot,
+        callaway_santanna_diagnostic_plots
+    )
+    import os
+    
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    plot_paths = {}
+    
+    try:
+        # Event Study Plot
+        event_study_path = os.path.join(output_dir, f"{filename_prefix}_event_study.png")
+        event_fig = callaway_santanna_event_study_plot(spec, save_path=event_study_path)
+        plot_paths['event_study'] = event_study_path
+        
+        # Group-specific Plots
+        group_plot_path = os.path.join(output_dir, f"{filename_prefix}_group_effects.png")
+        group_fig = callaway_santanna_group_plot(spec, save_path=group_plot_path)
+        plot_paths['group_effects'] = group_plot_path
+        
+        # Diagnostic Plots
+        diagnostic_path = os.path.join(output_dir, f"{filename_prefix}_diagnostics.png")
+        diag_fig = callaway_santanna_diagnostic_plots(spec, save_path=diagnostic_path)
+        plot_paths['diagnostics'] = diagnostic_path
+        
+    except Exception as e:
+        plot_paths['error'] = f"Error creating plots: {str(e)}"
+    
+    return plot_paths

@@ -2,6 +2,12 @@ import pandas as pd
 from typing import Optional, Any, List, Tuple
 from dataclasses import dataclass
 from pyautocausal.persistence.parameter_mapper import make_transformable
+from pyautocausal.pipelines.library.output import write_statsmodels_summary
+from sklearn.linear_model import LogisticRegression, Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import NearestNeighbors
+from sklearn.model_selection import KFold
+from pyautocausal.pipelines.library.synthdid.utils import panel_matrices
 import numpy as np
 
 @dataclass
@@ -55,10 +61,6 @@ class StaggeredDiDSpec(BaseSpec):
     time_col: str
     unit_col: str
     treatment_time_col: str
-    cohorts: List[Any]
-    cohort_cols: List[str]
-    post_cols: List[str]
-    interaction_cols: List[str]
     model: Optional[Any] = None
 
 @dataclass
@@ -245,6 +247,8 @@ def create_did_specification(
     # Create post-treatment indicator if not provided
     if post_col is None:
         if treatment_time_col is not None:
+            # Ensure never-treated units have 0 in treatment_time_col, not NaN
+            data[treatment_time_col] = data[treatment_time_col].fillna(0)
             # Create post indicator based on treatment timing
             data['post'] = (data[time_col] >= data[treatment_time_col]).astype(int)
             post_col = 'post'
@@ -266,16 +270,18 @@ def create_did_specification(
         if control_cols:
             formula_parts.extend(["+ " + " + ".join(control_cols)])
     else:
-        # Model with fixed effects
+        # Model with fixed effects using linearmodels syntax
         if include_unit_fe:
-            formula_parts.append("+ C(" + unit_col + ")")
+            formula_parts.append("+ EntityEffects")
         if include_time_fe:
-            formula_parts.append("+ C(" + time_col + ")")
+            formula_parts.append("+ TimeEffects")
         if control_cols:
             formula_parts.extend(["+ " + " + ".join(control_cols)])
     
     formula = " ".join(formula_parts)
     
+    print(formula)
+
     # Create and return specification
     return DiDSpec(
         outcome_col=outcome_col,
@@ -298,7 +304,7 @@ def create_event_study_specification(
     treatment_cols: List[str] = ['treat'],
     time_col: str = 't',
     unit_col: str = 'id_unit',
-    treatment_time_col: Optional[str] = None,
+    reference_period: int = -1,
     relative_time_col: Optional[str] = None,
     pre_periods: int = 3,
     post_periods: int = 3,
@@ -313,7 +319,6 @@ def create_event_study_specification(
         treatment_cols: List of treatment column names
         time_col: Name of time column
         unit_col: Name of unit identifier column
-        treatment_time_col: Name of treatment timing column
         relative_time_col: Name of relative time column
         pre_periods: Number of pre-treatment periods to include
         post_periods: Number of post-treatment periods to include
@@ -340,75 +345,66 @@ def create_event_study_specification(
         excluded_cols=current_excluded_cols
     )
     
-    # Create relative time column if not provided
-    if relative_time_col is None:
-        # If treatment_time_col is provided, use it to create relative time
-        if treatment_time_col is not None:
-            data['relative_time'] = data[time_col] - data[treatment_time_col]
-            relative_time_col = 'relative_time'
-        else:
-            # Try to infer treatment timing for each treated unit
-            treatment_times = data[data[treatment_col] == 1].groupby(unit_col)[time_col].min()
-            
-            # Create relative time column
-            data['relative_time'] = data.apply(
-                lambda row: row[time_col] - treatment_times.get(row[unit_col], np.nan) 
-                if row[unit_col] in treatment_times.index else np.nan,
-                axis=1
-            )
-            relative_time_col = 'relative_time'
+    # Infer treatment timing from the data (same approach as staggered specification)
+    treatment_times = data[data[treatment_col] == 1].groupby(unit_col)[time_col].min()
+    data['treatment_time'] = data[unit_col].map(treatment_times)
+
+    # Create relative time variable (same approach as staggered specification)
+    data['relative_time'] = pd.NA
+    mask = ~data['treatment_time'].isna()
+    data.loc[mask, 'relative_time'] = (data.loc[mask, time_col] - data.loc[mask, 'treatment_time']).astype(int)
+    data.loc[~mask, 'relative_time'] = 0  # Never treated units get 0
     
     # Filter to include only the specified pre and post periods
     if pre_periods > 0 or post_periods > 0:
         min_period = -pre_periods if pre_periods > 0 else None
         max_period = post_periods if post_periods > 0 else None
         
-        # Keep rows that either match the filter or have NaN in relative_time_col
+        # Keep rows that either have relative_time==0 (never treated) or are within the specified range
         if min_period is not None and max_period is not None:
-            data = data[(data[relative_time_col].isna()) | 
-                       ((data[relative_time_col] >= min_period) & (data[relative_time_col] <= max_period))]
+            data = data[(data['relative_time'] == 0) | 
+                       ((data['relative_time'] >= min_period) & (data['relative_time'] <= max_period))]
         elif min_period is not None:
-            data = data[(data[relative_time_col].isna()) | (data[relative_time_col] >= min_period)]
+            data = data[(data['relative_time'] == 0) | (data['relative_time'] >= min_period)]
         elif max_period is not None:
-            data = data[(data[relative_time_col].isna()) | (data[relative_time_col] <= max_period)]
+            data = data[(data['relative_time'] == 0) | (data['relative_time'] <= max_period)]
+
+    print(data['relative_time'].value_counts())
     
-    # Create event time dummies
-    # Need to create event time columns with statsmodels-friendly names (no negative signs)
-    event_periods = sorted(data[relative_time_col].dropna().unique())
+    # Create event time dummies manually to avoid issues with negative signs in column names
+    # Get unique relative time values (excluding the reference period)
+    unique_times = sorted([t for t in data['relative_time'].dropna().unique() if t != reference_period])
+    
     event_cols = []
-    
-    # Create a mapping from periods to column names
-    period_to_col = {}
-    
-    for period in event_periods:
-        # Create columns with a format that statsmodels can handle
-        if period < 0:
-            col_name = f"event_m{abs(int(period))}"  # m for minus (e.g., event_m1 for -1)
+    for t in unique_times:
+        # Create formula-friendly column names
+        if t < 0:
+            col_name = f'event_pre{abs(t)}'  # event_pre1, event_pre2, etc.
+        elif t > 0:
+            col_name = f'event_post{t}'      # event_post1, event_post2, etc.
         else:
-            col_name = f"event_p{int(period)}"  # p for plus (e.g., event_p1 for +1)
+            col_name = 'event_period0'       # event_period0 for t=0
         
-        # Create indicator variable
-        data[col_name] = (data[relative_time_col] == period).astype(int)
+        # Create the dummy variable
+        data[col_name] = (data['relative_time'] == t).astype(int)
         event_cols.append(col_name)
-        period_to_col[period] = col_name
-    
-    # Omit reference period (usually -1) for identification
-    reference_period = -1
-    reference_col = period_to_col.get(reference_period)
-    if reference_col in event_cols:
-        event_cols.remove(reference_col)
     
     # Construct formula
     formula_parts = [outcome_col, "~"]
-    formula_parts.append(" + ".join(event_cols))
-    formula_parts.append("+ C(" + unit_col + ")")
-    formula_parts.append("+ C(" + time_col + ")")
+    if event_cols:
+        formula_parts.append(" + ".join(event_cols))
+    else:
+        formula_parts.append("1")  # Intercept only if no event columns
+    formula_parts.append("+ EntityEffects")
+    formula_parts.append("+ TimeEffects")
     
     if control_cols:
         formula_parts.append("+ " + " + ".join(control_cols))
     
     formula = " ".join(formula_parts)
     
+    print(formula)
+
     # Create and return the EventStudySpec object
     return EventStudySpec(
         outcome_col=outcome_col,
@@ -416,7 +412,7 @@ def create_event_study_specification(
         control_cols=control_cols,
         time_col=time_col,
         unit_col=unit_col,
-        relative_time_col=relative_time_col,
+        relative_time_col='relative_time',
         event_cols=event_cols,
         reference_period=reference_period,
         data=data,
@@ -431,9 +427,9 @@ def create_staggered_did_specification(
     treatment_cols: List[str] = ['treat'],
     time_col: str = 't',
     unit_col: str = 'id_unit',
-    treatment_time_col: Optional[str] = None,
     control_cols: Optional[List[str]] = None,
-    pre_periods: int = 4  
+    pre_periods: int = 4,
+    reference_period: int = -1
 ) -> StaggeredDiDSpec:
     """
     Create a Staggered DiD specification.
@@ -465,85 +461,48 @@ def create_staggered_did_specification(
         control_cols=control_cols,
         excluded_cols=[time_col, unit_col]
     )
+
+    # Infer treatment timing from the data
+    treatment_times = data[data[treatment_col] == 1].groupby(unit_col)[time_col].min()
+    data['treatment_time'] = data[unit_col].map(treatment_times)
+
+    # Create relative time variable 
+    data['relative_time'] = pd.NA
+    mask = ~data['treatment_time'].isna()
+    data.loc[mask, 'relative_time'] = (data.loc[mask, time_col] - data.loc[mask, 'treatment_time']).astype(int)
+    data.loc[~mask, 'relative_time'] = 0  # Never treated units get 0 (separate from reference period)
     
-    # Determine treatment cohorts
-    if treatment_time_col is None:
-        # Infer treatment timing from the data
-        treatment_times = data[data[treatment_col] == 1].groupby(unit_col)[time_col].min()
-        data['treatment_time'] = data[unit_col].map(treatment_times)
-        treatment_time_col = 'treatment_time'
+    # Create event time dummies manually to avoid issues with negative signs in column names
+    # Get unique relative time values (excluding the reference period and never-treated period)
+    unique_times = sorted([t for t in data['relative_time'].dropna().unique() if t != reference_period])
     
-    # Identify cohorts based on treatment timing
-    cohorts = sorted(data[treatment_time_col].dropna().unique())
-    if len(cohorts) == 0:
-        raise ValueError("No treatment cohorts identified. Ensure treated units have valid treatment times.")
-    
-    # Create cohort indicators
-    for cohort in cohorts:
-        cohort_col = f'cohort_{int(cohort)}'
-        data[cohort_col] = (data[treatment_time_col] == cohort).astype(int)
-    
-    cohort_cols = [f'cohort_{int(cohort)}' for cohort in cohorts]
-    
-    # Get minimum cohort period for normalization
-    min_cohort = min(int(cohort) for cohort in cohorts)
-    
-    # Create relative time variable
-    data['relative_time'] = data[time_col] - data[treatment_time_col]
-    
-    # Create pre-treatment and post-treatment indicators by event time
-    pre_period_cols = []
-    post_cols = []
-    
-    # Add post indicator for each cohort
-    for cohort in cohorts:
-        post_col = f'post_{int(cohort)}'
-        data[post_col] = (data[time_col] >= cohort).astype(int)
-        post_cols.append(post_col)
-    
-    # Create event time dummies for pre-periods
-    interaction_cols = []
-    
-    # Pre-treatment periods
-    for period in range(1, pre_periods + 1):
-        # Negative period (pre-treatment)
-        event_col = f'event_m{period}'
+    event_cols = []
+    for t in unique_times:
+        # Create formula-friendly column names
+        if t < 0:
+            col_name = f'event_pre{abs(t)}'  # event_pre1, event_pre2, etc.
+        elif t >= 0:
+            col_name = f'event_post{t}'      # event_post1, event_post2, etc.
         
-        # Instead of looking for treated==1 in pre-periods (which is impossible),
-        # identify units that will eventually be treated and are in the pre-period
-        # "Eventually treated" means treatment_time_col is not NaN
-        data[event_col] = ((data['relative_time'] == -period) & 
-                          data[treatment_time_col].notna()).astype(int)
-        
-        pre_period_cols.append(event_col)
-        interaction_cols.append(event_col)
-    
-    # Add post-treatment effects (one per cohort)
-    for cohort in cohorts:
-        interaction_col = f'effect_{int(cohort)}'
-        data[interaction_col] = data[f'cohort_{int(cohort)}'] * data[f'post_{int(cohort)}']
-        interaction_cols.append(interaction_col)
-    
+        # Create the dummy variable
+        data[col_name] = (data['relative_time'] == t).astype(int)
+        event_cols.append(col_name)
+
     # Construct formula
-    formula = f"{outcome_col} ~ {' + '.join(interaction_cols)}"
-    
-    # Add unit and time fixed effects
-    formula += f" + C({unit_col}) + C({time_col})"
-    
+    formula = f"{outcome_col} ~ {' + '.join(event_cols)} + EntityEffects + TimeEffects"
+
     if control_cols:
         formula += f" + {' + '.join(control_cols)}"
     
+    print(formula)
+
     # Create and return specification
     return StaggeredDiDSpec(
         outcome_col=outcome_col,
         treatment_cols=treatment_cols,
         time_col=time_col,
         unit_col=unit_col,
-        treatment_time_col=treatment_time_col,
-        cohorts=list(cohorts),  # Convert numpy array to list if needed
-        cohort_cols=cohort_cols,
-        post_cols=post_cols,
-        interaction_cols=interaction_cols,
+        treatment_time_col='treatment_time',
         control_cols=control_cols,
         data=data,
         formula=formula
@@ -573,7 +532,7 @@ def create_synthdid_specification(
     Returns:
         SynthDIDSpec object with synthetic DiD specification information
     """
-    from pyautocausal.pipelines.library.synthdid_py.utils import panel_matrices
+    
     
     # Use first treatment column for now
     treatment_col = treatment_cols[0]
@@ -697,76 +656,3 @@ def spec_constructor(spec: Any) -> str:
 
 
 
-
-
-
-# def create_continuous_treatment_specification(
-#     df: pd.DataFrame, 
-#     outcome_col: str = 'y', 
-#     treatment_col: str = 'treat',
-#     time_col: Optional[str] = None,
-#     unit_col: Optional[str] = None,
-#     is_did: bool = False,
-#     post_col: Optional[str] = None,
-#     control_cols: Optional[List[str]] = None
-# ) -> ContinuousTreatmentSpec:
-#     """
-#     Create a specification for models with continuous treatment.
-    
-#     Args:
-#         df: DataFrame with outcome and continuous treatment
-#         outcome_col: Name of outcome column
-#         treatment_col: Name of treatment column
-#         time_col: Name of time column (for panel data)
-#         unit_col: Name of unit identifier column (for panel data)
-#         is_did: Whether to use DiD framework with continuous treatment
-#         post_col: Name of post-treatment indicator column (for DiD)
-#         control_cols: List of control variable columns
-        
-#     Returns:
-#         ContinuousTreatmentSpec object with specification information
-#     """
-#     # Validate required columns
-#     required_columns = [outcome_col, treatment_col]
-#     if is_did:
-#         required_columns.extend([time_col, unit_col])
-#         if post_col is not None:
-#             required_columns.append(post_col)
-            
-#     if not all(col in df.columns for col in required_columns):
-#         raise ValueError(f"DataFrame must contain the following columns: {required_columns}")
-    
-#     # Clean data
-#     df = df.copy().dropna()
-    
-#     # If control_cols not specified, use all numeric columns except required ones
-#     if control_cols is None:
-#         numeric_cols = df.select_dtypes(include=[np.number]).columns
-#         control_cols = [col for col in numeric_cols if col not in required_columns]
-    
-#     # Construct formula for standard regression with continuous treatment
-#     formula_parts = [outcome_col, "~", treatment_col]
-    
-#     if control_cols:
-#         formula_parts.extend(["+ " + " + ".join(control_cols)])
-        
-#     formula = " ".join(formula_parts)
-    
-#     # Create specification
-#     spec = ContinuousTreatmentSpec(
-#         outcome_col=outcome_col,
-#         treatment_col=treatment_col,
-#         control_cols=control_cols,
-#         data=df,
-#         formula=formula,
-#         time_col=time_col,
-#         unit_col=unit_col,
-#         post_col=post_col,
-#         interaction_col='treat_post'
-#     )
-    
-#     if is_did:
-#         spec.type = "continuous_did"  # Override the type if needed
-        
-#     return spec
-        
