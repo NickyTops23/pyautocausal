@@ -10,6 +10,7 @@ from csdid.plots.gplot import gplot, splot
 
 
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 
 import warnings
 
@@ -192,7 +193,6 @@ class ATTgt:
         labels.extend(labels_ax)
         fig.legend(handles, labels, loc='lower center', fontsize='small', bbox_to_anchor=(0.545, -0.075), ncol=2)
     
-    plt.show()
     return fig 
 
   def plot_aggte(self, ylim=None, 
@@ -232,14 +232,12 @@ class ATTgt:
 
     if did_object["type"] == "group":
         fig, ax = plt.subplots(figsize=(10, 5))
-        p = splot(results, ax, ylim, xlab, ylab, title, legend, ref_line, theming)
+        ax = splot(results, ax, ylim, xlab, ylab, title, legend, ref_line, theming)
         plt.tight_layout()
-        plt.show()
 
     else:
         fig, ax = plt.subplots(figsize=(10, 5))
-        p = gplot(results, ax, ylim, xlab, ylab, title, xgap, legend, ref_line, theming)
+        ax = gplot(results, ax, ylim, xlab, ylab, title, xgap, legend, ref_line, theming)
         plt.tight_layout()
-        plt.show() 
         
-    return p
+    return fig
