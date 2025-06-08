@@ -15,4 +15,3 @@ class NodeUtils:
     def get_control_variables(df: pd.DataFrame) -> list[str]:
         """Get control variables"""
         return df.columns.drop(["id", "time", "treat"]).tolist()
-

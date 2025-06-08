@@ -12,17 +12,20 @@ from statsmodels.base.model import Results
 import copy
 import re
 from linearmodels import PanelOLS, RandomEffects, FirstDifferenceOLS, BetweenOLS
-
+from pyautocausal.pipelines.library.synthdid.synthdid import synthdid_estimate
 from pyautocausal.persistence.parameter_mapper import make_transformable
 from pyautocausal.pipelines.library.specifications import (
     BaseSpec,
     DiDSpec,
     EventStudySpec,
     StaggeredDiDSpec,
+    SynthDIDSpec,
 )
 from pyautocausal.pipelines.library.base_estimator import format_statsmodels_result
 from pyautocausal.pipelines.library.callaway_santanna import fit_callaway_santanna as cs_fit
-
+from pyautocausal.pipelines.library.csdid.att_gt import ATTgt
+from pyautocausal.pipelines.library.synthdid.vcov import synthdid_se
+    
 
 def create_model_matrices(spec: BaseSpec) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -224,13 +227,13 @@ def fit_double_lasso(
     return final_model
 
 
+
 @make_transformable
 def fit_callaway_santanna_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDSpec:
     """
     Wrapper function to fit the Callaway and Sant'Anna (2021) DiD estimator using never-treated units as the control group.
     
-    This function is a simple wrapper around the implementation in the callaway_santanna module,
-    designed to maintain consistency with other estimator functions.
+    This function uses the new csdid module implementation for more robust and comprehensive results.
     
     Args:
         spec: A StaggeredDiDSpec object with data and column information
@@ -238,7 +241,71 @@ def fit_callaway_santanna_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDSpec:
     Returns:
         StaggeredDiDSpec with fitted model
     """
-    return cs_fit(spec, control_group="never_treated")
+    
+    
+    # Extract necessary information from spec
+    data = spec.data
+    outcome_col = spec.outcome_col
+    time_col = spec.time_col
+    unit_col = spec.unit_col
+    treatment_time_col = spec.treatment_time_col
+    control_cols = spec.control_cols if hasattr(spec, 'control_cols') and spec.control_cols else []
+    formula = spec.formula
+
+    # Prepare data for csdid format
+    data_cs = data.copy()
+    
+    # Ensure never-treated units have 0 in treatment_time_col, not NaN
+    # This is required for the Callaway & Sant'Anna estimator
+    data_cs[treatment_time_col] = data_cs[treatment_time_col].fillna(0)
+
+    # create a new column that is 1 if the unit is treated at any time
+    data_cs["never_treated"] = data_cs.groupby(unit_col)[treatment_time_col].transform('max') == 0
+
+
+    att_gt = ATTgt(
+        yname=outcome_col,
+        tname=time_col,
+        idname=unit_col,
+        gname=treatment_time_col,
+        data=data_cs,
+        control_group=['nevertreated'],
+        xformla=None,
+        panel=True,
+        allow_unbalanced_panel=True,
+        anticipation=0,
+        cband=True,
+        biters=1000,
+        alp=0.05
+    )
+    
+    # Fit the model
+    att_gt.fit(est_method='dr', base_period='varying', bstrap=True)
+    
+    # Generate summary table
+    att_gt.summ_attgt(n=4)
+    
+    # Compute aggregated treatment effects
+    # Overall effect
+    att_gt_overall = att_gt.aggte(typec="simple", bstrap=True, cband=True)
+    
+    # Dynamic (event study) effects
+    att_gt_dynamic = att_gt.aggte(typec="dynamic", bstrap=True, cband=True)
+    
+    # Group-specific effects
+    att_gt_group = att_gt.aggte(typec="group", bstrap=True, cband=True)
+    
+    # Store all results in the spec
+    spec.model = {
+        'att_gt_object': att_gt,
+        'overall_effect': att_gt_overall,
+        'dynamic_effects': att_gt_dynamic,
+        'group_effects': att_gt_group,
+        'control_group': 'never_treated',
+        'estimator': 'callaway_santanna_csdid'
+    }
+    
+    return spec
 
 
 @make_transformable
@@ -246,8 +313,7 @@ def fit_callaway_santanna_nyt_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDS
     """
     Wrapper function to fit the Callaway and Sant'Anna (2021) DiD estimator using not-yet-treated units as the control group.
     
-    This function is a simple wrapper around the implementation in the callaway_santanna module,
-    designed to maintain consistency with other estimator functions.
+    This function uses the new csdid module implementation for more robust and comprehensive results.
     
     Args:
         spec: A StaggeredDiDSpec object with data and column information
@@ -255,7 +321,97 @@ def fit_callaway_santanna_nyt_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDS
     Returns:
         StaggeredDiDSpec with fitted model
     """
-    return cs_fit(spec, control_group="not_yet_treated")
+    from pyautocausal.pipelines.library.csdid.att_gt import ATTgt
+    
+    # Extract necessary information from spec
+    data = spec.data
+    outcome_col = spec.outcome_col
+    time_col = spec.time_col
+    unit_col = spec.unit_col
+    treatment_time_col = spec.treatment_time_col
+    control_cols = spec.control_cols if hasattr(spec, 'control_cols') and spec.control_cols else []
+    
+    # Prepare data for csdid format
+    data_cs = data.copy()
+    
+    # csdid expects different data format:
+    # 1. A time-invariant treatment indicator (treat: 1 if ever treated, 0 if never)
+    # 2. first.treat column with the first treatment period for each unit
+    
+    # Check if first.treat already exists in the data
+    if 'first.treat' not in data_cs.columns:
+        # Create first.treat from the time-varying treat column
+        # For each unit, find the first period where treat == 1
+        first_treat_periods = data_cs[data_cs['treat'] == 1].groupby(unit_col)[time_col].min()
+        
+        # Create first.treat column - merge back to get first treatment time for each unit
+        data_cs = data_cs.merge(
+            first_treat_periods.reset_index().rename(columns={time_col: 'first.treat'}),
+            on=unit_col, how='left'
+        )
+        
+        # Units that never get treated should have 0 or NaN in first.treat
+        data_cs['first.treat'] = data_cs['first.treat'].fillna(0)
+    
+    # Create time-invariant treatment indicator
+    # 1 if unit is ever treated, 0 if never treated
+    ever_treated_units = data_cs[data_cs['treat'] == 1][unit_col].unique()
+    data_cs['treat_indicator'] = data_cs[unit_col].isin(ever_treated_units).astype(int)
+    
+    # Use first.treat as the group variable for csdid
+    # csdid expects never-treated units to have gname = 0, not NaN
+    data_cs['gname'] = data_cs['first.treat'].copy()
+    
+    # Create formula for controls if they exist
+    # Note: Temporarily disabling control variables due to csdid internal data processing issues
+    xformla = None
+    if control_cols:
+        print(f"Note: Control variables {control_cols} are available but temporarily disabled due to csdid module compatibility issues.")
+    
+    # Initialize the ATTgt object with not-yet-treated control group
+    att_gt = ATTgt(
+        yname=outcome_col,
+        tname=time_col,
+        idname=unit_col,
+        gname='gname',
+        data=data_cs,
+        control_group=['notyettreated'],
+        xformla=xformla,
+        panel=True,
+        allow_unbalanced_panel=True,
+        anticipation=0,
+        cband=True,
+        biters=1000,
+        alp=0.05
+    )
+    
+    # Fit the model
+    att_gt.fit(est_method='dr', base_period='varying', bstrap=True)
+    
+    # Generate summary table
+    att_gt.summ_attgt(n=4)
+    
+    # Compute aggregated treatment effects
+    # Overall effect
+    att_gt_overall = att_gt.aggte(typec="simple", bstrap=True, cband=True)
+    
+    # Dynamic (event study) effects
+    att_gt_dynamic = att_gt.aggte(typec="dynamic", bstrap=True, cband=True)
+    
+    # Group-specific effects
+    att_gt_group = att_gt.aggte(typec="group", bstrap=True, cband=True)
+    
+    # Store all results in the spec
+    spec.model = {
+        'att_gt_object': att_gt,
+        'overall_effect': att_gt_overall,
+        'dynamic_effects': att_gt_dynamic,
+        'group_effects': att_gt_group,
+        'control_group': 'not_yet_treated',
+        'estimator': 'callaway_santanna_csdid'
+    }
+    
+    return spec
 
 
 @make_transformable
@@ -269,19 +425,31 @@ def fit_synthdid_estimator(spec) -> object:
     Returns:
         SynthDIDSpec with fitted model (SynthDIDEstimate object)
     """
-    from pyautocausal.pipelines.library.synthdid_py.synthdid import synthdid_estimate
+    
     
     # Extract matrices from spec
     Y = spec.Y
     N0 = spec.N0
     T0 = spec.T0
-    X = spec.X
+    X = None  # TODO: Allow to use covariates that are not the matching variables
     
     # Fit the synthetic DiD model
+    # Fit the model and get point estimate
     estimate = synthdid_estimate(Y, N0, T0, X=X)
     
-    # Store the estimate in the spec
-    spec.model = estimate
+    # Calculate standard error using placebo method
+    se_result = synthdid_se(estimate, method='placebo')
+    se = se_result['se']
+    
+    # Calculate confidence intervals
+    ci_lower = float(estimate) - 1.96 * se
+    ci_upper = float(estimate) + 1.96 * se
+    
+    print(f"Point estimate: {float(estimate):.2f}")
+    print(f"95% CI ({ci_lower:.2f}, {ci_upper:.2f})")
+
+    # Store results
+    spec.model = estimate  # Store the actual SynthDIDEstimate object
     
     return spec
 
@@ -299,41 +467,20 @@ def fit_panel_ols(spec: BaseSpec) -> BaseSpec:
     """
     data = spec.data
     
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
+    # Create MultiIndex with standard column names
     if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
+        data_indexed = data.set_index(['id_unit', 't'])
     else:
         data_indexed = data.copy()
     
-    # Use the formula from the spec but clean it for linearmodels
+    # Use the formula from the spec directly (now already in linearmodels format)
     formula = spec.formula
-    
-    # Clean formula - remove any C() fixed effects patterns and add EntityEffects and TimeEffects
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
-    
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
-    
-    # Add EntityEffects and TimeEffects to the formula
-    if 'EntityEffects' not in cleaned_formula:
-        cleaned_formula += ' + EntityEffects'
-    if 'TimeEffects' not in cleaned_formula:
-        cleaned_formula += ' + TimeEffects'
     
     # Set up clustering (default to entity clustering)
     cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
     
     # Fit model using from_formula with special effects variables
-    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True, check_rank=False)
+    model = PanelOLS.from_formula(formula, data_indexed, drop_absorbed=True, check_rank=False)
     
     result = model.fit(**cluster_config)
     
@@ -359,41 +506,20 @@ def fit_did_panel(spec: BaseSpec) -> BaseSpec:
     """
     data = spec.data
     
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
+    # Create MultiIndex with standard column names
     if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
+        data_indexed = data.set_index(['id_unit', 't'])
     else:
         data_indexed = data.copy()
     
-    # Use the formula from the spec but clean it for linearmodels
+    # Use the formula from the spec directly (now already in linearmodels format)
     formula = spec.formula
-    
-    # Clean formula - remove any C() fixed effects patterns and add EntityEffects and TimeEffects
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
-    
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
-    
-    # Add EntityEffects and TimeEffects to the formula for DiD
-    if 'EntityEffects' not in cleaned_formula:
-        cleaned_formula += ' + EntityEffects'
-    if 'TimeEffects' not in cleaned_formula:
-        cleaned_formula += ' + TimeEffects'
     
     # Set up clustering for DiD (cluster by entity)
     cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
     
     # Fit model with entity and time effects (standard DiD setup)
-    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True, check_rank=False)
+    model = PanelOLS.from_formula(formula, data_indexed, drop_absorbed=True, check_rank=False)
     
     result = model.fit(**cluster_config)
     
@@ -419,32 +545,32 @@ def fit_random_effects(spec: BaseSpec) -> BaseSpec:
     """
     data = spec.data
     
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
+    # Create MultiIndex with standard column names
     if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
+        data_indexed = data.set_index(['id_unit', 't'])
     else:
         data_indexed = data.copy()
     
-    # Use the formula from the spec but clean it for linearmodels
+    # Use the formula from the spec directly (now already in linearmodels format)
+    # Note: RandomEffects doesn't use EntityEffects/TimeEffects syntax, 
+    # so we need to clean those if present
     formula = spec.formula
     
-    # Clean formula - remove any C() fixed effects patterns
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
+    # For RandomEffects, remove EntityEffects and TimeEffects if present
+    # since it handles random effects differently
+    formula = formula.replace("+ EntityEffects", "").replace("+ TimeEffects", "")
+    formula = formula.replace("EntityEffects +", "").replace("TimeEffects +", "")
+    formula = formula.replace("EntityEffects", "").replace("TimeEffects", "")
     
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
+    # Clean up any resulting double spaces or trailing/leading operators
+    formula = re.sub(r'\s+', ' ', formula)
+    formula = re.sub(r'\+\s*\+', '+', formula)
+    formula = re.sub(r'~\s*\+', '~', formula)
+    formula = re.sub(r'\+\s*$', '', formula)
+    formula = formula.strip()
     
     # Fit model
-    model = RandomEffects.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    model = RandomEffects.from_formula(formula, data_indexed)
     result = model.fit(cov_type='robust')
     
     # Set the model field
@@ -469,35 +595,34 @@ def fit_first_difference(spec: BaseSpec) -> BaseSpec:
     """
     data = spec.data
     
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
+    # Create MultiIndex with standard column names
     if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
+        data_indexed = data.set_index(['id_unit', 't'])
     else:
         data_indexed = data.copy()
     
-    # Use the formula from the spec but clean it for linearmodels
+    # Use the formula from the spec directly (now already in linearmodels format)
+    # Note: FirstDifferenceOLS doesn't use EntityEffects/TimeEffects and cannot include constants
     formula = spec.formula
     
-    # Clean formula - remove any C() fixed effects patterns and constants (not needed for first difference)
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+', r'\+ 1', r'1 \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
+    # For FirstDifferenceOLS, remove EntityEffects, TimeEffects, and constants
+    formula = formula.replace("+ EntityEffects", "").replace("+ TimeEffects", "")
+    formula = formula.replace("EntityEffects +", "").replace("TimeEffects +", "")
+    formula = formula.replace("EntityEffects", "").replace("TimeEffects", "")
+    formula = formula.replace("+ 1", "").replace("1 +", "")
     
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
+    # Clean up any resulting double spaces or trailing/leading operators
+    formula = re.sub(r'\s+', ' ', formula)
+    formula = re.sub(r'\+\s*\+', '+', formula)
+    formula = re.sub(r'~\s*\+', '~', formula)
+    formula = re.sub(r'\+\s*$', '', formula)
+    formula = formula.strip()
     
     # Set up clustering
     cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
     
     # Fit model
-    model = FirstDifferenceOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    model = FirstDifferenceOLS.from_formula(formula, data_indexed)
     result = model.fit(**cluster_config)
     
     # Set the model field
@@ -522,32 +647,30 @@ def fit_between_estimator(spec: BaseSpec) -> BaseSpec:
     """
     data = spec.data
     
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
+    # Create MultiIndex with standard column names
     if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
+        data_indexed = data.set_index(['id_unit', 't'])
     else:
         data_indexed = data.copy()
     
-    # Use the formula from the spec but clean it for linearmodels
+    # Use the formula from the spec directly (now already in linearmodels format)
+    # Note: BetweenOLS doesn't use EntityEffects/TimeEffects syntax
     formula = spec.formula
     
-    # Clean formula - remove any C() fixed effects patterns
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
+    # For BetweenOLS, remove EntityEffects and TimeEffects if present
+    formula = formula.replace("+ EntityEffects", "").replace("+ TimeEffects", "")
+    formula = formula.replace("EntityEffects +", "").replace("TimeEffects +", "")
+    formula = formula.replace("EntityEffects", "").replace("TimeEffects", "")
     
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
+    # Clean up any resulting double spaces or trailing/leading operators
+    formula = re.sub(r'\s+', ' ', formula)
+    formula = re.sub(r'\+\s*\+', '+', formula)
+    formula = re.sub(r'~\s*\+', '~', formula)
+    formula = re.sub(r'\+\s*$', '', formula)
+    formula = formula.strip()
     
     # Fit model
-    model = BetweenOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
+    model = BetweenOLS.from_formula(formula, data_indexed)
     result = model.fit(cov_type='robust')
     
     # Set the model field
@@ -560,274 +683,79 @@ def fit_between_estimator(spec: BaseSpec) -> BaseSpec:
 
 
 @make_transformable
-def fit_panel_ols(spec: BaseSpec) -> BaseSpec:
+def fit_hainmueller_synth_estimator(spec: SynthDIDSpec) -> SynthDIDSpec:
     """
-    Fit Panel OLS regression using linearmodels.
+    Fit a Hainmueeller Synthetic Control estimator using the SyntheticControlMethods package.
     
     Args:
-        spec: A specification object with data and column information
+        spec: A SynthDIDSpec object with data and matrix information
         
     Returns:
-        Specification with model field set to the fitted PanelOLS model
+        SynthDIDSpec with fitted model (Synth object)
     """
-    data = spec.data
+    from SyntheticControlMethods import Synth
     
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
+    # Extract information from spec
+    data = spec.data.copy()
+    outcome_col = spec.outcome_col
+    time_col = spec.time_col
+    unit_col = spec.unit_col
+    treatment_col = spec.treatment_cols[0]
     
-    # Create MultiIndex if not already present
-    if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
-    else:
-        data_indexed = data.copy()
-    
-    # Use the formula from the spec but clean it for linearmodels
-    formula = spec.formula
-    
-    # Clean formula - remove any C() fixed effects patterns and add EntityEffects and TimeEffects
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
-    
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
-    
-    # Add EntityEffects and TimeEffects to the formula
-    if 'EntityEffects' not in cleaned_formula:
-        cleaned_formula += ' + EntityEffects'
-    if 'TimeEffects' not in cleaned_formula:
-        cleaned_formula += ' + TimeEffects'
-    
-    # Set up clustering (default to entity clustering)
-    cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
-    
-    # Fit model using from_formula with special effects variables
-    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True, check_rank=False)
-    
-    result = model.fit(**cluster_config)
-    
-    # Set the model field
-    spec.model = result
+    # Find the treated unit and treatment period
+    treated_units = data[data[treatment_col] == 1][unit_col].unique()
 
-    # Print the model summary
-    print(result.summary)
+    treated_unit = treated_units[0]
+    
+    treatment_period = int(data[data[treatment_col] == 1][time_col].min())
+    
+    # Prepare control columns to exclude (treatment column and any non-numeric columns)
+    exclude_columns = [treatment_col]
+    for col in data.columns:
+        if col not in [outcome_col, unit_col, time_col] and not pd.api.types.is_numeric_dtype(data[col]):
+            exclude_columns.append(col)
+    
+    # Fit Synthetic Control using the SyntheticControlMethods package
+    sc = Synth(
+        dataset=data,
+        outcome_var=outcome_col,
+        id_var=unit_col, 
+        time_var=time_col,
+        treatment_period=treatment_period,
+        treated_unit=treated_unit,
+        n_optim=5,
+        pen="auto",
+        exclude_columns=exclude_columns,
+        random_seed=42
+    )
+    
+    # Print results for notebook display
+    print(f"\nHainmueeller Synthetic Control Results:")
+    print(f"Weight DataFrame:")
+    print(sc.original_data.weight_df)
+    print(f"\nComparison DataFrame:")
+    print(sc.original_data.comparison_df.head())
+    if hasattr(sc.original_data, 'pen'):
+        print(f"\nPenalty parameter: {sc.original_data.pen}")
+    
+    # Store the Synth object in spec
+    spec.hainmueller_model = sc
     
     return spec
+
 
 
 @make_transformable
-def fit_did_panel(spec: DiDSpec) -> DiDSpec:
+def fit_hainmueller_placebo_test(spec: SynthDIDSpec, n_placebo: int = 1) -> SynthDIDSpec:
     """
-    Fit Difference-in-Differences using Panel OLS with entity and time fixed effects.
-    
-    Args:
-        spec: A specification object with data and column information
-        
-    Returns:
-        Specification with model field set to the fitted PanelOLS model for DiD
+    Perform in-space  and in-time placebo test for Hainmueeller Synthetic Control method.
     """
-    data = spec.data
     
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'unit_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
-    if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
-    else:
-        data_indexed = data.copy()
-    
-    # Use the formula from the spec but clean it for linearmodels
-    formula = spec.formula
-    
-    # Clean formula - remove any C() fixed effects patterns and add EntityEffects and TimeEffects
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
-    
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
-    
-    # Add EntityEffects and TimeEffects to the formula for DiD
-    if 'EntityEffects' not in cleaned_formula:
-        cleaned_formula += ' + EntityEffects'
-    if 'TimeEffects' not in cleaned_formula:
-        cleaned_formula += ' + TimeEffects'
-    
-    # Set up clustering for DiD (cluster by entity)
-    cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
-    
-    # Fit model with entity and time effects (standard DiD setup)
-    model = PanelOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True, check_rank=False)
-    
-    result = model.fit(**cluster_config)
-    
-    # Set the model field
-    spec.model = result
-
-    # Print the model summary
-    print(result.summary)
-
-    return spec
-
-
-@make_transformable
-def fit_random_effects(spec: BaseSpec) -> BaseSpec:
-    """
-    Fit Random Effects regression using linearmodels.
-    
-    Args:
-        spec: A specification object with data and column information
-        
-    Returns:
-        Specification with model field set to the fitted RandomEffects model
-    """
-    data = spec.data
-    
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
-    if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
-    else:
-        data_indexed = data.copy()
-    
-    # Use the formula from the spec but clean it for linearmodels
-    formula = spec.formula
-    
-    # Clean formula - remove any C() fixed effects patterns
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
-    
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
-    
-    # Fit model
-    model = RandomEffects.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
-    result = model.fit(cov_type='robust')
-    
-    # Set the model field
-    spec.model = result
-
-    # Print the model summary
-    print(result.summary)
+    spec.hainmueller_model.in_space_placebo(n_placebo)
     
     return spec
+    
 
 
-@make_transformable
-def fit_first_difference(spec: BaseSpec) -> BaseSpec:
-    """
-    Fit First Difference regression using linearmodels.
-    
-    Args:
-        spec: A specification object with data and column information
-        
-    Returns:
-        Specification with model field set to the fitted FirstDifferenceOLS model
-    """
-    data = spec.data
-    
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
-    if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
-    else:
-        data_indexed = data.copy()
-    
-    # Use the formula from the spec but clean it for linearmodels
-    formula = spec.formula
-    
-    # Clean formula - remove any C() fixed effects patterns and constants (not needed for first difference)
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+', r'\+ 1', r'1 \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
-    
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
-    
-    # Set up clustering
-    cluster_config = {'cov_type': 'clustered', 'cluster_entity': True}
-    
-    # Fit model
-    model = FirstDifferenceOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
-    result = model.fit(**cluster_config)
-    
-    # Set the model field
-    spec.model = result
 
-    # Print the model summary
-    print(result.summary)
-    
-    return spec
-
-
-@make_transformable
-def fit_between_estimator(spec: BaseSpec) -> BaseSpec:
-    """
-    Fit Between estimator regression using linearmodels.
-    
-    Args:
-        spec: A specification object with data and column information
-        
-    Returns:
-        Specification with model field set to the fitted BetweenOLS model
-    """
-    data = spec.data
-    
-    # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
-    time_var = getattr(spec, 'time_col', 'period')
-    
-    # Create MultiIndex if not already present
-    if not isinstance(data.index, pd.MultiIndex):
-        data_indexed = data.set_index([entity_var, time_var])
-    else:
-        data_indexed = data.copy()
-    
-    # Use the formula from the spec but clean it for linearmodels
-    formula = spec.formula
-    
-    # Clean formula - remove any C() fixed effects patterns
-    cleaned_formula = formula
-    for pattern in [r'C\([^)]+\)', r'\+ C\([^)]+\)', r'C\([^)]+\) \+']:
-        cleaned_formula = re.sub(pattern, '', cleaned_formula)
-    
-    # Clean up extra spaces and operators
-    cleaned_formula = re.sub(r'\s+', ' ', cleaned_formula)
-    cleaned_formula = re.sub(r'\+\s*\+', '+', cleaned_formula)
-    cleaned_formula = re.sub(r'~\s*\+', '~', cleaned_formula)
-    cleaned_formula = cleaned_formula.strip()
-    
-    # Fit model
-    model = BetweenOLS.from_formula(cleaned_formula, data_indexed, drop_absorbed=True)
-    result = model.fit(cov_type='robust')
-    
-    # Set the model field
-    spec.model = result
-
-    # Print the model summary
-    print(result.summary)
-    
-    return spec
 
