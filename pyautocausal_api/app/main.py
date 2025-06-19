@@ -203,16 +203,22 @@ async def submit_job(
             "missing_columns": list(missing_required),
         })
 
-    # Load graph from S3
+    # ------------------------------------------------------------------
+    # Load graph from S3 (YAML ONLY)
+    # ------------------------------------------------------------------
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=True) as tmp_graph_file:
+        with tempfile.NamedTemporaryFile(suffix=".yml", delete=True) as tmp_graph_file:
             local_graph_path = tmp_graph_file.name
-            logger.info(f"[{job_id}] Downloading pipeline graph from {graph_uri} to {local_graph_path}")
+
+            logger.info(
+                f"[{job_id}] Downloading pipeline graph (YAML) from {graph_uri} "
+                f"to temporary file {local_graph_path}"
+            )
             s3.get(graph_uri, local_graph_path)
-            
-            logger.info(f"[{job_id}] Loading ExecutableGraph from {local_graph_path}")
-            graph = ExecutableGraph.load(local_graph_path)
-            
+
+            logger.info(f"[{job_id}] Loading ExecutableGraph from YAML")
+            graph = ExecutableGraph.from_yaml(local_graph_path)
+
     except FileNotFoundError:
         logger.error(f"[{job_id}] Graph file not found at S3 URI: {graph_uri}")
         raise HTTPException(status_code=500, detail=f"Could not load pipeline graph from {graph_uri}")
