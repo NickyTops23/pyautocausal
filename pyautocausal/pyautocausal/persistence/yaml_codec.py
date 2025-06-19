@@ -41,6 +41,10 @@ def _callable_to_spec(func: Callable) -> Dict[str, str]:
     """
     module = getattr(func, "__module__", None)
     qualname = getattr(func, "__qualname__", None)
+
+    # ------------------------------------------------------------------
+    # 1.  First preference: dotted import path (portable & no pickling)
+    # ------------------------------------------------------------------
     if module and qualname:
         try:
             mod = importlib.import_module(module)
@@ -50,7 +54,63 @@ def _callable_to_spec(func: Callable) -> Dict[str, str]:
         except Exception:  # pragma: no cover – fallback path
             pass
 
-    # Fallback to pickle
+    # ------------------------------------------------------------------
+    # 2.  Fallback: pickle – but first normalise *co_filename* so that
+    #     inspect.getsource works after deserialisation regardless of the
+    #     absolute path of the developer machine on which the graph was
+    #     created.  We rewrite it to a package-relative path such as
+    #     "pyautocausal/pipelines/library/estimators.py".
+    # ------------------------------------------------------------------
+    try:
+        import types, os, pathlib
+
+        code = func.__code__
+
+        # Only patch if the filename is an absolute path that is unlikely to
+        # exist on another machine / inside Docker.
+        if os.path.isabs(code.co_filename):
+            if module:
+                # Derive a portable path from the module name.
+                portable_filename = module.replace(".", os.sep) + ".py"
+            else:
+                # Best effort – just strip leading slashes to make it relative
+                portable_filename = os.path.basename(code.co_filename)
+
+            # On Python ≥3.8 we can use CodeType.replace; fall back otherwise.
+            try:
+                new_code = code.replace(co_filename=portable_filename)  # type: ignore[attr-defined]
+            except AttributeError:  # pragma: no cover – <3.8 not supported in project CI
+                new_code = types.CodeType(
+                    code.co_argcount,
+                    code.co_posonlyargcount if hasattr(code, "co_posonlyargcount") else 0,
+                    code.co_kwonlyargcount,
+                    code.co_nlocals,
+                    code.co_stacksize,
+                    code.co_flags,
+                    code.co_code,
+                    code.co_consts,
+                    code.co_names,
+                    code.co_varnames,
+                    portable_filename,
+                    code.co_name,
+                    code.co_firstlineno,
+                    code.co_lnotab,
+                    code.co_freevars,
+                    code.co_cellvars,
+                )
+
+            func = types.FunctionType(
+                new_code,
+                func.__globals__,
+                func.__name__,
+                func.__defaults__,
+                func.__closure__,
+            )
+
+    except Exception:  # pragma: no cover – defensive; if anything goes wrong just pickle as-is
+        pass
+
+    # Finally pickle the (possibly patched) function
     pickled = cloudpickle.dumps(func)
     encoded = base64.b64encode(pickled).decode("utf-8")
     return {"type": "pickle", "value": encoded}

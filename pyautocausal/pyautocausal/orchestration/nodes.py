@@ -98,16 +98,21 @@ class Node(BaseNode):
             output_config: Optional[OutputConfig]
         ) -> None:
         """Validate the saving configuration and type annotations"""
+        # If we plan to save the node output we need to know *how* to save it.
+        # That information can come from either a return type annotation (we can
+        # infer the output type automatically) OR a user-supplied
+        # ``output_config`` that explicitly declares an ``output_type``.
         if save_node and return_annotation == inspect.Parameter.empty:
-            raise ValueError(
-                f"Node {self.name}: When save_node=True, the action function must have a return type annotation. "
-                "Either:\n"
-                "1. Add a return type hint to your function:\n"
-                "   def my_function() -> pd.DataFrame:\n"
-                "       return pd.DataFrame(...)\n\n"
-                "2. Or specify an output_config with an output_type:\n"
-                "   output_config=OutputConfig(output_type=OutputType.PARQUET)"
-            )
+            if output_config is None or output_config.output_type is None:
+                raise ValueError(
+                    f"Node {self.name}: When save_node=True, the action function must have a return type annotation "
+                    "or you must specify an output_config with an explicit output_type.\n\n"
+                    "1. Add a return type hint to your function, e.g.:\n"
+                    "   def my_function() -> pd.DataFrame:\n"
+                    "       return pd.DataFrame(...)\n\n"
+                    "2. Or specify an output_config with an output_type, e.g.:\n"
+                    "   output_config=OutputConfig(output_type=OutputType.PARQUET)"
+                )
         
         if output_config is not None and not save_node:
             raise ValueError(
