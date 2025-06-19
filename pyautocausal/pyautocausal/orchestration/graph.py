@@ -800,3 +800,28 @@ class ExecutableGraph(nx.DiGraph):
                 f"Deserialized object is of type {type(graph)}, expected {cls}."
             )
         return graph
+
+    def to_yaml(self, filepath: Union[str, Path]) -> Path:
+        """Serialise this graph to a YAML file.
+
+        Parameters
+        ----------
+        filepath : Union[str, Path]
+            Destination where the YAML should be written.
+
+        Returns
+        -------
+        Path
+            Absolute path of the written file.
+        """
+        from pyautocausal.persistence.yaml_codec import graph_to_yaml  # Local import to avoid heavy deps at module import time
+        return graph_to_yaml(self, filepath)
+
+    @classmethod
+    def from_yaml(cls, filepath: Union[str, Path]) -> "ExecutableGraph":
+        """Load a graph from a YAML file previously produced by :py:meth:`to_yaml`."""
+        from pyautocausal.persistence.yaml_codec import yaml_to_graph
+        loaded = yaml_to_graph(filepath)
+        if not isinstance(loaded, cls):
+            raise TypeError(f"Loaded object is type {type(loaded)}, expected ExecutableGraph")
+        return loaded
