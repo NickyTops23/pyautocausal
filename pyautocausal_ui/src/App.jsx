@@ -12,6 +12,7 @@ export default function App() {
   const [csvHeaders, setCsvHeaders] = useState([]);
   const [columnMapping, setColumnMapping] = useState({});
   const [jobStatus, setJobStatus] = useState('');
+  const [downloadUrl, setDownloadUrl] = useState(null);
   const pollIntervalRef = useRef(null);
 
   const stopPolling = () => {
@@ -26,6 +27,7 @@ export default function App() {
     setSelectedFile(file);
     setColumnMapping({}); // Reset mapping when file changes
     setJobStatus(''); // Reset status
+    setDownloadUrl(null);
     if (file) {
       Papa.parse(file, {
         header: true,
@@ -45,6 +47,7 @@ export default function App() {
     setSelectedPipeline(pipelineName);
     setColumnMapping({}); // Also reset mapping
     setJobStatus('');
+    setDownloadUrl(null);
   };
 
   const handleMappingChange = (pipelineColumn, csvColumn) => {
@@ -93,14 +96,16 @@ export default function App() {
       }
 
       const data = await res.json();
-      setJobStatus(`Job Status: ${data.status} – ${data.message}`);
+      console.log("Polling response:", data); // Add console log for debugging
+
+      // Always update the status message from the backend
+      const message = `Status: ${data.status} – ${data.message}`;
+      setJobStatus(message);
 
       if (data.status === 'COMPLETED' || data.status === 'FAILED') {
         stopPolling();
-        if (data.status === 'COMPLETED') {
-            setJobStatus(`Job completed! Result available at: ${data.result_path}`);
-        } else {
-            setJobStatus(`Job failed: ${data.error_details || 'Unknown error'}`);
+        if (data.status === 'COMPLETED' && data.download_url) {
+            setDownloadUrl(data.download_url); // Set the download URL
         }
       }
     } catch (err) {
@@ -115,6 +120,7 @@ export default function App() {
 
     stopPolling();
     setJobStatus('Uploading file...');
+    setDownloadUrl(null);
     try {
       const s3Uri = await uploadFileToS3(selectedFile);
       setJobStatus('File uploaded. Submitting job...');
@@ -201,7 +207,17 @@ export default function App() {
           >
             Submit Job
           </button>
-          {jobStatus && <p style={{ marginTop: '1rem' }}>Status: {jobStatus}</p>}
+          {jobStatus && <p style={{ marginTop: '1rem' }}>{jobStatus}</p>}
+          {downloadUrl && (
+            <a
+              href={downloadUrl}
+              download
+              className="button"
+              style={{ marginTop: '1rem', display: 'inline-block' }}
+            >
+              Download Results
+            </a>
+          )}
         </>
       )}
     </main>
