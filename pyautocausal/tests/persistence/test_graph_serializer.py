@@ -14,10 +14,10 @@ def test_pickle_roundtrip(tmp_path):
     """Build a graph, dump to pickle, load, and verify basic structure."""
     graph = _build_graph(tmp_path)
 
-    file_path = tmp_path / "graph.pkl"
-    graph.save(file_path)
+    file_path = tmp_path / "graph.yml"
+    graph.to_yaml(file_path)
 
-    loaded = ExecutableGraph.load(file_path)
+    loaded = ExecutableGraph.from_yaml(file_path)
     
     # Configure runtime for the loaded graph
     loaded.configure_runtime(output_path=tmp_path / "loaded_output")

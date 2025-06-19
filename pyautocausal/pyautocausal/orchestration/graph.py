@@ -746,60 +746,7 @@ class ExecutableGraph(nx.DiGraph):
         self.logger = get_class_logger(self.__class__.__name__)
         # Runtime configuration will be None and needs to be set via configure_runtime()
 
-    # Add serialization methods
-    def save(self, filepath: Union[str, Path], *, protocol: int | None = None) -> Path:
-        """Serialize this graph to disk via pickle."""
-        try:
-            import cloudpickle
-        except ImportError:
-            raise ImportError(
-                "cloudpickle is required for saving graphs. "
-                "Please install it with `pip install pyautocausal[io]`."
-            )
-
-        from pathlib import Path
-        import pickle
-
-        path = Path(filepath).expanduser().resolve()
-        # Validate extension
-        if path.suffix.lower() not in {".pkl", ".pickle"}:
-            raise ValueError(
-                f"Unsupported file extension: {path.suffix}. Only '.pkl' or '.pickle' are supported."
-            )
-        protocol = protocol or pickle.HIGHEST_PROTOCOL
-        # Ensure parent directory exists
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Dump graph
-        with path.open("wb") as fh:
-            cloudpickle.dump(self, fh, protocol=protocol)
-        return path
-
-    @classmethod
-    def load(cls, filepath: Union[str, Path]) -> "ExecutableGraph":
-        """Load a previously serialized ExecutableGraph from disk."""
-        try:
-            import cloudpickle
-        except ImportError:
-            raise ImportError(
-                "cloudpickle is required for loading graphs. "
-                "Please install it with `pip install pyautocausal[io]`."
-            )
-        from pathlib import Path
-
-        path = Path(filepath).expanduser().resolve()
-        if not path.exists():
-            raise FileNotFoundError(path)
-        if path.suffix.lower() not in {".pkl", ".pickle"}:
-            raise ValueError(
-                f"Unsupported file extension: {path.suffix}. Only '.pkl' or '.pickle' are supported."
-            )
-        with path.open("rb") as fh:
-            graph = cloudpickle.load(fh)
-        if not isinstance(graph, cls):
-            raise TypeError(
-                f"Deserialized object is of type {type(graph)}, expected {cls}."
-            )
-        return graph
+    # save/load removed; use to_yaml / from_yaml instead.
 
     def to_yaml(self, filepath: Union[str, Path]) -> Path:
         """Serialise this graph to a YAML file.
