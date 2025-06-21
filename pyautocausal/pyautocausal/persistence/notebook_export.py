@@ -9,6 +9,8 @@ from ..orchestration.nodes import Node, InputNode, DecisionNode
 from ..orchestration.graph import ExecutableGraph
 from .visualizer import visualize_graph
 from .notebook_runner import run_notebook_and_create_html, convert_notebook_to_html
+import importlib
+
 class NotebookExporter:
     """
     Exports an executed graph to a Jupyter notebook format.
@@ -51,7 +53,24 @@ class NotebookExporter:
             return None, {}
         
         info = func._notebook_export_info
-        return info.get('target_function'), info.get('arg_mapping', {})
+        
+        # Resolve the target function from its portable path
+        path = info.get('target_function_path')
+        if not path:
+            return None, {}
+            
+        module_name, qualname = path.split(":", 1)
+        try:
+            module = importlib.import_module(module_name)
+            target_func = getattr(module, qualname)
+        except (ImportError, AttributeError) as e:
+            # If we can't resolve it, we can't get the source.
+            # This might happen if the execution environment is different.
+            # We'll log this but proceed without the target source.
+            print(f"Warning: Could not resolve target function '{path}': {e}") # Replace with logger
+            return None, {}
+
+        return target_func, info.get('arg_mapping', {})
     
     def _get_function_imports(self, func) -> None:
         """Extract import statements needed for a given function."""
@@ -259,7 +278,7 @@ class NotebookExporter:
 
         # For wrapper functions, use the argument mapping to map the arguments to the predecessor node names
         if is_wrapper:
-            _, arg_mapping = self._get_exposed_target_info(func)
+            target_func, arg_mapping = self._get_exposed_target_info(func)
             for predecessor_name, func_param in arg_mapping.items():
                 arguments[func_param] = f"{predecessor_name}_output"
         else:
@@ -298,7 +317,7 @@ class NotebookExporter:
         
         # For wrapped functions, add a comment showing how to call the target directly
         if is_wrapper:
-            _, arg_mapping = self._get_exposed_target_info(func)
+            target_func, arg_mapping = self._get_exposed_target_info(func)
             
             # For target function call, map the arguments according to the mapping
             target_args = {}
@@ -309,8 +328,11 @@ class NotebookExporter:
             target_args_str = ", ".join(f"{k}={repr(v)}" for k, v in target_args.items()) if target_args else ""
             
             # Get the target function's name
-            target_func = func._notebook_export_info['target_function']
-            target_name = target_func.__name__
+            if target_func:
+                target_name = target_func.__name__
+            else:
+                target_name = func._notebook_export_info.get('target_function_path', 'unknown_target')
+
             
             # Create both function calls, with the direct call commented out
             function_name = self._get_function_name_from_string(function_string)
