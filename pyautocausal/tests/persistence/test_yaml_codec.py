@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import sys
 
 import pytest
 
@@ -66,4 +68,55 @@ def test_yaml_roundtrip_notebook_export(tmp_path):
     with nb_path.open() as fh:
         nb = nbformat.read(fh, as_version=4)
     # header markdown cell expected
-    assert nb.cells and nb.cells[0].cell_type == "markdown" 
+    assert nb.cells and nb.cells[0].cell_type == "markdown"
+
+
+def test_yaml_portability_for_notebook_export(tmp_path):
+    """
+    Simulates a "foreign" environment to ensure that a graph serialized
+    on one machine can be deserialized and exported to a notebook on another
+    where the original absolute file paths are not available.
+
+    This directly tests for the "OSError: source code not available" bug.
+    """
+    # 1. Serialize the graph in the "local" environment
+    local_graph_path = tmp_path / "local_graph"
+    graph = _build_graph(local_graph_path)
+    yaml_path = tmp_path / "portable_graph.yml"
+    graph.to_yaml(yaml_path)
+
+    # Execute the graph so that notebook export has completed nodes
+    df = generate_mock_data(n_units=10, n_periods=2, n_treated=2)
+    graph.fit(df=df)
+
+    # 2. Simulate the "foreign" environment
+    original_cwd = Path.cwd()
+    foreign_dir = tmp_path / "foreign_environment"
+    foreign_dir.mkdir()
+    os.chdir(foreign_dir)
+
+    # Add project root to sys.path to simulate package installation
+    project_root = Path(original_cwd).parent.parent
+    sys.path.insert(0, str(project_root))
+
+    try:
+        # 3. Deserialize and export in the "foreign" environment
+        loaded_graph = ExecutableGraph.from_yaml(yaml_path)
+        
+        # This step would fail with an OSError if paths were not portable
+        exporter = NotebookExporter(loaded_graph)
+        nb_path = foreign_dir / "exported_notebook.ipynb"
+        
+        # The key assertion: does this raise an OSError?
+        exporter.export_notebook(str(nb_path))
+        
+        # Verify notebook was created
+        assert nb_path.exists()
+        with nb_path.open() as fh:
+            nb = nbformat.read(fh, as_version=4)
+        assert len(nb.cells) > 0
+
+    finally:
+        # 4. Clean up the environment
+        os.chdir(original_cwd)
+        sys.path.pop(0) 

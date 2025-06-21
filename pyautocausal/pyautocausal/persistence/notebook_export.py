@@ -10,6 +10,7 @@ from ..orchestration.graph import ExecutableGraph
 from .visualizer import visualize_graph
 from .notebook_runner import run_notebook_and_create_html, convert_notebook_to_html
 import importlib
+from ..persistence.parameter_mapper import TransformableFunction
 
 class NotebookExporter:
     """
@@ -161,8 +162,18 @@ class NotebookExporter:
         
         # Check if this is an exposed wrapper function
         if self._is_exposed_wrapper(func):
-            target_func, arg_mapping = self._get_exposed_target_info(func)
+            target_func_or_wrapper, arg_mapping = self._get_exposed_target_info(func)
             
+            # If the target is a TransformableFunction, get the actual underlying function
+            if isinstance(target_func_or_wrapper, TransformableFunction):
+                target_func = target_func_or_wrapper.get_function()
+            else:
+                target_func = target_func_or_wrapper
+
+            if target_func is None:
+                # Handle case where the target function could not be resolved
+                return f"# Source code for target function could not be resolved."
+
             target_source = inspect.getsource(target_func)
             
             # Remove the @make_transformable decorator lines but preserve indentation
@@ -329,10 +340,13 @@ class NotebookExporter:
             
             # Get the target function's name
             if target_func:
-                target_name = target_func.__name__
+                # If the target is a TransformableFunction, get the actual function's name
+                if isinstance(target_func, TransformableFunction):
+                    target_name = target_func.get_function().__name__
+                else:
+                    target_name = target_func.__name__
             else:
                 target_name = func._notebook_export_info.get('target_function_path', 'unknown_target')
-
             
             # Create both function calls, with the direct call commented out
             function_name = self._get_function_name_from_string(function_string)
