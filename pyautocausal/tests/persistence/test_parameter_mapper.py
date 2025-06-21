@@ -154,6 +154,36 @@ def test_function_metadata_preservation():
     assert transformed.__doc__ == example_func.__doc__
     assert transformed.__name__ == example_func.__name__
 
+def test_transformed_signature_is_preserved_through_exposure():
+    """
+    Tests that the custom signature created by `transform` is not lost
+    when passed through the `expose_in_notebook` decorator. This prevents
+    a regression where the signature would default to (*args, **kwargs).
+    """
+    def my_function(a: int, b: str = "hello") -> float:
+        """A simple function."""
+        return float(a + len(b))
+
+    # `transform` applies `expose_in_notebook` internally
+    transformed_func = make_transformable(my_function).transform(
+        {'first_arg': 'a', 'second_arg': 'b'}
+    )
+    
+    # Verify the signature of the final, decorated function
+    sig = inspect.signature(transformed_func)
+    
+    # Check that parameters are correctly renamed
+    assert 'first_arg' in sig.parameters
+    assert 'second_arg' in sig.parameters
+    assert 'a' not in sig.parameters
+    assert 'b' not in sig.parameters
+    
+    # Check that annotations and defaults are preserved
+    assert sig.parameters['first_arg'].annotation == int
+    assert sig.parameters['second_arg'].annotation == str
+    assert sig.parameters['second_arg'].default == "hello"
+    assert sig.return_annotation == float
+
 def test_descriptor_protocol():
     """Test that the descriptor protocol (__get__) works correctly"""
     class TestClass:
