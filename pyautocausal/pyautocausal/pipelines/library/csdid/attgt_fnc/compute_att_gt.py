@@ -1,8 +1,8 @@
 import numpy as np, pandas as pd
 import patsy 
-from ..drdid import drdid_panel, drdid_rc, reg_did_panel, reg_did_rc, std_ipw_did_panel, std_ipw_did_rc
+from pyautocausal.pipelines.library.csdid.drdid import drdid_panel, drdid_rc, reg_did_panel, reg_did_rc, std_ipw_did_panel, std_ipw_did_rc
 
-from csdid.utils.bmisc import panel2cs2
+from pyautocausal.pipelines.library.csdid.utils.bmisc import panel2cs2
 import warnings
 
 

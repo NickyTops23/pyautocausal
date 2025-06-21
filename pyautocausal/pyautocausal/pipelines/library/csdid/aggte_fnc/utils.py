@@ -1,5 +1,5 @@
-from csdid.utils.bmisc import TorF
-from csdid.utils.mboot import mboot
+from pyautocausal.pipelines.library.csdid.utils.bmisc import TorF
+from pyautocausal.pipelines.library.csdid.utils.mboot import mboot
 
 import numpy as np
 import scipy.stats as stats

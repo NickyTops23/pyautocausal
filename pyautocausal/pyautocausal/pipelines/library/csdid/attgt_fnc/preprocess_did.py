@@ -246,7 +246,7 @@
 
 import pandas as pd, numpy as np
 import patsy 
-from csdid.utils.bmisc import makeBalancedPanel
+from pyautocausal.pipelines.library.csdid.utils.bmisc import makeBalancedPanel
 import warnings
 
 fml = patsy.dmatrices
