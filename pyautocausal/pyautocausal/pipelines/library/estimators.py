@@ -285,15 +285,21 @@ def fit_callaway_santanna_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDSpec:
     # Generate summary table
     att_gt.summ_attgt(n=4)
     
+    # Create separate copies for each aggregation to avoid overwriting
+    import copy
+    
     # Compute aggregated treatment effects
     # Overall effect
-    att_gt_overall = att_gt.aggte(typec="simple", bstrap=True, cband=True)
+    att_gt_overall = copy.deepcopy(att_gt)
+    att_gt_overall.aggte(typec="simple", bstrap=True, cband=True)
     
-    # Dynamic (event study) effects
-    att_gt_dynamic = att_gt.aggte(typec="dynamic", bstrap=True, cband=True)
+    # Dynamic (event study) effects  
+    att_gt_dynamic = copy.deepcopy(att_gt)
+    att_gt_dynamic.aggte(typec="dynamic", bstrap=True, cband=True)
     
     # Group-specific effects
-    att_gt_group = att_gt.aggte(typec="group", bstrap=True, cband=True)
+    att_gt_group = copy.deepcopy(att_gt)
+    att_gt_group.aggte(typec="group", bstrap=True, cband=True)
     
     # Store all results in the spec
     spec.model = {

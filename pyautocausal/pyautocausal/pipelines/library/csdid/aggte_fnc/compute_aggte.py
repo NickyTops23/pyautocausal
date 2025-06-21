@@ -4,8 +4,8 @@ import numpy as np
 from scipy.stats import norm
 
 
-from csdid.aggte_fnc.utils import get_agg_inf_func, get_se, wif, AGGTEobj
-from csdid.utils.mboot import mboot
+from pyautocausal.pipelines.library.csdid.aggte_fnc.utils import get_agg_inf_func, get_se, wif, AGGTEobj
+from pyautocausal.pipelines.library.csdid.utils.mboot import mboot
 import warnings
 
 def compute_aggte(MP,
@@ -20,6 +20,8 @@ def compute_aggte(MP,
                       alp           = None,
                       clustervars   = None,
                       call          = None):
+    
+
   
 # =============================================================================
 # unpack MP object

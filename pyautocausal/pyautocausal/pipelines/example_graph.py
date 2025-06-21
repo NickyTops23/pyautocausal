@@ -45,9 +45,8 @@ from pyautocausal.pipelines.library.conditions import (
 from pyautocausal.pipelines.library.plots import event_study_plot, synthdid_plot, hainmueller_synth_plot
 
 from pyautocausal.pipelines.library.plots import (
-    callaway_santanna_event_study_plot,
-    callaway_santanna_group_plot,
-    callaway_santanna_diagnostic_plots
+    callaway_santana_event_study_plot,
+    callaway_santanna_group_event_plot
 )
 
 from pyautocausal.persistence.visualizer import visualize_graph
@@ -296,19 +295,13 @@ def _create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs
     
     graph.create_node(
         'cs_never_treated_event_plot',
-        action_function=callaway_santanna_event_study_plot.transform({'cs_never_treated': 'spec'}),
+        action_function=callaway_santana_event_study_plot.transform({'cs_never_treated': 'spec'}),
         predecessors=["cs_never_treated"]
     )
     
     graph.create_node(
         'cs_never_treated_group_plot',
-        action_function=callaway_santanna_group_plot.transform({'cs_never_treated': 'spec'}),
-        predecessors=["cs_never_treated"]
-    )
-    
-    graph.create_node(
-        'cs_never_treated_diagnostics',
-        action_function=callaway_santanna_diagnostic_plots.transform({'cs_never_treated': 'spec'}),
+        action_function=callaway_santanna_group_event_plot.transform({'cs_never_treated': 'spec'}),
         predecessors=["cs_never_treated"]
     )
     
@@ -321,19 +314,13 @@ def _create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs
     
     graph.create_node(
         'cs_not_yet_treated_event_plot',
-        action_function=callaway_santanna_event_study_plot.transform({'cs_not_yet_treated': 'spec'}),
-        predecessors=["cs_not_yet_treated"]
-    )
-    
-    graph.create_node(
-        'cs_not_yet_treated_group_plot',
-        action_function=callaway_santanna_group_plot.transform({'cs_not_yet_treated': 'spec'}),
+        action_function=callaway_santana_event_study_plot.transform({'cs_not_yet_treated': 'spec'}),
         predecessors=["cs_not_yet_treated"]
     )
     
     graph.create_node(
         'cs_not_yet_treated_diagnostics',
-        action_function=callaway_santanna_diagnostic_plots.transform({'cs_not_yet_treated': 'spec'}),
+        action_function=callaway_santanna_group_event_plot.transform({'cs_not_yet_treated': 'spec'}),
         predecessors=["cs_not_yet_treated"]
     )
     

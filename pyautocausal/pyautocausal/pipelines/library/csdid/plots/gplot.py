@@ -15,16 +15,19 @@ def gplot(ssresults, ax, ylim=None, xlab=None, ylab=None, title="Group", xgap=1,
     if ylab is None:
         ylab = 'ATT'
     
-    ssresults = ssresults[ssresults['year'].notnull()].copy()
-    ssresults.loc[:, 'year'] = ssresults['year'].astype(int).astype(str)
+    # Use the correct column name - it might be 'year' or 'event_time'
+    x_col = 'event_time' if 'event_time' in ssresults.columns else 'year'
+    
+    ssresults = ssresults[ssresults[x_col].notnull()].copy()
+    ssresults.loc[:, x_col] = ssresults[x_col].astype(int)
     
     pre_points = ssresults.loc[ssresults['post'] == 0]
     post_points = ssresults.loc[ssresults['post'] == 1]
     
-    ax.errorbar(pre_points['year'], pre_points['att'], yerr=pre_points['c']*pre_points['att_se'],
+    ax.errorbar(pre_points[x_col], pre_points['att'], yerr=pre_points['c']*pre_points['att_se'],
                  fmt='o', markersize=5, color='#e87d72', ecolor='#e87d72', capsize=5, label='Pre')   
     
-    ax.errorbar(post_points['year'], post_points['att'], yerr=post_points['c']*post_points['att_se'],
+    ax.errorbar(post_points[x_col], post_points['att'], yerr=post_points['c']*post_points['att_se'],
                  fmt='o', markersize=5, color='#56bcc2', ecolor='#56bcc2', capsize=5, label='Post')  
     
     ax.set_ylim(ylim)
@@ -63,15 +66,17 @@ def splot(ssresults, ax, ylim=None, xlab=None, ylab=None, title="Group",
     if ylab is None:
         ylab = 'ATT'
 
-    ssresults['year'] = ssresults['year'].copy().astype(str)
+    # Use the correct column name - it might be 'year' or 'event_time'
+    x_col = 'event_time' if 'event_time' in ssresults.columns else 'year'
+    ssresults[x_col] = ssresults[x_col].copy().astype(str)
     
     pre_points = ssresults.loc[ssresults['post'] == 0]
     post_points = ssresults.loc[ssresults['post'] == 1]
     
-    ax.errorbar(pre_points['year'], pre_points['att'], yerr=pre_points['c']*pre_points['att_se'],
+    ax.errorbar(pre_points[x_col], pre_points['att'], yerr=pre_points['c']*pre_points['att_se'],
                  fmt='o', markersize=5, color='#e87d72', ecolor='#e87d72', capsize=5, label='Pre')   
     
-    ax.errorbar(post_points['year'], post_points['att'], yerr=post_points['c']*post_points['att_se'],
+    ax.errorbar(post_points[x_col], post_points['att'], yerr=post_points['c']*post_points['att_se'],
                  fmt='o', markersize=5, color='#56bcc2', ecolor='#56bcc2', capsize=5, label='Post') 
     
     ax.set_xlabel(xlab)

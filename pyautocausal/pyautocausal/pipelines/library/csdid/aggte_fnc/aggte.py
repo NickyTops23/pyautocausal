@@ -80,7 +80,7 @@
 #'
 #'
 #'
-from csdid.aggte_fnc.compute_aggte import compute_aggte
+from pyautocausal.pipelines.library.csdid.aggte_fnc.compute_aggte import compute_aggte
 import inspect
 
 def aggte(MP, 

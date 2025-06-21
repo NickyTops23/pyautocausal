@@ -1,12 +1,12 @@
 # from aggte import AGGte
-from csdid.aggte_fnc.aggte import aggte as agg_te
+from pyautocausal.pipelines.library.csdid.aggte_fnc.aggte import aggte as agg_te
 
-from csdid.attgt_fnc.preprocess_did import pre_process_did
-from csdid.attgt_fnc.compute_att_gt import compute_att_gt
+from pyautocausal.pipelines.library.csdid.attgt_fnc.preprocess_did import pre_process_did
+from pyautocausal.pipelines.library.csdid.attgt_fnc.compute_att_gt import compute_att_gt
 
-from csdid.utils.mboot import mboot
+from pyautocausal.pipelines.library.csdid.utils.mboot import mboot
 
-from csdid.plots.gplot import gplot, splot
+from pyautocausal.pipelines.library.csdid.plots.gplot import gplot, splot
 
 
 import matplotlib.pyplot as plt
@@ -205,12 +205,20 @@ class ATTgt:
                    theming=True,
                    **kwargs):
 
-    did_object = self.atte
+    # Get the aggregated results - check if atte exists, otherwise call aggte to ensure it's available
+    if hasattr(self, 'atte') and self.atte is not None:
+        did_object = self.atte
+    else:
+        # If atte doesn't exist, this suggests the object hasn't been aggregated yet
+        # In plotting context, we should already have aggregated results
+        raise ValueError("ATTgt object does not have aggregated results. Please call aggte() first.")
 
     post_treat = 1 * (np.asarray(did_object["egt"]).astype(int) >= 0)
     
+
+    
     results = {
-        "year": list(map(int, did_object["egt"])),
+        "event_time": list(map(int, did_object["egt"])),
         "att": did_object["att_egt"],
         "att_se": did_object["se_egt"][0],
         "post": post_treat
