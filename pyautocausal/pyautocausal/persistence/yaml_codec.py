@@ -25,6 +25,7 @@ from pyautocausal.orchestration.graph import ExecutableGraph  # noqa: I001  (loc
 from pyautocausal.orchestration.nodes import Node, InputNode, DecisionNode  # noqa: E402  (after sys.path)
 from pyautocausal.persistence.output_config import OutputConfig
 from pyautocausal.persistence.output_types import OutputType
+from pyautocausal.persistence.parameter_mapper import TransformedFunctionWrapper
 
 # ---------------------------------------------------------------------------
 # Helper functions for (de)serialising callables
@@ -36,9 +37,22 @@ def _callable_to_spec(func: Callable) -> Dict[str, str]:
     Strategy:
     1.  If the function can be re-imported via ``module:qualname`` we emit:
         {type: dotted, value: "module:qualname"}
-    2.  Otherwise we emit a base64-encoded cloudpickle dump:
-        {type: pickle, value: "<b64>"}
+    2.  If it's our special transformed wrapper, we deconstruct it into a
+        portable spec so it can be rebuilt after deserialisation.
+    3.  Otherwise we emit a base64-encoded cloudpickle dump, patching the
+        code object's filename to be portable if possible.
     """
+    # Is it our special wrapper? If so, deconstruct it.
+    if isinstance(func, TransformedFunctionWrapper):
+        # Recursively create a spec for the inner function, which ensures
+        # that our co_filename patching logic below gets applied to it.
+        inner_func_spec = _callable_to_spec(func.func)
+        return {
+            "type": "transformed_wrapper",
+            "func_spec": inner_func_spec,
+            "arg_mapping": func.arg_mapping,
+        }
+
     module = getattr(func, "__module__", None)
     qualname = getattr(func, "__qualname__", None)
 
@@ -118,11 +132,23 @@ def _callable_to_spec(func: Callable) -> Dict[str, str]:
 
 def _spec_to_callable(spec: Dict[str, str]) -> Callable:
     """Reconstruct function from the mapping produced by *_callable_to_spec*."""
-    if spec["type"] == "dotted":
+    spec_type = spec["type"]
+    
+    if spec_type == "dotted":
         module, qualname = spec["value"].split(":", 1)
         mod = importlib.import_module(module)
         return eval(qualname, mod.__dict__)  # noqa: S307 – controlled input
-    elif spec["type"] == "pickle":
+
+    elif spec_type == "transformed_wrapper":
+        from .parameter_mapper import make_transformable  # local import to avoid cycle
+        
+        # Recursively reconstruct the inner function first
+        inner_func = _spec_to_callable(spec["func_spec"])
+        
+        # Now, re-apply the transformation
+        return make_transformable(inner_func).transform(spec["arg_mapping"])
+
+    elif spec_type == "pickle":
         data = base64.b64decode(spec["value"].encode("utf-8"))
         return cloudpickle.loads(data)
     else:  # pragma: no cover – defensive
