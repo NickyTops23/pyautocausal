@@ -36,6 +36,7 @@ def expose_in_notebook(target_function: Callable, arg_mapping: Optional[Dict[str
         
         # Transfer metadata to the wrapped function
         wrapped_function._notebook_export_info = wrapper_func._notebook_export_info
+        wrapped_function.__signature__ = wrapper_func.__signature__
         return wrapped_function
     
     return decorator 
