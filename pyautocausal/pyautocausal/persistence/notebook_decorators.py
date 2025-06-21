@@ -1,3 +1,4 @@
+from functools import wraps
 from typing import Callable, Dict, Any, Optional
 import inspect
 
@@ -24,12 +25,12 @@ def expose_in_notebook(target_function: Callable, arg_mapping: Optional[Dict[str
             return complex_stats_function(df=data)
     """
     def decorator(wrapper_func):
-        # Attach metadata to the wrapper function. It already has the correct signature
-        # and implementation from `parameter_mapper.py`. We just add our metadata
-        # and return it, avoiding any extra wrapping layers.
+        # Store a portable dotted-path reference instead of the function object
+        target_path = f"{target_function.__module__}:{target_function.__qualname__}"
+        
         wrapper_func._notebook_export_info = {
             'is_wrapper': True,
-            'target_function': target_function,
+            'target_function_path': target_path,
             'arg_mapping': arg_mapping or {}
         }
         return wrapper_func
