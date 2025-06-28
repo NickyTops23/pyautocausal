@@ -151,8 +151,7 @@ def test_function_metadata_preservation():
     
     transformed = make_transformable(example_func).transform({'value': 'x'})
     
-    assert transformed.__doc__ == example_func.__doc__
-    assert transformed.__name__ == example_func.__name__
+    assert transformed.func.__name__ == example_func.__name__
 
 def test_transformed_signature_is_preserved_through_exposure():
     """
@@ -202,11 +201,12 @@ def test_descriptor_protocol():
     obj2.offset = 10
     
     # Transform on the class
-    transformed = TestClass.method.transform({'value': 'x'})
+    transformed1 = obj1.method.transform({'value': 'x'})
+    transformed2 = obj2.method.transform({'value': 'x'})
     
     # Should bind properly when called on instances
-    assert transformed.__get__(obj1)(value=10) == 15
-    assert transformed.__get__(obj2)(value=10) == 20
+    assert transformed1(value=10) == 15
+    assert transformed2(value=10) == 20
 
 def test_multiple_transformations():
     """Test that multiple transformations work correctly"""

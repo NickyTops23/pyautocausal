@@ -6,7 +6,7 @@ from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.pipelines.library.estimators import fit_double_lasso, fit_ols
 from pyautocausal.pipelines.library.specifications import create_cross_sectional_specification
 from pyautocausal.pipelines.library.output import write_statsmodels_summary
-from pyautocausal.pipelines.example_graph import causal_pipeline, generate_mock_data
+from pyautocausal.pipelines.example_graph import causal_pipeline, generate_mock_data, simple_graph
 from pyautocausal.persistence.notebook_export import NotebookExporter
 from pyautocausal.persistence.visualizer import visualize_graph
 import json
@@ -528,8 +528,7 @@ def test_serialized_simple_graph_execution(tmp_path):
     This provides an end-to-end check of the YAML round-trip and execution logic.
     """
     # 1. Build the initial graph and configure its output path
-    graph_output_path = tmp_path / "original_output"
-    graph = simple_graph(graph_output_path)
+    graph = simple_graph()
     
     # 2. Serialize the graph to a YAML file
     yaml_path = tmp_path / "simple_graph.yml"

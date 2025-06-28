@@ -5,15 +5,10 @@ from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.pipelines.mock_data import generate_mock_data
 
 
-def _build_graph(tmp_dir: Path):
-    graph = simple_graph(tmp_dir / "output")
-    return graph
-
-
 def test_pickle_roundtrip(tmp_path):
     """Build a graph, dump to pickle, load, and verify basic structure."""
-    graph = _build_graph(tmp_path)
-
+    graph = simple_graph()
+    
     file_path = tmp_path / "graph.yml"
     graph.to_yaml(file_path)
 

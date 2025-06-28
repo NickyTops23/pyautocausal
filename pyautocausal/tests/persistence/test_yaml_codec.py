@@ -11,14 +11,9 @@ from pyautocausal.persistence.notebook_export import NotebookExporter
 import nbformat
 
 
-def _build_graph(tmp_dir: Path):
-    """Helper to create the example graph inside *tmp_dir*."""
-    return simple_graph(tmp_dir / "output")
-
-
 def test_yaml_roundtrip(tmp_path):
     """Serialize a graph to YAML and load it back, validating integrity."""
-    graph = _build_graph(tmp_path)
+    graph = simple_graph()
 
     yaml_path = tmp_path / "graph.yml"
     graph.to_yaml(yaml_path)
@@ -46,7 +41,7 @@ def test_yaml_roundtrip(tmp_path):
 
 def test_yaml_roundtrip_notebook_export(tmp_path):
     """After YAML round-trip, ensure we can export a notebook successfully."""
-    graph = _build_graph(tmp_path)
+    graph = simple_graph()
 
     # Save + load via YAML
     yaml_path = tmp_path / "graph.yml"
@@ -81,7 +76,7 @@ def test_yaml_portability_for_notebook_export(tmp_path):
     """
     # 1. Serialize the graph in the "local" environment
     local_graph_path = tmp_path / "local_graph"
-    graph = _build_graph(local_graph_path)
+    graph = simple_graph()
     yaml_path = tmp_path / "portable_graph.yml"
     graph.to_yaml(yaml_path)
 
