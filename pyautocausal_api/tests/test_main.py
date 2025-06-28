@@ -1,7 +1,7 @@
 import os
 import uuid
 from unittest.mock import patch, MagicMock, AsyncMock
-from fastapi.testclient import TestClient
+from starlette.testclient import TestClient
 from fastapi import UploadFile, BackgroundTasks
 from pathlib import Path
 import io
@@ -9,9 +9,25 @@ import json
 from botocore.exceptions import NoCredentialsError, ClientError
 import pytest
 
+# Patch httpx.Client to accept 'app' argument for compatibility with starlette TestClient and fastapi TestClient
+import httpx
+from httpx import ASGITransport
+
+_orig_client_init = httpx.Client.__init__
+
+def _patched_client_init(self, *args, **kwargs):
+    if 'app' in kwargs and 'transport' not in kwargs:
+        app_ = kwargs.pop('app')
+        kwargs['transport'] = ASGITransport(app=app_)
+    return _orig_client_init(self, *args, **kwargs)
+
+httpx.Client.__init__ = _patched_client_init
+
 # Import the FastAPI app and other necessary components
 from app.main import app, parse_s3_uri, job_status_store
 from app.utils.file_io import Status
+from app.utils.pipeline_registry import load_deployed_pipelines
+from pyautocausal.orchestration.graph import ExecutableGraph
 
 # Create a TestClient for the FastAPI app
 client = TestClient(app)
@@ -82,40 +98,6 @@ def test_read_root():
 #         assert "Server configuration error" in response.json()["detail"]
 #         assert "S3 input bucket not specified" in response.json()["detail"]
 
-# Test successful job submission
-@patch('uuid.uuid4')
-@patch.object(BackgroundTasks, 'add_task')
-def test_submit_job_success(
-    mock_add_task, mock_uuid_func, 
-    mock_s3_env_vars, job_id_fixture
-):
-    mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
-    
-    job_status_store.clear()
-
-    input_s3_path = "s3://test-bucket/source/test.csv"
-    response = client.post(
-        "/jobs",
-        data={"input_path": input_s3_path}
-    )
-    
-    assert response.status_code == 202
-    json_response = response.json()
-    assert json_response["job_id"] == job_id_fixture
-    assert f"/jobs/{job_id_fixture}" in json_response["status_url"]
-    assert "Job submitted successfully" in json_response["message"]
-    
-    mock_add_task.assert_called_once()
-    args = mock_add_task.call_args[1]
-    assert args["job_id"] == job_id_fixture
-    assert args["input_s3_uri"] == input_s3_path
-    assert args["task_store"] is job_status_store
-    
-    assert job_id_fixture in job_status_store
-    assert job_status_store[job_id_fixture]["status"] == Status.PENDING
-    assert job_status_store[job_id_fixture]["original_filename"] == "test.csv"
-    assert job_status_store[job_id_fixture]["input_path"] == input_s3_path
-
 # Test S3 upload failure (mocking write_to)
 # This test is no longer relevant as the endpoint doesn't do the intermediate write.
 # @patch('uuid.uuid4')
@@ -142,18 +124,56 @@ def test_submit_job_success(
 # Test Background Task submission failure
 @patch('uuid.uuid4')
 @patch.object(BackgroundTasks, 'add_task')
-def test_submit_job_task_submission_failure(
+def test_submit_job_validation_failure(
     mock_add_task, mock_uuid_func,
     mock_s3_env_vars, job_id_fixture
 ):
     mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
-    mock_add_task.side_effect = Exception("Queueing service error")
 
     job_status_store.clear()
 
     response = client.post(
         "/jobs",
-        data={"input_path": "s3://test-bucket/source/test.csv"}
+        json={
+            "input_path": "s3://test-bucket/source/test.csv",
+            "pipeline_name": list(load_deployed_pipelines().keys())[0],
+            "column_mapping": {},
+        }
+    )
+        
+    assert response.status_code == 422
+    assert "Missing required column mappings" in response.json()["detail"]["error"]
+    
+    assert job_id_fixture not in job_status_store
+
+# Test actual Background Task submission failure
+@patch('app.main.ExecutableGraph.load')
+@patch('app.main.s3.get')
+@patch('uuid.uuid4')
+@patch.object(BackgroundTasks, 'add_task')
+def test_submit_job_task_submission_failure(
+    mock_add_task, mock_uuid_func, mock_s3_get, mock_graph_load,
+    mock_s3_env_vars, job_id_fixture
+):
+    mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
+    mock_add_task.side_effect = Exception("Queueing service error")
+    mock_graph_load.return_value = MagicMock(spec=ExecutableGraph)
+
+    job_status_store.clear()
+
+    # Use valid mapping to pass validation
+    pipelines = load_deployed_pipelines()
+    pipeline_name = list(pipelines.keys())[0]
+    required_cols = pipelines[pipeline_name]["required_columns"]
+    mapping = {f"col{i}": col for i, col in enumerate(required_cols)}
+
+    response = client.post(
+        "/jobs",
+        json={
+            "input_path": "s3://test-bucket/source/test.csv",
+            "pipeline_name": pipeline_name,
+            "column_mapping": mapping,
+        }
     )
         
     assert response.status_code == 503
@@ -187,7 +207,8 @@ def test_get_job_status_pending(job_id_fixture):
     assert json_response["job_id"] == job_id_fixture
     assert json_response["status"] == "PENDING"
     assert "queued and waiting" in json_response["message"]
-    assert json_response["result_path"] is None
+    assert json_response["result_s3_uri"] is None
+    assert json_response["download_url"] is None
     assert json_response["error_details"] is None
         
     job_status_store.pop(job_id_fixture, None)
@@ -210,15 +231,20 @@ def test_get_job_status_running(job_id_fixture):
     assert json_response["job_id"] == job_id_fixture
     assert json_response["status"] == "RUNNING"
     assert "currently running" in json_response["message"]
-    assert json_response["result_path"] is None
+    assert json_response["result_s3_uri"] is None
+    assert json_response["download_url"] is None
     assert json_response["error_details"] is None
         
     job_status_store.pop(job_id_fixture, None)
 
 # Test job status retrieval for job in SUCCESS state
-def test_get_job_status_success(job_id_fixture):
+@patch('app.main.s3_client.generate_presigned_url')
+def test_get_job_status_success(mock_generate_url, job_id_fixture):
     job_status_store.clear()
-    output_s3_path = "s3://output-bucket/outputs/test-job-id/"
+    output_s3_path = f"s3://output-bucket/outputs/{job_id_fixture}/results.zip"
+    presigned_url = f"https://s3.amazonaws.com/output-bucket/outputs/{job_id_fixture}/results.zip?AWSAccessKeyId=..."
+    mock_generate_url.return_value = presigned_url
+    
     job_status_store[job_id_fixture] = {
         "status": Status.SUCCESS,
         "original_filename": "test.csv",
@@ -233,9 +259,17 @@ def test_get_job_status_success(job_id_fixture):
     json_response = response.json()
     assert json_response["job_id"] == job_id_fixture
     assert json_response["status"] == "COMPLETED"
-    assert "completed successfully" in json_response["message"]
-    assert json_response["result_path"] == output_s3_path
+    assert "Click the link to download" in json_response["message"]
+    assert json_response["result_s3_uri"] == output_s3_path
+    assert json_response["download_url"] == presigned_url
     assert json_response["error_details"] is None
+    
+    bucket_name, key = parse_s3_uri(output_s3_path)
+    mock_generate_url.assert_called_once_with(
+        'get_object',
+        Params={'Bucket': bucket_name, 'Key': key},
+        ExpiresIn=3600
+    )
         
     job_status_store.pop(job_id_fixture, None)
 
@@ -258,7 +292,8 @@ def test_get_job_status_failure(job_id_fixture):
     assert json_response["job_id"] == job_id_fixture
     assert json_response["status"] == "FAILED"
     assert "failed" in json_response["message"]
-    assert json_response["result_path"] is None
+    assert json_response["result_s3_uri"] is None
+    assert json_response["download_url"] is None
     assert error_message in json_response["error_details"]
         
     job_status_store.pop(job_id_fixture, None)
@@ -280,8 +315,73 @@ def test_get_job_status_failure(job_id_fixture):
 def test_submit_job_missing_input_path(mock_s3_env_vars):
     response = client.post(
         "/jobs",
-        data={}
+        json={
+            "pipeline_name": list(load_deployed_pipelines().keys())[0],
+            "column_mapping": {},
+        }
     )
     assert response.status_code == 422
-    assert "detail" in response.json()
-    assert any("input_path" in err.get("loc", []) and "field required" in err.get("msg", "").lower() for err in response.json()["detail"]) 
+    details = response.json().get("detail")
+    assert any("input_path" in err.get("loc", []) and "field required" in err.get("msg", "").lower() for err in details) 
+
+# New Test for successful job submission with graph loading
+@patch('uuid.uuid4')
+@patch.object(BackgroundTasks, 'add_task')
+@patch('app.main.s3.get')
+@patch('app.main.ExecutableGraph.load')
+def test_submit_job_success_with_graph_loading(
+    mock_graph_load, mock_s3_get, mock_add_task, mock_uuid_func,
+    mock_s3_env_vars, job_id_fixture
+):
+    # Mocking
+    mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
+    mock_graph = MagicMock(spec=ExecutableGraph)
+    mock_graph_load.return_value = mock_graph
+    
+    job_status_store.clear()
+
+    input_s3_path = "s3://test-bucket/source/test.csv"
+    pipelines = load_deployed_pipelines()
+    pipeline_name = list(pipelines.keys())[0]
+    required_cols = pipelines[pipeline_name]["required_columns"]
+    mapping = {f"user_col_{i}": col for i, col in enumerate(required_cols)}
+    
+    # Send request
+    response = client.post(
+        "/jobs",
+        json={
+            "input_path": input_s3_path,
+            "pipeline_name": pipeline_name,
+            "column_mapping": mapping,
+        }
+    )
+    
+    # Assertions for the response
+    assert response.status_code == 202
+    json_response = response.json()
+    assert json_response["job_id"] == job_id_fixture
+    assert f"/jobs/{job_id_fixture}" in json_response["status_url"]
+    
+    # Assert that S3 download and graph loading were called
+    mock_s3_get.assert_called_once()
+    mock_graph_load.assert_called_once()
+    
+    # Assert that the background task was called with the correct parameters
+    mock_add_task.assert_called_once()
+    args = mock_add_task.call_args[1]
+    assert args["job_id"] == job_id_fixture
+    assert args["input_s3_uri"] == input_s3_path
+    assert args["graph"] is mock_graph # Check that the graph object is passed
+    assert args["column_mapping"] == mapping
+    assert sorted(args["required_columns"]) == sorted(required_cols)
+    assert args["task_store"] is job_status_store
+    
+    # Assertions for the job store
+    assert job_id_fixture in job_status_store
+    job_info = job_status_store[job_id_fixture]
+    assert job_info["status"] == Status.PENDING
+    assert job_info["original_filename"] == "test.csv"
+    assert job_info["input_path"] == input_s3_path
+    assert job_info["pipeline_name"] == pipeline_name
+    assert job_info["result"] is None
+    assert job_info["error"] is None

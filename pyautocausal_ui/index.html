@@ -1,4 +1,4 @@
-<!-- Basic HTML UI for PyAutoCausal -->
+<!-- React entry point for PyAutoCausal UI powered by Vite -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,21 +9,7 @@
     <script src="config.js"></script>
 </head>
 <body>
-    <div id="app">
-        <h1>PyAutoCausal – Causal Analysis Tool</h1>
-
-        <div class="upload-section">
-            <input type="file" id="file-input" accept=".csv" />
-            <button id="upload-btn">Upload & Run Analysis</button>
-        </div>
-
-        <progress id="upload-progress" value="0" max="100" style="display: none;"></progress>
-
-        <div id="status" class="status"></div>
-
-        <button id="download-btn" style="display: none;">Download Results</button>
-    </div>
-
-    <script src="script.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
 </body>
 </html> 

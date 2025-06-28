@@ -16,7 +16,11 @@ from enum import Enum
 from .worker import run_graph_job
 from .utils.file_io import s3_client
 from fastapi.middleware.cors import CORSMiddleware
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+import yaml
+from .utils.pipeline_registry import load_deployed_pipelines
+from pyautocausal.orchestration.graph import ExecutableGraph
+import s3fs
+import tempfile
 
 # Import our file utilities
 from .utils.file_io import (
@@ -52,9 +56,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:9000",  # local dev server for the UI
         "http://127.0.0.1:9000",  # alternative localhost notation
-        "https://www.pyautocausal.com",  # production UI
-        "https://pyautocausal.com",      # bare domain if used
-        "https://api.pyautocausal.com"    # API domain for SSR or direct requests
+        "http://localhost:5173",  # Vite dev server
+        "*"  # TODO: tighten this list in production
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -85,6 +88,7 @@ s3_client = boto3.client(
         retries={'max_attempts': 3}
     )
 )
+s3 = s3fs.S3FileSystem(anon=False) # For loading graph objects
 
 # Function to parse S3 URI into bucket and path components
 def parse_s3_uri(s3_uri):
@@ -116,8 +120,14 @@ class JobStatusResponse(BaseModel):
     job_id: str
     status: str # Celery states: PENDING, STARTED, RETRY, FAILURE, SUCCESS, or custom PROCESSING
     message: str | None = None
-    result_path: str | None = None # Path to results if job COMPLETED
+    result_s3_uri: str | None = None
+    download_url: str | None = None # Pre-signed URL for downloading results
     error_details: str | None = None
+
+class JobSubmissionRequest(BaseModel):
+    input_path: str
+    pipeline_name: str
+    column_mapping: dict
 
 class InputPathSubmission(BaseModel):
     input_path: str = Field(..., description="Path to input file (S3 URI or local path)")
@@ -152,22 +162,69 @@ def log_event(event_type, job_id=None, duration_ms=None, status=None, error=None
 async def submit_job(
     request: Request,
     background_tasks: BackgroundTasks, # To construct full status URL
-    input_path: str = Form(...),
+    job_details: JobSubmissionRequest,
 ):
     """
     Submit a new job to process a data file with the PyAutoCausal simple_graph.
     
-    You can either:
-    1. Upload a file directly using the 'file' parameter, or
-    2. Specify the path to an existing file using 'input_path' (can be S3 URI or local path)
+    The request body should be a JSON object with the following fields:
+    - input_path: Path to input file (S3 URI)
+    - pipeline_name: Name of the pipeline to use
+    - column_mapping: JSON object mapping user CSV columns to pipeline columns
     """
     start_time = time.time()
     job_id = str(uuid.uuid4())
+
+    input_path = job_details.input_path
+    pipeline_name = job_details.pipeline_name
+    mapping_dict = job_details.column_mapping
     
-    # Validate that we have either a file upload or an input path
+    # Basic validation of required form fields
     if not input_path:
-        logger.warning(f"[{job_id}] Job submission missing both file and input_path")
-        raise HTTPException(status_code=400, detail="You must provide either a file upload or an input_path")
+        raise HTTPException(status_code=400, detail="input_path is required")
+
+    # Validate pipeline_name exists
+    pipelines_dict = load_deployed_pipelines()
+    if pipeline_name not in pipelines_dict:
+        raise HTTPException(status_code=400, detail=f"Unknown pipeline_name '{pipeline_name}'.")
+
+    pipeline_meta = pipelines_dict[pipeline_name]
+    graph_uri = pipeline_meta.get("graph_uri")
+    if not graph_uri:
+        raise HTTPException(status_code=500, detail=f"Graph URI not configured for pipeline '{pipeline_name}'.")
+
+    # Ensure all required columns are mapped
+    required_cols = set(pipeline_meta["required_columns"])
+    mapped_values = set(mapping_dict.values())
+    missing_required = required_cols - mapped_values
+    if missing_required:
+        raise HTTPException(status_code=422, detail={
+            "error": "Missing required column mappings",
+            "missing_columns": list(missing_required),
+        })
+
+    # ------------------------------------------------------------------
+    # Load graph from S3 (YAML ONLY)
+    # ------------------------------------------------------------------
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".yml", delete=True) as tmp_graph_file:
+            local_graph_path = tmp_graph_file.name
+
+            logger.info(
+                f"[{job_id}] Downloading pipeline graph (YAML) from {graph_uri} "
+                f"to temporary file {local_graph_path}"
+            )
+            s3.get(graph_uri, local_graph_path)
+
+            logger.info(f"[{job_id}] Loading ExecutableGraph from YAML")
+            graph = ExecutableGraph.from_yaml(local_graph_path)
+
+    except FileNotFoundError:
+        logger.error(f"[{job_id}] Graph file not found at S3 URI: {graph_uri}")
+        raise HTTPException(status_code=500, detail=f"Could not load pipeline graph from {graph_uri}")
+    except Exception as e:
+        logger.error(f"[{job_id}] Failed to download or load graph: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to initialize pipeline: {e}")
 
     # Determine original filename and set up paths
     original_filename = extract_filename(input_path)
@@ -180,8 +237,11 @@ async def submit_job(
         # Use FastAPI's BackgroundTasks instead of Celery
         background_tasks.add_task(
             run_graph_job,
-            job_id=job_id, 
-            input_s3_uri=input_path, 
+            job_id=job_id,
+            input_s3_uri=input_path,
+            graph=graph,
+            column_mapping=mapping_dict,
+            required_columns=list(required_cols),
             task_store=job_status_store
         )
         
@@ -191,7 +251,9 @@ async def submit_job(
             "task_submitted", 
             job_id=job_id, 
             duration_ms=task_init_duration,
-            input_path=input_path
+            input_path=input_path,
+            pipeline_name=pipeline_name,
+            column_mapping=mapping_dict
         )
 
     except Exception as e:
@@ -207,6 +269,8 @@ async def submit_job(
         "status": Status.PENDING,
         "original_filename": original_filename,
         "input_path": input_path,
+        "pipeline_name": pipeline_name,
+        "column_mapping": mapping_dict,
         "result": None,
         "error": None
     }
@@ -244,19 +308,36 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
 
     current_status_from_store: Status = job_info.get("status", Status.UNKNOWN) # Default to UNKNOWN if status somehow missing
     
-    result_data_path: str | None = None
+    result_s3_uri: str | None = None
+    download_url: str | None = None
     user_message: str = f"Job '{job_id}' status is {str(current_status_from_store).split('.')[-1]}." # Default message
     error_info_details: str | None = None
 
     if current_status_from_store == Status.SUCCESS:
         user_friendly_status = "COMPLETED"
-        result_data_path = job_info.get("result")
-        user_message = f"Job '{job_id}' completed successfully."
-        if result_data_path:
-             logger.info(f"[{job_id}] Job completed successfully, result path: {result_data_path}")
+        result_s3_uri = job_info.get("result")
+        
+        if result_s3_uri:
+            try:
+                # Generate a pre-signed URL for the result archive
+                bucket_name, key = parse_s3_uri(result_s3_uri)
+                if bucket_name and key:
+                    download_url = s3_client.generate_presigned_url(
+                        'get_object',
+                        Params={'Bucket': bucket_name, 'Key': key},
+                        ExpiresIn=3600  # URL expires in 1 hour
+                    )
+                    user_message = "Job completed successfully. Click the link to download your results."
+                    logger.info(f"[{job_id}] Generated pre-signed URL for {result_s3_uri}")
+                else:
+                    user_message = "Job completed, but result path is invalid."
+                    logger.warning(f"[{job_id}] Could not parse bucket/key from result URI: {result_s3_uri}")
+            except Exception as e:
+                user_message = "Job completed, but failed to generate download link."
+                logger.error(f"[{job_id}] Failed to generate pre-signed URL: {e}", exc_info=True)
         else:
+            user_message = "Job completed successfully, but the result path is missing."
             logger.warning(f"[{job_id}] Job status is SUCCESS but no result path found.")
-            user_message += " However, the result path is missing."
             
     elif current_status_from_store == Status.FAILED:
         user_friendly_status = "FAILED"
@@ -300,7 +381,8 @@ async def get_job_status(job_id: str = FastAPIPath(..., description="The ID of t
         job_id=job_id,
         status=user_friendly_status,
         message=user_message,
-        result_path=result_data_path,
+        result_s3_uri=result_s3_uri,
+        download_url=download_url,
         error_details=error_info_details
     )
 
@@ -348,3 +430,24 @@ async def health_check():
 async def read_root():
     logger.debug("Root endpoint accessed")
     return {"message": "PyAutoCausal API is running. Submit jobs to /jobs."}
+
+# ----------------------
+# Endpoint: List Pipelines (uses shared util)
+# ----------------------
+
+@app.get("/pipelines", summary="List deployed pipelines and their required/optional columns")
+async def list_pipelines():
+    """Return a mapping of pipeline names to their required and optional columns.
+
+    Response example::
+
+        {
+            "example_graph": {
+                "required_columns": ["id_unit", "t", "treat", "y", "post"],
+                "optional_columns": []
+            }
+        }
+    """
+
+    pipelines_definition = load_deployed_pipelines()
+    return pipelines_definition

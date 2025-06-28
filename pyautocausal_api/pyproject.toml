@@ -13,6 +13,7 @@ uvicorn = {extras = ["standard"], version = "^0.23.2"}
 python-multipart = "^0.0.6"
 pandas = "^2.0.3"
 boto3 = "^1.28.0"
+cloudpickle = "^3.0.0"
 
 pyautocausal = {path = "../pyautocausal", develop = true}
 s3fs = "^2025.3.2"

@@ -53,3 +53,36 @@ A lightweight HTML + JavaScript front-end for interacting with the PyAutoCausal 
 - Display progress bars / graphs for job status
 - Add drag-and-drop support for file uploads
 - Bundle the UI with a modern framework (React/Vite) if you outgrow the current setup 
+
+## React Migration (optional, in progress)
+
+A Vite + React scaffold now lives in `src/`. You can run it side-by-side with the legacy static page.
+
+```bash
+# Dev server (hot-reload at http://localhost:5173)
+cd pyautocausal_ui
+npm run dev
+
+# Production build (outputs to dist/)
+npm run build
+```
+
+The legacy static page is preserved as `legacy_index.html` and will be removed once the React port reaches feature-parity.
+
+## Running Front-End Tests
+
+The UI now ships with Jest + jsdom tests.
+
+```bash
+# 1. Install Node (>=18) if you don't have it yet – e.g. via Homebrew
+brew install node   # or use nvm
+
+# 2. Install dev dependencies
+cd pyautocausal_ui
+npm install   # reads local package.json
+
+# 3. Run the test suite
+npm test
+```
+
+The default test environment is `jsdom`, so no real browser is needed. The smoke test in `test/smoke.test.js` asserts that the core DOM elements render and that the **Run Analysis** button is disabled until prerequisites are fulfilled. You can add further tests alongside it—Jest will automatically pick up any files matching `*.test.js` under `test/`. 

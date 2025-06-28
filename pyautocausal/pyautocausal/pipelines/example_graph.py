@@ -380,7 +380,8 @@ def causal_pipeline(output_path: Path) -> ExecutableGraph:
         Configured ExecutableGraph ready for execution
     """
     # Initialize graph and directories
-    graph = ExecutableGraph(output_path=output_path)
+    graph = ExecutableGraph()
+    graph.configure_runtime(output_path=output_path)
     abs_plots_dir, abs_text_dir, abs_notebooks_dir = _setup_output_directories(output_path)
     
     # Create all nodes organized by analysis type
@@ -457,6 +458,79 @@ def _export_outputs(graph: ExecutableGraph, output_path: Path) -> None:
     except Exception as e:
         print(f"HTML export failed: {e}")
         print("Notebook is still available for manual inspection")
+
+
+def simple_graph() -> ExecutableGraph:
+    """
+    Create a simple graph for testing purposes.
+    
+    This creates a basic pipeline with cross-sectional and DiD branches
+    for testing serialization and basic functionality.
+    
+    Args:
+        output_path: Directory where results will be saved
+        
+    Returns:
+        Configured ExecutableGraph ready for execution
+    """
+    # Initialize graph and directories
+    graph = ExecutableGraph()
+    
+    # Create basic input node
+    graph.create_input_node("df", input_dtype=pd.DataFrame)
+    
+    # Create multi-period decision node
+    graph.create_decision_node(
+        'multi_period', 
+        condition=has_multiple_periods.get_function(), 
+        predecessors=["df"]
+    )
+    
+    # Cross-sectional branch
+    graph.create_node(
+        'stand_spec', 
+        action_function=create_cross_sectional_specification.transform({'df': 'data'}), 
+        predecessors=["multi_period"]
+    )
+    
+    graph.create_node(
+        'ols_stand', 
+        action_function=fit_ols.transform({'stand_spec': 'spec'}),
+        predecessors=["stand_spec"]
+    )
+    
+    graph.create_node(
+        'ols_stand_output',
+        action_function=write_statsmodels_summary.transform({'ols_stand': 'res'}),
+        save_node=True,
+        predecessors=["ols_stand"]
+    )
+    
+    # DiD branch
+    graph.create_node(
+        'did_spec', 
+        action_function=create_did_specification.transform({'df': 'data'}), 
+        predecessors=["multi_period"]
+    )
+    
+    graph.create_node(
+        'ols_did', 
+        action_function=fit_did_panel.transform({'did_spec': 'spec'}),
+        predecessors=["did_spec"]
+    )
+    
+    graph.create_node(
+        'save_ols_did',
+        action_function=write_statsmodels_summary.transform({'ols_did': 'res'}),
+        save_node=True,
+        predecessors=["ols_did"]
+    )
+    
+    # Configure decision routing
+    graph.when_false("multi_period", "stand_spec")
+    graph.when_true("multi_period", "did_spec")
+    
+    return graph
 
 
 def main():

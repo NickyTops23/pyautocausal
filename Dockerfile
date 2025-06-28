@@ -29,6 +29,9 @@ RUN ls -la && echo "===== PYPROJECT.TOML CONTENTS =====" && cat pyproject.toml &
 # Install dependencies without running poetry lock (using existing lock file)
 RUN poetry install --no-dev --no-root
 
+# Install the local pyautocausal package in editable mode to ensure source is available
+RUN poetry run pip install -e /pyautocausal
+
 # Copy the application code
 COPY pyautocausal_api/app ./app
 

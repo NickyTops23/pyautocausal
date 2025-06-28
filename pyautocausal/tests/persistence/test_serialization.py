@@ -1,3 +1,4 @@
+from pyautocausal.persistence.parameter_mapper import make_transformable
 import pytest
 import pandas as pd
 import numpy as np

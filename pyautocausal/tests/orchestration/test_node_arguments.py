@@ -20,6 +20,7 @@ def process_data(
 def basic_graph():
     """Graph with just data and process nodes using default parameters"""
     graph = ExecutableGraph()
+    graph.configure_runtime()  # Configure with defaults
     data_node = Node(
         name="data",
         action_function=lambda: pd.DataFrame()
@@ -42,7 +43,8 @@ def graph_with_context():
     context.n_jobs = 4
     context.model_type = 'advanced'
     
-    graph = ExecutableGraph(run_context=context)
+    graph = ExecutableGraph()
+    graph.configure_runtime(run_context=context)
     data_node = Node(
         name="data",
         action_function=lambda: pd.DataFrame()
@@ -69,7 +71,8 @@ def graph_with_verbose_data():
     context.n_jobs = 4
     context.model_type = 'advanced'
     
-    graph = ExecutableGraph(run_context=context)
+    graph = ExecutableGraph()
+    graph.configure_runtime(run_context=context)
     data_node = Node(
         name="data",
         action_function=data_with_config
@@ -104,6 +107,7 @@ def test_missing_required_argument():
         return f"Processed {required_param}"
     
     graph = ExecutableGraph()
+    graph.configure_runtime()  # Configure with defaults
     
     # Update Node initialization to use named parameters
     data_node = Node(
