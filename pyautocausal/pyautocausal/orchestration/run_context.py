@@ -11,8 +11,13 @@ class RunContext:
     
     def __getattr__(self, name: str) -> Any:
         """Allow accessing metadata values as attributes"""
-        if name in self.metadata:
-            return self.metadata[name]
+        # Avoid recursion during deserialization by using object.__getattribute__
+        try:
+            metadata = object.__getattribute__(self, 'metadata')
+            if name in metadata:
+                return metadata[name]
+        except AttributeError:
+            pass
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
     
     def __setattr__(self, name: str, value: Any) -> None:
@@ -20,7 +25,13 @@ class RunContext:
         if name == 'metadata':
             super().__setattr__(name, value)
         else:
-            self.metadata[name] = value
+            # Ensure metadata exists before trying to set values
+            try:
+                metadata = object.__getattribute__(self, 'metadata')
+            except AttributeError:
+                super().__setattr__('metadata', {})
+                metadata = object.__getattribute__(self, 'metadata')
+            metadata[name] = value
             
     def get(self, key: str, default: Any = None) -> Any:
         """Safe way to get metadata values with a default"""

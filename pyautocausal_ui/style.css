@@ -52,8 +52,43 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.button {
+  display: inline-block;
+  padding: 10px 15px;
+  background-color: #28a745; /* Green for success */
+  border: none;
+  color: #fff;
+  border-radius: 4px;
+  text-decoration: none;
+  font-size: 0.95rem;
+  text-align: center;
+  transition: background-color 0.2s ease;
+}
+
+.button:hover {
+  background-color: #218838;
+}
+
 .status {
   margin-top: 15px;
   min-height: 24px;
   font-size: 0.9rem;
+}
+
+.pipeline-section {
+  margin-bottom: 20px;
+}
+
+.mapping-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+}
+
+.mapping-table td {
+  padding: 4px 6px;
+}
+
+.mapping-row.required select:invalid {
+  border: 1px solid #dc3545; /* red */
 } 

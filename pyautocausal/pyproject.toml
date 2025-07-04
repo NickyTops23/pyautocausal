@@ -15,8 +15,15 @@ pyarrow = "^18.1.0"
 statsmodels = "^0.14.1"
 nbformat = "^5.10.4"
 scikit-learn = "^1.6.1"
-ipykernel = "^6.29.5"
+pyyaml = "^6.0"
 linearmodels = "^6.1"
+cloudpickle = "^3.1.1"
+
+[tool.poetry.group.io]
+optional = true
+
+[tool.poetry.group.io.dependencies]
+cloudpickle = "^3.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.2"

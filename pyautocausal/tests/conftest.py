@@ -20,7 +20,8 @@ def causal_graph(tmp_path):
     output_dir = tmp_path / "causal_output"
     output_dir.mkdir(exist_ok=True)
     
-    graph = (ExecutableGraph(output_path=str(output_dir))
+    graph = (ExecutableGraph()
+             .configure_runtime(output_path=str(output_dir))
         .create_input_node("data", input_dtype=pd.DataFrame)
         .create_node(
             "spec",

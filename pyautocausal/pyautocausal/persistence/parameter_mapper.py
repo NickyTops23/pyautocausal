@@ -7,6 +7,24 @@ from inspect import Signature
 P = ParamSpec('P')
 R = TypeVar('R')
 
+class TransformedFunctionWrapper:
+    """
+    A simple wrapper that holds a function and its argument mapping.
+    This is what gets pickled, ensuring the __signature__ is not lost.
+    """
+    def __init__(self, func: Callable, arg_mapping: Dict[str, str]):
+        self.func = func
+        self.arg_mapping = arg_mapping
+
+    def __call__(self, *args, **kwargs):
+        # This is the actual execution logic
+        mapped_kwargs = {}
+        for external_name, func_param in self.arg_mapping.items():
+            if external_name in kwargs:
+                mapped_kwargs[func_param] = kwargs.pop(external_name)
+        
+        return self.func(*args, **{**kwargs, **mapped_kwargs})
+
 class TransformableFunction:
     """Base class for functions that support method chaining for parameter renaming."""
     
@@ -34,19 +52,11 @@ class TransformableFunction:
         # Create a reverse mapping for parameter inspection
         reverse_mapping = {v: k for k, v in arg_mapping.items()}
         
-        @wraps(self._func)
-        def wrapper(*args, **kwargs) -> R:
-            # Map the arguments according to the mapping
-            mapped_kwargs = {}
-            for external_name, func_param in arg_mapping.items():
-                if external_name in kwargs:
-                    mapped_kwargs[func_param] = kwargs.pop(external_name)
-            
-            # Pass all arguments including mapped ones
-            return self._func(*args, **{**kwargs, **mapped_kwargs})
+        # Create the simple wrapper that will be pickled
+        wrapper = TransformedFunctionWrapper(self._func, arg_mapping)
         
-        # Preserve the return type annotation
-        wrapper.__annotations__['return'] = self._return_annotation
+        # Preserve the return type annotation on the simple wrapper
+        wrapper.__annotations__ = {'return': self._return_annotation}
         
         # Store the argument mapping on the wrapper function for debugging
         wrapper._arg_mapping = arg_mapping
