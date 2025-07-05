@@ -7,7 +7,7 @@ import pandas as pd
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 from pyautocausal.data_validation import (
-    DataValidatorNode,
+    DataValidator,
     DataValidatorConfig,
     NonEmptyDataCheck,
     RequiredColumnsCheck,
@@ -37,7 +37,7 @@ def create_validation_cleaning_graph() -> ExecutableGraph:
         }
     )
     
-    validator = DataValidatorNode(
+    validator = DataValidator(
         checks=[
             NonEmptyDataCheck,
             RequiredColumnsCheck,
@@ -163,7 +163,7 @@ def demonstrate_cleaning_without_graph():
     })
     
     # Step 1: Validate
-    validator = DataValidatorNode(
+    validator = DataValidator(
         checks=[ColumnTypesCheck],
         config=DataValidatorConfig(
             check_configs={

@@ -27,22 +27,8 @@ class ValidationIssue:
     affected_rows: Optional[List[int]] = None
 
 
-@dataclass
-class CleaningHint:
-    """Hint from validation about potential cleaning operations.
-    
-    Attributes:
-        operation_type: Type of cleaning operation (e.g., "convert_to_categorical", "drop_duplicates")
-        target_columns: Columns that should be affected by this operation
-        parameters: Additional parameters for the cleaning operation
-        priority: Priority for ordering operations (higher = should be done first)
-        metadata: Additional information that cleaning operations might need
-    """
-    operation_type: str
-    target_columns: List[str] = field(default_factory=list)
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    priority: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+# CleaningHint has been moved to data_cleaning.hints for type safety
+# Import it from there when needed
 
 
 @dataclass
@@ -60,7 +46,7 @@ class DataValidationResult:
     passed: bool
     issues: List[ValidationIssue] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    cleaning_hints: List[CleaningHint] = field(default_factory=list)
+    cleaning_hints: List[Any] = field(default_factory=list)  # List of CleaningHint subclasses
     
     @property
     def has_errors(self) -> bool:
@@ -133,7 +119,7 @@ class DataValidationCheck(ABC, Generic[T]):
     
     def _create_result(self, passed: bool, issues: Optional[List[ValidationIssue]] = None, 
                       metadata: Optional[Dict[str, Any]] = None,
-                      cleaning_hints: Optional[List[CleaningHint]] = None) -> DataValidationResult:
+                      cleaning_hints: Optional[List[Any]] = None) -> DataValidationResult:
         """Helper method to create a validation result."""
         return DataValidationResult(
             check_name=self.name,

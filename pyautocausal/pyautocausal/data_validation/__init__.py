@@ -10,7 +10,7 @@ from .base import (
     DataValidationConfig,
     ValidationSeverity
 )
-from .validator_node import DataValidatorNode, DataValidatorConfig
+from .validator_node import DataValidator, DataValidatorConfig
 from .checks import *
 
 __all__ = [
@@ -18,6 +18,6 @@ __all__ = [
     'DataValidationCheck',
     'DataValidationConfig',
     'ValidationSeverity',
-    'DataValidatorNode',
+    'DataValidator',
     'DataValidatorConfig',
 ] 

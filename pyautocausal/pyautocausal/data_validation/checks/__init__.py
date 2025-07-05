@@ -17,6 +17,10 @@ from .causal_checks import (
     TreatmentVariationCheck,
     PanelStructureCheck,
     TimeColumnCheck,
+    TreatmentPersistenceCheck,
+    OutcomeVariableCheck,
+    CausalMethodRequirementsCheck,
+    TreatmentTimingPatternsCheck,
 )
 
 __all__ = [
@@ -33,4 +37,8 @@ __all__ = [
     'TreatmentVariationCheck',
     'PanelStructureCheck',
     'TimeColumnCheck',
+    'TreatmentPersistenceCheck',
+    'OutcomeVariableCheck',
+    'CausalMethodRequirementsCheck',
+    'TreatmentTimingPatternsCheck',
 ] 

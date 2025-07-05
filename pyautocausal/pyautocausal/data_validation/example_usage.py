@@ -8,7 +8,7 @@ import pandas as pd
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 from pyautocausal.data_validation import (
-    DataValidatorNode,
+    DataValidator,
     DataValidatorConfig,
     # Basic checks
     NonEmptyDataCheck,
@@ -75,7 +75,7 @@ def create_validation_graph() -> ExecutableGraph:
     )
     
     # Create the validator node with selected checks
-    validator = DataValidatorNode(
+    validator = DataValidator(
         checks=[
             NonEmptyDataCheck,
             RequiredColumnsCheck,
@@ -154,7 +154,7 @@ def create_validation_graph() -> ExecutableGraph:
     return graph
 
 
-def create_minimal_validator() -> DataValidatorNode:
+def create_minimal_validator() -> DataValidator:
     """Create a minimal validator for quick checks."""
     
     config = DataValidatorConfig(
@@ -169,7 +169,7 @@ def create_minimal_validator() -> DataValidatorNode:
         }
     )
     
-    return DataValidatorNode(
+    return DataValidator(
         checks=[RequiredColumnsCheck, BinaryTreatmentCheck],
         config=config
     )
@@ -179,7 +179,7 @@ def validate_dataframe_standalone(df: pd.DataFrame) -> None:
     """Example of using the validator outside of a graph context."""
     
     # Create a validator
-    validator = DataValidatorNode(
+    validator = DataValidator(
         checks=[
             NonEmptyDataCheck,
             RequiredColumnsCheck,

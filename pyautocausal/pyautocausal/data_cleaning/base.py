@@ -2,12 +2,13 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import json
 from typing import Dict, List, Any, Optional, Tuple
 import pandas as pd
 from datetime import datetime
 
-from ..data_validation.base import CleaningHint
 from ..data_validation.validator_node import AggregatedValidationResult
+from .hints import CleaningHint
 
 
 @dataclass
@@ -70,6 +71,10 @@ class CleaningMetadata:
                 for t in self.transformations
             ]
         }
+    
+    def produce_text_summary(self) -> str:
+        metadata_dict = self.to_dict()
+        return json.dumps(metadata_dict, indent=4)
 
 
 class CleaningOperation(ABC):
@@ -106,6 +111,7 @@ class CleaningPlan:
     """
     operations: List[Tuple[CleaningOperation, CleaningHint]] = field(default_factory=list)
     validation_results: Optional[AggregatedValidationResult] = None
+    _metadata: Optional[CleaningMetadata] = field(default=None, init=False)
     
     def add_operation(self, operation: CleaningOperation, hint: CleaningHint):
         """Add an operation to the plan."""
@@ -113,7 +119,8 @@ class CleaningPlan:
     
     def sort_operations(self):
         """Sort operations by priority (higher priority first)."""
-        self.operations.sort(key=lambda x: x[0].priority, reverse=True)
+        # Use hint priority if available, otherwise use operation priority
+        self.operations.sort(key=lambda x: x[1].priority if hasattr(x[1], 'priority') else x[0].priority, reverse=True)
     
     def describe(self) -> str:
         """Get a human-readable description of the plan."""
@@ -124,32 +131,58 @@ class CleaningPlan:
         lines.append("=" * 50)
         for i, (op, hint) in enumerate(self.operations, 1):
             lines.append(f"{i}. {op.name}")
-            if hint.target_columns:
+            if hasattr(hint, 'target_columns') and hint.target_columns:
                 lines.append(f"   Columns: {', '.join(hint.target_columns)}")
-            if hint.parameters:
-                lines.append(f"   Parameters: {hint.parameters}")
+            if hasattr(hint, 'subset') and hint.subset:
+                lines.append(f"   Subset: {', '.join(hint.subset)}")
+            # Add specific parameters based on hint type
+            hint_details = []
+            if hasattr(hint, 'threshold'):
+                hint_details.append(f"threshold={hint.threshold}")
+            if hasattr(hint, 'strategy'):
+                hint_details.append(f"strategy={hint.strategy}")
+            if hasattr(hint, 'how'):
+                hint_details.append(f"how={hint.how}")
+            if hasattr(hint, 'keep'):
+                hint_details.append(f"keep={hint.keep}")
+            if hasattr(hint, 'missing_category'):
+                hint_details.append(f"missing_category={hint.missing_category}")
+            if hint_details:
+                lines.append(f"   Parameters: {', '.join(hint_details)}")
         return "\n".join(lines)
     
-    def __call__(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, CleaningMetadata]:
+    def get_metadata(self) -> Optional[CleaningMetadata]:
+        """Get the metadata from the last execution.
+        
+        Returns:
+            CleaningMetadata if the plan has been executed, None otherwise
+        """
+        return self._metadata
+    
+    def get_metadata_text(self) -> str:
+        """Get the metadata from the last execution as a text summary."""
+        return self._metadata.produce_text_summary()
+    
+    def __call__(self, df: pd.DataFrame) -> pd.DataFrame:
         """Execute the cleaning plan on a DataFrame.
         
         Args:
             df: The DataFrame to clean
             
         Returns:
-            Tuple of (cleaned DataFrame, cleaning metadata)
+            Cleaned DataFrame
         """
         from time import time
         start_time = time()
         
-        metadata = CleaningMetadata(start_shape=df.shape)
+        self._metadata = CleaningMetadata(start_shape=df.shape)
         cleaned_df = df.copy()
         
         # Execute operations in order
         for operation, hint in self.operations:
             try:
                 cleaned_df, record = operation.apply(cleaned_df, hint)
-                metadata.add_transformation(record)
+                self._metadata.add_transformation(record)
             except Exception as e:
                 # Add error record
                 error_record = TransformationRecord(
@@ -157,10 +190,10 @@ class CleaningPlan:
                     timestamp=datetime.now(),
                     details={"error": str(e), "hint": hint}
                 )
-                metadata.add_transformation(error_record)
+                self._metadata.add_transformation(error_record)
                 # Continue with other operations
         
-        metadata.end_shape = cleaned_df.shape
-        metadata.duration_seconds = time() - start_time
+        self._metadata.end_shape = cleaned_df.shape
+        self._metadata.duration_seconds = time() - start_time
         
-        return cleaned_df, metadata 
+        return cleaned_df 

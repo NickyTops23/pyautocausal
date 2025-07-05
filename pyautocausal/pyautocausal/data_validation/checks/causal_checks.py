@@ -77,12 +77,25 @@ class BinaryTreatmentCheck(DataValidationCheck[BinaryTreatmentConfig]):
         
         # Calculate treatment statistics
         value_counts = treatment.value_counts().to_dict()
+        
+        # Calculate treatment fraction only if treatment column is numeric and has valid values
+        treatment_fraction = None
+        if len(treatment.dropna()) > 0:
+            try:
+                # Only calculate fraction if treatment contains numeric values
+                numeric_treatment = pd.to_numeric(treatment.dropna(), errors='coerce')
+                if not numeric_treatment.isna().all():
+                    treatment_fraction = float(numeric_treatment.sum() / len(numeric_treatment.dropna()))
+            except (TypeError, ValueError):
+                # If conversion fails, leave treatment_fraction as None
+                pass
+        
         metadata = {
             "treatment_column": self.config.treatment_column,
             "unique_values": list(unique_values),
             "value_counts": {str(k): int(v) for k, v in value_counts.items()},
             "missing_count": int(missing_count),
-            "treatment_fraction": float(treatment.sum() / len(treatment.dropna())) if len(treatment.dropna()) > 0 else None
+            "treatment_fraction": treatment_fraction
         }
         
         return self._create_result(passed, issues, metadata)
@@ -374,6 +387,458 @@ class TimeColumnCheck(DataValidationCheck[TimeColumnConfig]):
             "is_numeric": is_numeric,
             "is_datetime": is_datetime,
             "unique_periods": [str(t) for t in unique_times[:10]]  # First 10 periods
+        }
+        
+        return self._create_result(passed, issues, metadata)
+
+
+@dataclass
+class TreatmentPersistenceConfig(DataValidationConfig):
+    """Configuration for TreatmentPersistenceCheck."""
+    treatment_column: str = "treatment"
+    unit_column: str = "unit_id"
+    time_column: str = "time"
+    allow_treatment_reversals: bool = False  # Whether to allow treatment reversals
+
+
+class TreatmentPersistenceCheck(DataValidationCheck[TreatmentPersistenceConfig]):
+    """Check that treatment is persistent over time (weakly increasing)."""
+    
+    @property
+    def name(self) -> str:
+        return "treatment_persistence"
+    
+    @classmethod
+    def get_default_config(cls) -> TreatmentPersistenceConfig:
+        return TreatmentPersistenceConfig()
+    
+    def validate(self, df: pd.DataFrame) -> DataValidationResult:
+        issues = []
+        
+        # Check required columns exist
+        required_cols = [self.config.treatment_column, self.config.unit_column, self.config.time_column]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"Missing required columns for treatment persistence check: {missing_cols}",
+                details={"missing_columns": missing_cols, "available_columns": list(df.columns)}
+            ))
+            return self._create_result(False, issues)
+        
+        # Sort by unit and time for checking persistence
+        df_sorted = df.sort_values([self.config.unit_column, self.config.time_column])
+        
+        # Check treatment persistence for each unit
+        violation_units = []
+        violation_details = []
+        
+        for unit_id in df_sorted[self.config.unit_column].unique():
+            unit_data = df_sorted[df_sorted[self.config.unit_column] == unit_id]
+            treatment_values = unit_data[self.config.treatment_column].dropna()
+            
+            if len(treatment_values) <= 1:
+                continue  # Skip units with only one observation
+            
+            # Check for treatment reversals (1 -> 0)
+            reversals = []
+            prev_treatment = None
+            
+            for idx, (time, treatment) in enumerate(zip(unit_data[self.config.time_column], treatment_values)):
+                if prev_treatment is not None:
+                    if prev_treatment == 1 and treatment == 0:
+                        reversals.append((time, treatment))
+                prev_treatment = treatment
+            
+            if reversals and not self.config.allow_treatment_reversals:
+                violation_units.append(unit_id)
+                violation_details.append({
+                    "unit": unit_id,
+                    "reversals": reversals[:3]  # First 3 reversals
+                })
+        
+        if violation_units:
+            issues.append(ValidationIssue(
+                severity=self.config.severity_on_fail,
+                message=f"Treatment reversals detected for {len(violation_units)} units. Treatment should be persistent (weakly increasing).",
+                affected_columns=[self.config.treatment_column, self.config.unit_column],
+                details={
+                    "violating_units": violation_units[:10],  # First 10 units
+                    "violation_details": violation_details[:5],  # First 5 details
+                    "total_violations": len(violation_units)
+                }
+            ))
+        
+        passed = len(issues) == 0
+        metadata = {
+            "units_checked": df_sorted[self.config.unit_column].nunique(),
+            "violations_found": len(violation_units),
+            "allow_reversals": self.config.allow_treatment_reversals
+        }
+        
+        return self._create_result(passed, issues, metadata)
+
+
+@dataclass
+class OutcomeVariableConfig(DataValidationConfig):
+    """Configuration for OutcomeVariableCheck."""
+    outcome_column: str = "outcome"
+    min_variation_threshold: float = 1e-10  # Minimum variance required
+    outlier_threshold: float = 5.0  # Standard deviations for outlier detection
+    require_numeric: bool = True  # Whether outcome must be numeric
+
+
+class OutcomeVariableCheck(DataValidationCheck[OutcomeVariableConfig]):
+    """Check that outcome variable is suitable for causal analysis."""
+    
+    @property
+    def name(self) -> str:
+        return "outcome_variable"
+    
+    @classmethod
+    def get_default_config(cls) -> OutcomeVariableConfig:
+        return OutcomeVariableConfig()
+    
+    def validate(self, df: pd.DataFrame) -> DataValidationResult:
+        issues = []
+        
+        # Check if outcome column exists
+        if self.config.outcome_column not in df.columns:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"Outcome column '{self.config.outcome_column}' not found",
+                details={"available_columns": list(df.columns)}
+            ))
+            return self._create_result(False, issues)
+        
+        outcome = df[self.config.outcome_column].dropna()
+        
+        if len(outcome) == 0:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message="Outcome column has no non-missing values",
+                affected_columns=[self.config.outcome_column]
+            ))
+            return self._create_result(False, issues)
+        
+        # Check if outcome is numeric
+        is_numeric = pd.api.types.is_numeric_dtype(outcome)
+        if self.config.require_numeric and not is_numeric:
+            issues.append(ValidationIssue(
+                severity=self.config.severity_on_fail,
+                message=f"Outcome column is not numeric (type: {outcome.dtype})",
+                affected_columns=[self.config.outcome_column],
+                details={"actual_type": str(outcome.dtype)}
+            ))
+        
+        if is_numeric:
+            # Check for sufficient variation
+            outcome_var = outcome.var()
+            if outcome_var < self.config.min_variation_threshold:
+                issues.append(ValidationIssue(
+                    severity=self.config.severity_on_fail,
+                    message=f"Outcome has insufficient variation (variance: {outcome_var:.2e})",
+                    affected_columns=[self.config.outcome_column],
+                    details={"variance": float(outcome_var), "threshold": self.config.min_variation_threshold}
+                ))
+            
+            # Check for extreme outliers
+            if len(outcome) > 3:  # Need at least 3 values for outlier detection
+                mean_val = outcome.mean()
+                std_val = outcome.std()
+                
+                if std_val > 0:  # Avoid division by zero
+                    z_scores = np.abs((outcome - mean_val) / std_val)
+                    outliers = z_scores > self.config.outlier_threshold
+                    outlier_count = outliers.sum()
+                    
+                    if outlier_count > 0:
+                        outlier_fraction = outlier_count / len(outcome)
+                        severity = ValidationSeverity.WARNING if outlier_fraction < 0.05 else self.config.severity_on_fail
+                        
+                        issues.append(ValidationIssue(
+                            severity=severity,
+                            message=f"Outcome has {outlier_count} extreme outliers ({outlier_fraction:.1%} of data)",
+                            affected_columns=[self.config.outcome_column],
+                            details={
+                                "outlier_count": int(outlier_count),
+                                "outlier_fraction": float(outlier_fraction),
+                                "threshold_std_devs": self.config.outlier_threshold
+                            }
+                        ))
+        
+        passed = not any(issue.severity == self.config.severity_on_fail for issue in issues)
+        
+        # Calculate metadata
+        metadata = {
+            "outcome_column": self.config.outcome_column,
+            "is_numeric": is_numeric,
+            "non_missing_count": len(outcome),
+            "unique_values": outcome.nunique() if len(outcome) > 0 else 0
+        }
+        
+        if is_numeric and len(outcome) > 0:
+            metadata.update({
+                "mean": float(outcome.mean()),
+                "std": float(outcome.std()),
+                "variance": float(outcome.var()),
+                "min": float(outcome.min()),
+                "max": float(outcome.max())
+            })
+        
+        return self._create_result(passed, issues, metadata)
+
+
+@dataclass
+class CausalMethodRequirementsConfig(DataValidationConfig):
+    """Configuration for CausalMethodRequirementsCheck."""
+    treatment_column: str = "treatment"
+    unit_column: str = "unit_id"
+    time_column: str = "time"
+    min_pre_periods: int = 3  # Minimum pre-treatment periods
+    min_post_periods: int = 1  # Minimum post-treatment periods
+    min_control_units: int = 5  # Minimum control units for synthetic control
+    min_never_treated_fraction: float = 0.2  # Minimum fraction of never-treated units
+
+
+class CausalMethodRequirementsCheck(DataValidationCheck[CausalMethodRequirementsConfig]):
+    """Check data requirements for different causal inference methods."""
+    
+    @property
+    def name(self) -> str:
+        return "causal_method_requirements"
+    
+    @classmethod
+    def get_default_config(cls) -> CausalMethodRequirementsConfig:
+        return CausalMethodRequirementsConfig()
+    
+    def validate(self, df: pd.DataFrame) -> DataValidationResult:
+        issues = []
+        
+        # Check required columns exist
+        required_cols = [self.config.treatment_column, self.config.unit_column, self.config.time_column]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"Missing required columns: {missing_cols}",
+                details={"missing_columns": missing_cols}
+            ))
+            return self._create_result(False, issues)
+        
+        # Analyze treatment patterns
+        units = df[self.config.unit_column].unique()
+        times = sorted(df[self.config.time_column].unique())
+        
+        # Find treatment timing for each unit
+        treatment_start_times = {}
+        never_treated_units = set()
+        
+        for unit in units:
+            unit_data = df[df[self.config.unit_column] == unit].sort_values(self.config.time_column)
+            treatment_values = unit_data[self.config.treatment_column].dropna()
+            
+            first_treatment = treatment_values[treatment_values == 1]
+            if len(first_treatment) > 0:
+                treatment_start_times[unit] = unit_data[unit_data[self.config.treatment_column] == 1][self.config.time_column].min()
+            else:
+                never_treated_units.add(unit)
+        
+        treated_units = set(treatment_start_times.keys())
+        
+        # Check for sufficient pre/post periods
+        if treatment_start_times:
+            min_treatment_time = min(treatment_start_times.values())
+            max_treatment_time = max(treatment_start_times.values())
+            
+            pre_periods = [t for t in times if t < min_treatment_time]
+            post_periods = [t for t in times if t > max_treatment_time]
+            
+            if len(pre_periods) < self.config.min_pre_periods:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.WARNING,
+                    message=f"Only {len(pre_periods)} pre-treatment periods available, {self.config.min_pre_periods} recommended for robust causal inference",
+                    details={
+                        "pre_periods_available": len(pre_periods),
+                        "pre_periods_recommended": self.config.min_pre_periods
+                    }
+                ))
+            
+            if len(post_periods) < self.config.min_post_periods:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.WARNING,
+                    message=f"Only {len(post_periods)} post-treatment periods available, {self.config.min_post_periods} minimum for causal analysis",
+                    details={
+                        "post_periods_available": len(post_periods),
+                        "post_periods_required": self.config.min_post_periods
+                    }
+                ))
+        
+        # Check for synthetic control feasibility (exactly one treated unit)
+        if len(treated_units) == 1:
+            if len(never_treated_units) < self.config.min_control_units:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.WARNING,
+                    message=f"Synthetic control method: only {len(never_treated_units)} control units available, {self.config.min_control_units} recommended",
+                    details={
+                        "control_units_available": len(never_treated_units),
+                        "control_units_recommended": self.config.min_control_units,
+                        "method": "synthetic_control"
+                    }
+                ))
+        
+        # Check for staggered DiD feasibility
+        if len(treated_units) > 1:
+            never_treated_fraction = len(never_treated_units) / len(units)
+            if never_treated_fraction < self.config.min_never_treated_fraction:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.WARNING,
+                    message=f"Staggered DiD: only {never_treated_fraction:.1%} never-treated units, {self.config.min_never_treated_fraction:.1%} recommended for robust identification",
+                    details={
+                        "never_treated_fraction": float(never_treated_fraction),
+                        "never_treated_recommended": self.config.min_never_treated_fraction,
+                        "method": "staggered_did"
+                    }
+                ))
+        
+        # Check for treatment timing variation (all units treated at same time)
+        if len(set(treatment_start_times.values())) == 1 and len(treated_units) > 1:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.INFO,
+                message="All treated units adopt treatment simultaneously (standard DiD design)",
+                details={"design_type": "simultaneous_adoption"}
+            ))
+        elif len(set(treatment_start_times.values())) > 1:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.INFO,
+                message="Treatment adoption is staggered across units (staggered DiD design)",
+                details={"design_type": "staggered_adoption"}
+            ))
+        
+        passed = not any(issue.severity == self.config.severity_on_fail for issue in issues)
+        
+        metadata = {
+            "total_units": len(units),
+            "treated_units": len(treated_units),
+            "never_treated_units": len(never_treated_units),
+            "never_treated_fraction": len(never_treated_units) / len(units) if len(units) > 0 else 0,
+            "time_periods": len(times),
+            "treatment_times": list(set(treatment_start_times.values())) if treatment_start_times else [],
+            "design_type": "staggered" if len(set(treatment_start_times.values())) > 1 else "simultaneous"
+        }
+        
+        return self._create_result(passed, issues, metadata)
+
+
+@dataclass
+class TreatmentTimingPatternsConfig(DataValidationConfig):
+    """Configuration for TreatmentTimingPatternsCheck."""
+    treatment_column: str = "treatment"
+    unit_column: str = "unit_id" 
+    time_column: str = "time"
+    check_simultaneous_adoption: bool = True  # Check if treatment adoption follows expected patterns
+
+
+class TreatmentTimingPatternsCheck(DataValidationCheck[TreatmentTimingPatternsConfig]):
+    """Check treatment timing patterns for causal inference validity."""
+    
+    @property
+    def name(self) -> str:
+        return "treatment_timing_patterns"
+    
+    @classmethod
+    def get_default_config(cls) -> TreatmentTimingPatternsConfig:
+        return TreatmentTimingPatternsConfig()
+    
+    def validate(self, df: pd.DataFrame) -> DataValidationResult:
+        issues = []
+        
+        # Check required columns exist
+        required_cols = [self.config.treatment_column, self.config.unit_column, self.config.time_column]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"Missing required columns: {missing_cols}",
+                details={"missing_columns": missing_cols}
+            ))
+            return self._create_result(False, issues)
+        
+        # Analyze treatment timing patterns
+        df_sorted = df.sort_values([self.config.unit_column, self.config.time_column])
+        
+        # Find first and last treatment periods
+        treatment_data = df_sorted[df_sorted[self.config.treatment_column] == 1]
+        if len(treatment_data) == 0:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.WARNING,
+                message="No treated observations found in data",
+                affected_columns=[self.config.treatment_column]
+            ))
+            return self._create_result(True, issues)  # Not necessarily an error
+        
+        first_treatment_period = treatment_data[self.config.time_column].min()
+        last_treatment_period = treatment_data[self.config.time_column].max()
+        all_periods = sorted(df[self.config.time_column].unique())
+        
+        # Check if treatment starts/ends in extreme periods
+        if first_treatment_period == min(all_periods):
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.WARNING,
+                message="Treatment begins in the first time period, limiting pre-treatment analysis",
+                details={"first_treatment_period": first_treatment_period, "first_available_period": min(all_periods)}
+            ))
+        
+        if last_treatment_period == max(all_periods):
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.WARNING,
+                message="Treatment continues through the last time period, limiting post-treatment analysis",
+                details={"last_treatment_period": last_treatment_period, "last_available_period": max(all_periods)}
+            ))
+        
+        # Analyze treatment adoption patterns
+        treatment_adoptions = {}
+        for unit in df[self.config.unit_column].unique():
+            unit_data = df_sorted[df_sorted[self.config.unit_column] == unit]
+            first_treated = unit_data[unit_data[self.config.treatment_column] == 1]
+            
+            if len(first_treated) > 0:
+                adoption_time = first_treated[self.config.time_column].iloc[0]
+                treatment_adoptions[unit] = adoption_time
+        
+        # Check for problematic adoption patterns
+        if len(treatment_adoptions) > 0:
+            adoption_times = list(treatment_adoptions.values())
+            unique_adoption_times = list(set(adoption_times))
+            
+            # Check if too many units adopt simultaneously
+            for adoption_time in unique_adoption_times:
+                units_adopting = [unit for unit, time in treatment_adoptions.items() if time == adoption_time]
+                adoption_fraction = len(units_adopting) / len(treatment_adoptions)
+                
+                if adoption_fraction > 0.5:  # More than 50% adopt at same time
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.INFO,
+                        message=f"{len(units_adopting)} units ({adoption_fraction:.1%}) adopt treatment at time {adoption_time}",
+                        details={
+                            "adoption_time": adoption_time,
+                            "units_adopting": len(units_adopting),
+                            "adoption_fraction": float(adoption_fraction)
+                        }
+                    ))
+        
+        passed = not any(issue.severity == self.config.severity_on_fail for issue in issues)
+        
+        metadata = {
+            "treatment_periods": len(treatment_data[self.config.time_column].unique()),
+            "first_treatment_period": first_treatment_period,
+            "last_treatment_period": last_treatment_period,
+            "units_ever_treated": len(treatment_adoptions),
+            "unique_adoption_times": len(set(treatment_adoptions.values())) if treatment_adoptions else 0,
+            "adoption_pattern": "staggered" if len(set(treatment_adoptions.values())) > 1 else "simultaneous"
         }
         
         return self._create_result(passed, issues, metadata) 

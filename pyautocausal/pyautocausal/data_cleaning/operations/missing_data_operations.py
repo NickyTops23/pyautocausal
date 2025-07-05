@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 
 from ..base import CleaningOperation, TransformationRecord
-from ...data_validation.base import CleaningHint
+from ..hints import CleaningHint, DropMissingRowsHint, FillMissingWithValueHint
 
 
 class DropMissingRowsOperation(CleaningOperation):
@@ -20,10 +20,11 @@ class DropMissingRowsOperation(CleaningOperation):
         return 20  # Low priority - do this after other operations
     
     def can_apply(self, hint: CleaningHint) -> bool:
-        return hint.operation_type == "drop_missing_rows"
+        return isinstance(hint, DropMissingRowsHint)
     
     def apply(self, df: pd.DataFrame, hint: CleaningHint) -> Tuple[pd.DataFrame, TransformationRecord]:
         """Drop rows with missing values in specified columns."""
+        assert isinstance(hint, DropMissingRowsHint)
         initial_rows = len(df)
         
         if hint.target_columns:
@@ -61,15 +62,16 @@ class FillMissingWithValueOperation(CleaningOperation):
         return 50  # Medium priority
     
     def can_apply(self, hint: CleaningHint) -> bool:
-        return hint.operation_type == "fill_missing_with_value"
+        return isinstance(hint, FillMissingWithValueHint)
     
     def apply(self, df: pd.DataFrame, hint: CleaningHint) -> Tuple[pd.DataFrame, TransformationRecord]:
         """Fill missing values with specified value or strategy."""
+        assert isinstance(hint, FillMissingWithValueHint)
         df_cleaned = df.copy()
         modified_columns = []
         
-        fill_value = hint.parameters.get("fill_value", 0)
-        strategy = hint.parameters.get("strategy", "constant")
+        fill_value = hint.fill_value
+        strategy = hint.strategy
         
         for col in hint.target_columns:
             if col in df_cleaned.columns and df_cleaned[col].isna().any():

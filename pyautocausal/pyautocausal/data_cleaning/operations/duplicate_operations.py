@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 
 from ..base import CleaningOperation, TransformationRecord
-from ...data_validation.base import CleaningHint
+from ..hints import CleaningHint, DropDuplicateRowsHint
 
 
 class DropDuplicateRowsOperation(CleaningOperation):
@@ -20,15 +20,16 @@ class DropDuplicateRowsOperation(CleaningOperation):
         return 70  # Relatively high priority
     
     def can_apply(self, hint: CleaningHint) -> bool:
-        return hint.operation_type == "drop_duplicate_rows"
+        return isinstance(hint, DropDuplicateRowsHint)
     
     def apply(self, df: pd.DataFrame, hint: CleaningHint) -> Tuple[pd.DataFrame, TransformationRecord]:
         """Drop duplicate rows based on specified columns."""
+        assert isinstance(hint, DropDuplicateRowsHint)
         initial_rows = len(df)
         
         # Get parameters
-        subset = hint.target_columns if hint.target_columns else None
-        keep = hint.parameters.get("keep", "first")  # 'first', 'last', or False
+        subset = hint.subset
+        keep = hint.keep
         
         # Drop duplicates
         df_cleaned = df.drop_duplicates(subset=subset, keep=keep)

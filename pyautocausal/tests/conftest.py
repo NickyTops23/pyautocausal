@@ -7,6 +7,20 @@ from pyautocausal.pipelines.library.output import write_statsmodels_summary
 
 
 @pytest.fixture
+def lalonde_data():
+    """Returns the lalonde dataset for integration tests."""
+    return pd.read_csv("tests/fixtures/lalonde.csv")
+
+
+@pytest.fixture
+def output_dir(tmp_path):
+    """Creates a temporary output directory for tests."""
+    output_dir = tmp_path / "test_output"
+    output_dir.mkdir(exist_ok=True)
+    return str(output_dir)
+
+
+@pytest.fixture
 def causal_graph(tmp_path):
     """
     Fixture that provides a sample causal graph for testing.

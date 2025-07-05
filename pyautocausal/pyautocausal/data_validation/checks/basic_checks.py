@@ -205,15 +205,11 @@ class ColumnTypesCheck(DataValidationCheck[ColumnTypesConfig]):
         # Generate cleaning hints
         cleaning_hints = []
         if inferred_categorical:
-            from ..base import CleaningHint
-            cleaning_hints.append(CleaningHint(
-                operation_type="convert_to_categorical",
+            from pyautocausal.data_cleaning.hints import ConvertToCategoricalHint
+            cleaning_hints.append(ConvertToCategoricalHint(
                 target_columns=inferred_categorical,
-                priority=90,
-                metadata={
-                    "categorical_threshold": self.config.categorical_threshold,
-                    "unique_counts": {col: df[col].nunique() for col in inferred_categorical}
-                }
+                threshold=self.config.categorical_threshold,
+                unique_counts={col: df[col].nunique() for col in inferred_categorical}
             ))
         
         return self._create_result(passed, issues, metadata, cleaning_hints)

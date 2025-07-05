@@ -6,10 +6,16 @@ from datetime import datetime
 
 from pyautocausal.data_validation.base import (
     DataValidationResult,
-    CleaningHint,
     ValidationIssue,
     ValidationSeverity
 )
+from pyautocausal.data_cleaning.hints import (
+    CleaningHint,
+    ConvertToCategoricalHint,
+    DropMissingRowsHint,
+    EncodeMissingAsCategoryHint,
+)
+from dataclasses import dataclass
 from pyautocausal.data_validation.validator_node import AggregatedValidationResult
 from pyautocausal.data_cleaning.planner import DataCleaningPlanner
 from pyautocausal.data_cleaning.base import CleaningOperation, TransformationRecord
@@ -18,6 +24,17 @@ from pyautocausal.data_cleaning.operations import (
     DropMissingRowsOperation,
     EncodeMissingAsCategoryOperation,
 )
+
+
+@dataclass
+class MockHint(CleaningHint):
+    """Mock hint for testing."""
+    hint_type: str
+    test_priority: int
+    
+    @property
+    def priority(self) -> int:
+        return self.test_priority
 
 
 class MockOperation(CleaningOperation):
@@ -37,7 +54,7 @@ class MockOperation(CleaningOperation):
         return self._priority
     
     def can_apply(self, hint: CleaningHint) -> bool:
-        return hint.operation_type == self._can_apply_to
+        return isinstance(hint, MockHint) and hint.hint_type == self._can_apply_to
     
     def apply(self, df: pd.DataFrame, hint: CleaningHint):
         return df, TransformationRecord(
@@ -65,10 +82,10 @@ class TestDataCleaningPlanner:
     
     def test_single_cleaning_hint(self):
         """Test planner with a single cleaning hint."""
-        hint = CleaningHint(
-            operation_type="convert_to_categorical",
+        hint = ConvertToCategoricalHint(
             target_columns=["status", "category"],
-            priority=90
+            threshold=10,
+            unique_counts={"status": 3, "category": 5}
         )
         
         validation_result = DataValidationResult(
@@ -93,20 +110,16 @@ class TestDataCleaningPlanner:
     def test_multiple_hints_different_operations(self):
         """Test planner with multiple hints for different operations."""
         hints = [
-            CleaningHint(
-                operation_type="convert_to_categorical",
+            ConvertToCategoricalHint(
                 target_columns=["col1"],
-                priority=90
+                threshold=10,
+                unique_counts={"col1": 5}
             ),
-            CleaningHint(
-                operation_type="drop_missing_rows",
-                target_columns=["col2"],
-                priority=20
+            DropMissingRowsHint(
+                target_columns=["col2"]
             ),
-            CleaningHint(
-                operation_type="encode_missing_as_category",
-                target_columns=["col3"],
-                priority=85
+            EncodeMissingAsCategoryHint(
+                target_columns=["col3"]
             )
         ]
         
@@ -141,9 +154,9 @@ class TestDataCleaningPlanner:
         ]
         
         hints = [
-            CleaningHint(operation_type="type_a"),
-            CleaningHint(operation_type="type_b"),
-            CleaningHint(operation_type="type_c"),
+            MockHint(hint_type="type_a", test_priority=10),
+            MockHint(hint_type="type_b", test_priority=100),
+            MockHint(hint_type="type_c", test_priority=50),
         ]
         
         validation_result = DataValidationResult(
@@ -166,9 +179,9 @@ class TestDataCleaningPlanner:
     def test_unmatched_hints_ignored(self):
         """Test that hints without matching operations are ignored."""
         hints = [
-            CleaningHint(operation_type="convert_to_categorical", target_columns=["col1"]),
-            CleaningHint(operation_type="unknown_operation", target_columns=["col2"]),
-            CleaningHint(operation_type="drop_missing_rows", target_columns=["col3"]),
+            ConvertToCategoricalHint(target_columns=["col1"], threshold=10),
+            MockHint(hint_type="unknown_operation", test_priority=50),  # No matching operation
+            DropMissingRowsHint(target_columns=["col3"]),
         ]
         
         validation_result = DataValidationResult(
@@ -197,7 +210,7 @@ class TestDataCleaningPlanner:
             check_name="check1",
             passed=True,
             cleaning_hints=[
-                CleaningHint(operation_type="convert_to_categorical", target_columns=["col1"])
+                ConvertToCategoricalHint(target_columns=["col1"], threshold=10)
             ]
         )
         
@@ -209,7 +222,7 @@ class TestDataCleaningPlanner:
                 message="Some info"
             )],
             cleaning_hints=[
-                CleaningHint(operation_type="drop_missing_rows", target_columns=["col2"])
+                DropMissingRowsHint(target_columns=["col2"])
             ]
         )
         
@@ -244,7 +257,7 @@ class TestDataCleaningPlanner:
                     check_name="test",
                     passed=True,
                     cleaning_hints=[
-                        CleaningHint(operation_type="convert_to_categorical", target_columns=["col1"])
+                        ConvertToCategoricalHint(target_columns=["col1"], threshold=10)
                     ]
                 )
             ]
@@ -261,15 +274,13 @@ class TestDataCleaningPlanner:
     def test_plan_description(self):
         """Test that plan description is informative."""
         hints = [
-            CleaningHint(
-                operation_type="convert_to_categorical",
+            ConvertToCategoricalHint(
                 target_columns=["status", "category"],
-                parameters={"threshold": 10}
+                threshold=10
             ),
-            CleaningHint(
-                operation_type="drop_missing_rows",
+            DropMissingRowsHint(
                 target_columns=["value"],
-                parameters={"how": "any"}
+                how="any"
             )
         ]
         
@@ -293,8 +304,8 @@ class TestDataCleaningPlanner:
         assert "status, category" in description
         assert "drop_missing_rows" in description
         assert "value" in description
-        assert "{'threshold': 10}" in description
-        assert "{'how': 'any'}" in description
+        assert "threshold=10" in description
+        assert "how=any" in description
     
     def test_custom_operations_list(self):
         """Test providing custom operations to planner."""
@@ -302,7 +313,7 @@ class TestDataCleaningPlanner:
             MockOperation("custom_op", 50, "custom_type")
         ]
         
-        hint = CleaningHint(operation_type="custom_type")
+        hint = MockHint(hint_type="custom_type", test_priority=50)
         
         validation_result = DataValidationResult(
             check_name="test",
@@ -337,7 +348,7 @@ class TestDataCleaningPlanner:
                 message="Critical error"
             )],
             cleaning_hints=[
-                CleaningHint(operation_type="convert_to_categorical", target_columns=["col1"])
+                ConvertToCategoricalHint(target_columns=["col1"], threshold=10)
             ]
         )
         

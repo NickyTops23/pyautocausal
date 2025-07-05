@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 
 from ..base import CleaningOperation, TransformationRecord
-from ...data_validation.base import CleaningHint
+from ..hints import CleaningHint, ConvertToCategoricalHint, EncodeMissingAsCategoryHint
 
 
 class ConvertToCategoricalOperation(CleaningOperation):
@@ -20,10 +20,11 @@ class ConvertToCategoricalOperation(CleaningOperation):
         return 90  # High priority - do this before other operations
     
     def can_apply(self, hint: CleaningHint) -> bool:
-        return hint.operation_type == "convert_to_categorical"
+        return isinstance(hint, ConvertToCategoricalHint)
     
     def apply(self, df: pd.DataFrame, hint: CleaningHint) -> Tuple[pd.DataFrame, TransformationRecord]:
         """Convert specified columns to categorical dtype."""
+        assert isinstance(hint, ConvertToCategoricalHint)
         df_cleaned = df.copy()
         modified_columns = []
         
@@ -38,7 +39,8 @@ class ConvertToCategoricalOperation(CleaningOperation):
             columns_modified=modified_columns,
             details={
                 "columns_converted": len(modified_columns),
-                "hint_metadata": hint.metadata
+                "threshold": hint.threshold,
+                "unique_counts": hint.unique_counts
             }
         )
         
@@ -57,13 +59,14 @@ class EncodeMissingAsCategoryOperation(CleaningOperation):
         return 85  # High priority - do this before dropping missing values
     
     def can_apply(self, hint: CleaningHint) -> bool:
-        return hint.operation_type == "encode_missing_as_category"
+        return isinstance(hint, EncodeMissingAsCategoryHint)
     
     def apply(self, df: pd.DataFrame, hint: CleaningHint) -> Tuple[pd.DataFrame, TransformationRecord]:
         """Encode missing values as a category in categorical columns."""
+        assert isinstance(hint, EncodeMissingAsCategoryHint)
         df_cleaned = df.copy()
         modified_columns = []
-        missing_category = hint.parameters.get("missing_category", "MISSING")
+        missing_category = hint.missing_category
         
         for col in hint.target_columns:
             if col in df_cleaned.columns:

@@ -119,7 +119,7 @@ class DataValidatorConfig:
     enabled_checks: Optional[List[str]] = None
 
 
-class DataValidatorNode:
+class DataValidator:
     """A node that performs multiple data validation checks on a DataFrame.
     
     This class is designed to be used as the action function for a PyAutoCausal node.

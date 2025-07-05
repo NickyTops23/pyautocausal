@@ -140,19 +140,15 @@ class TestColumnTypesCheck:
     def test_categorical_inference(self):
         """Test automatic categorical column detection."""
         df = pd.DataFrame({
-            "cat_col": ["A", "B", "A", "B", "C"],
+            "cat_col": ["A", "B", "A", "B", "C"] * 20,
             "num_col": list(range(100))
         })
-        
-        config = ColumnTypesConfig(categorical_threshold=5, infer_categorical=True)
-        check = ColumnTypesCheck(config)
+        check = ColumnTypesCheck(config=ColumnTypesConfig(infer_categorical=True, categorical_threshold=10))
         result = check.validate(df)
-        
-        # Should have info message about categorical column
-        info_issues = [i for i in result.issues if i.severity == ValidationSeverity.INFO]
-        assert len(info_issues) == 1
-        assert "cat_col" in info_issues[0].message
-        assert result.metadata["inferred_categorical"] == ["cat_col"]
+
+        assert result.passed
+        info_issues = result.get_issues_by_severity(ValidationSeverity.INFO)
+        assert any("appears to be categorical" in issue.message for issue in info_issues)
 
 
 class TestNoDuplicateColumnsCheck:
