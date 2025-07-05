@@ -6,7 +6,7 @@ selects appropriate methods based on data characteristics.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 import webbrowser
 import os
 
@@ -51,6 +51,39 @@ from pyautocausal.pipelines.mock_data import generate_mock_data
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 from pyautocausal.orchestration.graph import ExecutableGraph
 
+# Data validation and cleaning imports
+from pyautocausal.data_validation.validator_node import DataValidator, DataValidatorConfig
+from pyautocausal.data_validation.checks.basic_checks import (
+    NonEmptyDataCheck, RequiredColumnsCheck, ColumnTypesCheck, 
+    NonEmptyDataConfig, RequiredColumnsConfig, ColumnTypesConfig
+)
+from pyautocausal.data_validation.checks.missing_data_checks import (
+    MissingDataCheck, MissingDataConfig
+)
+from pyautocausal.data_validation.checks.causal_checks import (
+    BinaryTreatmentCheck, BinaryTreatmentConfig,
+    TreatmentVariationCheck, TreatmentVariationConfig,
+    PanelStructureCheck, PanelStructureConfig,
+    TimeColumnCheck, TimeColumnConfig,
+    TreatmentPersistenceCheck, TreatmentPersistenceConfig,
+    OutcomeVariableCheck, OutcomeVariableConfig,
+    CausalMethodRequirementsCheck, CausalMethodRequirementsConfig,
+    TreatmentTimingPatternsCheck, TreatmentTimingPatternsConfig
+)
+from pyautocausal.data_cleaning.cleaner import DataCleaner
+from pyautocausal.data_cleaning.planner import DataCleaningPlanner
+from pyautocausal.data_cleaning.operations.categorical_operations import (
+    ConvertToCategoricalOperation, EncodeMissingAsCategoryOperation
+)
+from pyautocausal.data_cleaning.operations.missing_data_operations import (
+    DropMissingRowsOperation, FillMissingWithValueOperation
+)
+from pyautocausal.data_cleaning.operations.duplicate_operations import (
+    DropDuplicateRowsOperation
+)
+from pyautocausal.data_cleaning.base import CleaningPlan, CleaningMetadata
+from pyautocausal.data_validation.validator_node import AggregatedValidationResult
+
 
 def _setup_output_directories(output_path: Path) -> tuple[Path, Path, Path]:
     """
@@ -72,23 +105,310 @@ def _setup_output_directories(output_path: Path) -> tuple[Path, Path, Path]:
     
     return plots_dir.absolute(), text_dir.absolute(), notebooks_dir.absolute()
 
+def _create_basic_validator():
+        """Create the basic data validator node for both cross-sectional and panel data."""
+        basic_validation_config = DataValidatorConfig(
+            fail_on_error=True,
+            fail_on_warning=False,
+            aggregation_strategy="all",
+            check_configs={
+                "non_empty_data": NonEmptyDataConfig(min_rows=10, min_columns=3),
+                "required_columns": RequiredColumnsConfig(
+                    required_columns=["treat", "y"]
+                ),
+                "column_types": ColumnTypesConfig(
+                    expected_types={
+                        "treat": int,
+                        "y": float
+                    },
+                    categorical_threshold=10,
+                    infer_categorical=True
+                ),
+                "missing_data": MissingDataConfig(
+                    max_missing_fraction=0.05,
+                    check_columns=["treat", "y"]
+                ),
+                "binary_treatment": BinaryTreatmentConfig(
+                    treatment_column="treat",
+                    valid_values={0, 1}
+                ),
+                "treatment_variation": TreatmentVariationConfig(
+                    treatment_column="treat",
+                    min_treated_fraction=0.05,
+                    max_treated_fraction=0.95
+                ),
+                "outcome_variable": OutcomeVariableConfig(
+                    outcome_column="y",
+                    require_numeric=True
+                )
+            }
+        )
+        
+        basic_validation_checks = [
+            NonEmptyDataCheck(),
+            RequiredColumnsCheck(),
+            ColumnTypesCheck(),
+            MissingDataCheck(),
+            BinaryTreatmentCheck(),
+            TreatmentVariationCheck(),
+            OutcomeVariableCheck()
+        ]
+        
+        return DataValidator(
+            checks=basic_validation_checks,
+            config=basic_validation_config
+        )
+
+def _create_basic_cleaning_plan(validation_result: AggregatedValidationResult) -> CleaningPlan:
+    # Basic cleaning - applies to both cross-sectional and panel data
+    basic_cleaning_operations = [
+        ConvertToCategoricalOperation(),
+        DropMissingRowsOperation(),
+        DropDuplicateRowsOperation(),
+        FillMissingWithValueOperation()
+    ]
+    
+    return DataCleaningPlanner(validation_result, operations=basic_cleaning_operations).create_plan()
+
+
+def _create_panel_validator() -> DataValidator:
+    """Create the panel data validator node for multi-period data."""
+    panel_validation_config = DataValidatorConfig(
+        fail_on_error=True,
+        fail_on_warning=False,
+        aggregation_strategy="all",
+        check_configs={
+            "required_columns": RequiredColumnsConfig(
+                required_columns=["t"]
+            ),
+            "panel_structure": PanelStructureConfig(
+                unit_column="id_unit",
+                time_column="t",
+                require_balanced=False
+            ),
+            "time_column": TimeColumnConfig(
+                time_column="t",
+                require_sequential=True,
+                require_numeric=True
+            ),
+            "treatment_persistence": TreatmentPersistenceConfig(
+                treatment_column="treat",
+                unit_column="id_unit",
+                time_column="t",
+                allow_treatment_reversals=False
+            ),
+            "causal_method_requirements": CausalMethodRequirementsConfig(
+                treatment_column="treat",
+                unit_column="id_unit",
+                time_column="t",
+                min_pre_periods=2,
+                min_post_periods=1
+            ),
+            "treatment_timing_patterns": TreatmentTimingPatternsConfig(
+                treatment_column="treat",
+                unit_column="id_unit",
+                time_column="t"
+            )
+        }
+    )
+    
+    panel_validation_checks = [
+        RequiredColumnsCheck(),
+        PanelStructureCheck(),
+        TimeColumnCheck(),
+        TreatmentPersistenceCheck(),
+        CausalMethodRequirementsCheck(),
+        TreatmentTimingPatternsCheck()
+    ]
+    
+    return DataValidator(
+        checks=panel_validation_checks,
+        config=panel_validation_config
+    )
+
+def _create_cross_sectional_validator() -> DataValidator:
+    """Create the cross-sectional data validator node for single-period data."""
+    cross_sectional_validation_config = DataValidatorConfig(
+        fail_on_error=True,
+        fail_on_warning=False,
+        aggregation_strategy="all",
+        check_configs={
+            "outcome_variable": OutcomeVariableConfig(
+                outcome_column="y",
+                require_numeric=True,
+                outlier_threshold=3.0
+            )
+        }
+    )
+    
+    cross_sectional_validation_checks = [
+        OutcomeVariableCheck()
+    ]
+    
+    return DataValidator(
+        checks=cross_sectional_validation_checks,
+        config=cross_sectional_validation_config
+    )
+
+
+def create_panel_cleaning_plan(validation_result: AggregatedValidationResult) -> CleaningPlan:
+    """Create panel-specific cleaning plan."""
+        # Panel-specific cleaning
+    panel_cleaning_operations = [
+        ConvertToCategoricalOperation(),
+        DropMissingRowsOperation(),
+        FillMissingWithValueOperation()
+    ]
+
+    planner = DataCleaningPlanner(validation_result, operations=panel_cleaning_operations)
+    return planner.create_plan()
 
 def _create_basic_nodes(graph: ExecutableGraph, abs_text_dir: Path) -> None:
     """Create basic input and decision nodes for the graph."""
     # Input node for the dataframe
     graph.create_input_node("df", input_dtype=pd.DataFrame)
 
-    # Decision nodes for routing
+    basic_validator = _create_basic_validator()
+    
+    graph.create_node(
+        'basic_validation',
+        action_function=basic_validator.validate,
+        predecessors=["df"]
+    )
+    
+    graph.create_node(
+        'basic_cleaning_plan',
+        action_function=_create_basic_cleaning_plan,
+        predecessors=["basic_validation"]
+    )
+    
+    def execute_cleaning_plan(df: pd.DataFrame, basic_cleaning_plan: CleaningPlan) -> pd.DataFrame:
+        """Execute basic cleaning operations."""
+        return basic_cleaning_plan(df)
+    
+    graph.create_node(
+        'basic_cleaning',
+        action_function=execute_cleaning_plan,
+        predecessors=["df", "basic_cleaning_plan"]
+    )
+    
+    def get_basic_cleaning_metadata(basic_cleaning_plan: CleaningPlan) -> CleaningMetadata:
+        """Get metadata from basic cleaning execution."""
+        return basic_cleaning_plan.get_metadata()
+    
+    graph.create_node(
+        'basic_cleaning_metadata',
+        action_function=get_basic_cleaning_metadata,
+        output_config=OutputConfig(
+            output_filename=abs_text_dir / 'basic_cleaning_metadata',
+            output_type=OutputType.TEXT
+        ),
+        save_node=True,
+        predecessors=["basic_cleaning_plan", "basic_cleaning"]
+    )
+
+    # Decision nodes for routing - now use cleaned data
     graph.create_decision_node(
         'multi_period', 
         condition=has_multiple_periods.get_function(), 
-        predecessors=["df"]
+        predecessors=["basic_cleaning"]
+    )
+
+    # Panel-specific validation and cleaning for multi-period data
+    panel_validator = _create_panel_validator()
+    
+    graph.create_node(
+        'panel_validation',
+        action_function=panel_validator.validate,
+        predecessors=["multi_period"]
+    )
+    
+    graph.create_node(
+        'panel_cleaning_plan',
+        action_function=create_panel_cleaning_plan,
+        predecessors=["panel_validation"]
+    )
+    
+    def execute_panel_cleaning(multi_period: pd.DataFrame, panel_cleaning_plan: CleaningPlan) -> pd.DataFrame:
+        """Execute panel-specific cleaning operations."""
+        return panel_cleaning_plan(multi_period)
+    
+    graph.create_node(
+        'panel_cleaned_data',
+        action_function=execute_panel_cleaning,
+        predecessors=["multi_period", "panel_cleaning_plan"]
+    )
+    
+    def get_panel_cleaning_metadata(panel_cleaning_plan: CleaningPlan) -> CleaningMetadata:
+        """Get metadata from panel cleaning execution."""
+        return panel_cleaning_plan.get_metadata_text()
+    
+    graph.create_node(
+        'panel_cleaning_metadata',
+        action_function=get_panel_cleaning_metadata,
+        output_config=OutputConfig(
+            output_filename=abs_text_dir / 'panel_cleaning_metadata',
+            output_type=OutputType.TEXT
+        ),
+        save_node=True,
+        predecessors=["panel_cleaning_plan", "panel_cleaned_data"]
+    )
+
+    # Cross-sectional validation and cleaning for single-period data
+    cross_sectional_validator = _create_cross_sectional_validator()
+    
+    graph.create_node(
+        'cross_sectional_validation',
+        action_function=cross_sectional_validator.validate,
+        predecessors=["multi_period"]
+    )
+    
+    # Cross-sectional cleaning (minimal - data already cleaned by basic cleaning)
+    cross_sectional_cleaning_operations = [
+        ConvertToCategoricalOperation(),
+        FillMissingWithValueOperation()
+    ]
+    
+    def create_cross_sectional_cleaning_plan(validation_result: AggregatedValidationResult) -> CleaningPlan:
+        """Create cross-sectional cleaning plan."""
+        planner = DataCleaningPlanner(validation_result, operations=cross_sectional_cleaning_operations)
+        return planner.create_plan()
+    
+    graph.create_node(
+        'cross_sectional_cleaning_plan',
+        action_function=create_cross_sectional_cleaning_plan,
+        predecessors=["cross_sectional_validation"]
+    )
+    
+    def execute_cross_sectional_cleaning(multi_period: pd.DataFrame, cross_sectional_cleaning_plan: CleaningPlan) -> pd.DataFrame:
+        """Execute cross-sectional cleaning operations."""
+        return cross_sectional_cleaning_plan(multi_period)
+    
+    graph.create_node(
+        'cross_sectional_cleaned_data',
+        action_function=execute_cross_sectional_cleaning,
+        predecessors=["multi_period", "cross_sectional_cleaning_plan"]
+    )
+    
+    def get_cross_sectional_cleaning_metadata(cross_sectional_cleaning_plan: CleaningPlan, cross_sectional_cleaned_data: pd.DataFrame) -> CleaningMetadata:
+        """Get metadata from cross-sectional cleaning execution."""
+        return cross_sectional_cleaning_plan.get_metadata()
+    
+    graph.create_node(
+        'cross_sectional_cleaning_metadata',
+        action_function=get_cross_sectional_cleaning_metadata,
+        output_config=OutputConfig(
+            output_filename=abs_text_dir / 'cross_sectional_cleaning_metadata',
+            output_type=OutputType.TEXT
+        ),
+        save_node=True,
+        predecessors=["cross_sectional_cleaning_plan", "cross_sectional_cleaned_data"]
     )
     
     graph.create_decision_node(
         'single_treated_unit',
         condition=has_single_treated_unit.get_function(),
-        predecessors=["multi_period"]
+        predecessors=["panel_cleaned_data"]
     )
     
     graph.create_decision_node(
@@ -109,8 +429,8 @@ def _create_cross_sectional_branch(graph: ExecutableGraph, abs_text_dir: Path) -
     # Cross-sectional specification and analysis
     graph.create_node(
         'stand_spec', 
-        action_function=create_cross_sectional_specification.transform({'df': 'data'}), 
-        predecessors=["multi_period"]
+        action_function=create_cross_sectional_specification.transform({'cross_sectional_cleaned_data': 'data'}), 
+        predecessors=["cross_sectional_cleaned_data"]
     )
 
     graph.create_node(
@@ -136,7 +456,7 @@ def _create_synthetic_did_branch(graph: ExecutableGraph, abs_plots_dir: Path) ->
     # Synthetic DiD specification and analysis
     graph.create_node(
         'synthdid_spec', 
-        action_function=create_synthdid_specification.transform({'df': 'data'}), 
+        action_function=create_synthdid_specification.transform({'panel_cleaned_data': 'data'}), 
         predecessors=["single_treated_unit"]
     )
 
@@ -163,8 +483,8 @@ def _create_did_branch(graph: ExecutableGraph, abs_text_dir: Path) -> None:
     # Standard DiD specification and analysis
     graph.create_node(
         'did_spec', 
-        action_function=create_did_specification.transform({'df': 'data'}), 
-        predecessors=["multi_period"]
+        action_function=create_did_specification.transform({'panel_cleaned_data': 'data'}), 
+        predecessors=["panel_cleaned_data"]
     )
 
     graph.create_node(
@@ -201,7 +521,7 @@ def _create_event_study_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_p
     # Event study specification and analysis
     graph.create_node(
         'event_spec', 
-        action_function=create_event_study_specification.transform({'df': 'data'}), 
+        action_function=create_event_study_specification.transform({'panel_cleaned_data': 'data'}), 
         predecessors=["stag_treat"]
     )
     
@@ -239,7 +559,7 @@ def _create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs
     # Staggered DiD specification and analysis
     graph.create_node(
         'stag_spec', 
-        action_function=create_staggered_did_specification.transform({'df': 'data'}), 
+        action_function=create_staggered_did_specification.transform({'panel_cleaned_data': 'data'}), 
         predecessors=["stag_treat"]
     )
     
@@ -340,10 +660,13 @@ def _create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs
 
 def _configure_decision_paths(graph: ExecutableGraph) -> None:
     """Configure the decision routing for the graph."""
-    # Multi-period routing
-    graph.when_false("multi_period", "stand_spec")
-    graph.when_true("multi_period", "single_treated_unit")
-    graph.when_true("multi_period", "did_spec")
+    # Multi-period routing - validation
+    graph.when_false("multi_period", "cross_sectional_validation")
+    graph.when_true("multi_period", "panel_validation")
+    
+    # Multi-period routing - cleaned data
+    graph.when_false("multi_period", "cross_sectional_cleaned_data")
+    graph.when_true("multi_period", "panel_cleaned_data")
 
     # Single treated unit routing
     graph.when_true("single_treated_unit", "synthdid_spec")

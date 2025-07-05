@@ -15,6 +15,16 @@ from pyautocausal.utils.logger import get_class_logger
 import warnings
 import types
 
+
+def is_lambda(func):
+    """
+    Reliably detect if a function is a lambda function.
+    
+    This is more reliable than just checking isinstance(func, types.LambdaType)
+    because nested functions can sometimes be incorrectly identified as lambdas.
+    """
+    return isinstance(func, types.LambdaType) and func.__name__ == "<lambda>"
+
 class BaseNode:
     def __init__(self, name: str):
         self.name = name
@@ -148,7 +158,7 @@ class Node(BaseNode):
             dict: Complete dictionary of resolved arguments
         """
         
-        is_lambda_with_single_argument = isinstance(func, types.LambdaType) and func.__code__.co_argcount == 1
+        is_lambda_with_single_argument = is_lambda(func) and func.__code__.co_argcount == 1
         if is_lambda_with_single_argument:
             self.logger.info(f"Node {self.name}: has a lambda function with a single argument as either an action function or a condition function")
             available_args_keys = list(available_args.keys())
