@@ -42,23 +42,7 @@ def reconstruct_treatment(row):
 data['treat'] = data.apply(reconstruct_treatment, axis=1)
 
 # Keep additional covariates
-data = data[["id_unit", "t", "treat", "y", "lpop"]]  # Include lpop as covariate
-
-print("Data Overview:")
-print(f"Data shape: {data.shape}")
-print(f"Unique counties: {data['id_unit'].nunique()}")
-print(f"Time periods: {data['t'].min()}-{data['t'].max()}")
-print(f"Treatment distribution:\n{data['treat'].value_counts()}")
-
-# Check if we now have staggered treatment
-from pyautocausal.pipelines.library.conditions import has_staggered_treatment
-print(f"Staggered treatment detected: {has_staggered_treatment(data)}")
-
-# Show treatment start timing distribution
-treatment_starts = data[data['treat'] == 1].groupby('id_unit')['t'].min()
-print(f"Treatment start times: {sorted(treatment_starts.value_counts().sort_index().items())}")
-
-print(f"Sample data:\n{data.head(10)}")
+data = data[["id_unit", "t", "treat", "y", "lpop"]]  
 
 # Define output path
 output_path = Path("pyautocausal/examples/outputs")
