@@ -11,7 +11,6 @@ from .base import (
 )
 from .planner import DataCleaningPlanner
 from .cleaner import DataCleaner
-from .autocleaner import AutoCleaner
 from .hints import (
     CleaningHint,
     UpdateColumnTypesHint,

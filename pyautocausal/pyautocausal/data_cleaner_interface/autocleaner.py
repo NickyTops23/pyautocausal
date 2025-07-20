@@ -2,7 +2,14 @@ import pandas as pd
 import logging
 from typing import List, Dict, Any, Optional
 
-# Import only necessary items to avoid circular imports
+# Import validation components
+from pyautocausal.data_validation.validator_node import DataValidator
+from pyautocausal.data_validation.checks.basic_checks import RequiredColumnsCheck, RequiredColumnsConfig, ColumnTypesCheck, ColumnTypesConfig, DuplicateRowsCheck, DuplicateRowsConfig
+from pyautocausal.data_validation.checks.missing_data_checks import MissingDataCheck, MissingDataConfig
+from pyautocausal.data_validation.checks.categorical_checks import InferCategoricalColumnsCheck, InferCategoricalColumnsConfig
+from pyautocausal.data_validation.checks.causal_checks import BinaryTreatmentCheck, BinaryTreatmentConfig
+
+# Import cleaning components
 from pyautocausal.data_cleaning.operations.missing_data_operations import DropMissingRowsOperation, FillMissingWithValueOperation
 from pyautocausal.data_cleaning.operations.categorical_operations import ConvertToCategoricalOperation, EncodeMissingAsCategoryOperation
 from pyautocausal.data_cleaning.operations.duplicate_operations import DropDuplicateRowsOperation

@@ -19,6 +19,14 @@ class InferCategoricalColumnsConfig(DataValidationConfig):
     """Configuration for InferCategoricalColumnsCheck."""
     categorical_threshold: int = 10  # Max unique values to consider as categorical
     ignore_columns: Optional[List[str]] = None
+    
+    def __post_init__(self):
+        """Validate configuration parameters."""
+        if not isinstance(self.categorical_threshold, int):
+            raise TypeError(f"categorical_threshold must be an integer, got {type(self.categorical_threshold).__name__}")
+        
+        if self.categorical_threshold < 0:
+            raise ValueError(f"categorical_threshold must be non-negative, got {self.categorical_threshold}")
 
 
 class InferCategoricalColumnsCheck(DataValidationCheck[InferCategoricalColumnsConfig]):

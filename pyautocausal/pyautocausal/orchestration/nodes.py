@@ -182,27 +182,40 @@ class Node(BaseNode):
         if len(required_params) == 1 and len(available_args) == 1:
             param_name = list(required_params.keys())[0]
             arg_name = list(available_args.keys())[0]
-            return {param_name: available_args[arg_name]}
+            
+            # Log if argument names don't match
+            if param_name != arg_name:
+                self.logger.info(f"Node {self.name}: Implicitly mapping argument '{arg_name}' to parameter '{param_name}' despite name mismatch")
+            
+            # Update required_params and set missing_required to empty
+            required_params[param_name] = available_args[arg_name]
+            missing_required = set()
+        else:
+            missing_required = set(required_params.keys())
 
-        missing_required = set(required_params.keys())
-
-        optional_params = {
-            name: None
-            for name, param in signature.parameters.items()
+        # Track optional parameter names but don't initialize them with None
+        optional_param_names = {
+            name for name, param in signature.parameters.items()
             if param.default is not inspect.Parameter.empty
         }
+        optional_params = {}
         has_varkeyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
         # check if any keyword arguments are VAR_KEYWORD
 
-        missing_optional = set(optional_params.keys())
+        missing_optional = set(optional_param_names)
         
-        # Start with available arguments
-        arguments = available_args.copy()
+        # Start with available arguments, but only make arguments available if we haven't already mapped them
+        # this is to avoid having one required parameter that maps to multiple arguments
+        arguments = {key: value for key, value in available_args.items() if required_params.get(key) is None}
         for argument in arguments.keys():
-            if argument in required_params:
+            # we only want to add arguments to required_params if we have missing required parameters
+            # if we don't have missing required parameters at this point, it means that we only have one required parameter
+            # and one available argument, so we've already mapped them
+            if missing_required and argument in required_params:
                 required_params[argument] = arguments[argument]
-                missing_required.remove(argument)
-            elif argument in optional_params:
+                if argument in missing_required:  # Only remove if it's still missing
+                    missing_required.remove(argument)
+            elif argument in optional_param_names:
                 optional_params[argument] = arguments[argument]
                 missing_optional.remove(argument)
             elif has_varkeyword:
@@ -212,10 +225,14 @@ class Node(BaseNode):
         # For any missing required parameters, try to get them from run context
         
         if missing_required and hasattr(self.graph, 'run_context') and self.graph.run_context is not None:
+            found_in_context = []
             for param in missing_required:
                 if hasattr(self.graph.run_context, param):
                     required_params[param] = getattr(self.graph.run_context, param)
-                    missing_required.remove(param)
+                    found_in_context.append(param)
+            # Remove found parameters after iteration
+            for param in found_in_context:
+                missing_required.remove(param)
 
         
         # Check if we have all required parameters
@@ -228,21 +245,17 @@ class Node(BaseNode):
         # For optional parameters, try to get them from available args or run context
         # but don't raise an error if they're not found
 
-        keys_to_delete = []
-        for param_name, current_value in optional_params.items():
-            if param_name in missing_optional:
-                # Try run context
-                if hasattr(self.graph, 'run_context') and self.graph.run_context is not None and hasattr(self.graph.run_context, param_name):
-                    optional_params[param_name] = getattr(self.graph.run_context, param_name)
-                    missing_optional.remove(param_name)
-                else: 
-                    # delete key from optional_params to indicate it's not found
-                    # this helps us know which default values we're overriding
-                    keys_to_delete.append(param_name)
-        
-        for key in keys_to_delete:
-            if key in optional_params:
-                del optional_params[key]
+        if missing_optional and hasattr(self.graph, 'run_context') and self.graph.run_context is not None:
+            found_optional_in_context = []
+            for param in missing_optional:
+                if hasattr(self.graph.run_context, param):
+                    optional_params[param] = getattr(self.graph.run_context, param)
+                    found_optional_in_context.append(param)
+            # Remove found parameters after iteration
+            for param in found_optional_in_context:
+                missing_optional.remove(param)
+
+                            
         
         return {**required_params, **optional_params}
 

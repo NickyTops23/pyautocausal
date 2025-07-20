@@ -277,6 +277,11 @@ class TestDataCleaningPlanner:
             UpdateColumnTypesHint(
                 type_mapping={"status": "category", "category": "category"}
             ),
+            InferCategoricalHint(
+                target_columns=["status", "category"],
+                threshold=10,
+                unique_counts={}
+            ),
             DropMissingRowsHint(
                 target_columns=["value"],
                 how="any"

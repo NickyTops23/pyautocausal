@@ -16,7 +16,7 @@ from pyautocausal.pipelines.library.conditions import (
     has_sufficient_never_treated_units, 
     has_single_treated_unit
 )
-from pyautocausal.data_cleaning.autocleaner import AutoCleaner
+from pyautocausal.data_cleaner_interface.autocleaner import AutoCleaner
 
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
@@ -32,7 +32,7 @@ def create_basic_cleaner(df: pd.DataFrame) -> pd.DataFrame:
         .infer_and_convert_categoricals(ignore_columns=["treat", "y", "t", "id_unit"])
         .drop_duplicates()
     )
-    return autocleaner.clean_with_logging(df)
+    return autocleaner.clean(df)
 
 
 def create_panel_cleaner(df: pd.DataFrame) -> pd.DataFrame:
@@ -45,7 +45,7 @@ def create_panel_cleaner(df: pd.DataFrame) -> pd.DataFrame:
         .infer_and_convert_categoricals(ignore_columns=["treat", "y", "t", "id_unit"])
         .drop_duplicates()
     )
-    return autocleaner.clean_with_logging(df)
+    return autocleaner.clean(df)
 
 
 def create_cross_sectional_cleaner(df: pd.DataFrame) -> pd.DataFrame:
@@ -55,7 +55,7 @@ def create_cross_sectional_cleaner(df: pd.DataFrame) -> pd.DataFrame:
         .check_for_missing_data(strategy="drop_rows")
         .infer_and_convert_categoricals(ignore_columns=["treat", "y", "t", "id_unit"])
     )
-    return autocleaner.clean_with_logging(df)
+    return autocleaner.clean(df)
 
 
 def create_core_decision_structure(graph: ExecutableGraph, abs_text_dir: Path) -> None:

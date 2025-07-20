@@ -1,8 +1,12 @@
+"""Tests for the AutoCleaner high-level facade."""
+
 import pandas as pd
 import pytest
 import numpy as np
+import logging
+from io import StringIO
 
-from pyautocausal.data_cleaning.autocleaner import AutoCleaner
+from pyautocausal.data_cleaner_interface.autocleaner import AutoCleaner
 
 @pytest.fixture
 def sample_data_for_cleaning():
@@ -39,16 +43,14 @@ def test_autocleaner_chaining_and_execution(sample_data_for_cleaning):
     )
 
     # 2. Execute the cleaning process
-    cleaned_df, metadata = autocleaner.clean(df)
+    cleaned_df = autocleaner.clean(df)
 
     # 3. Assertions
-    # Check shape and dropped rows
+    # Check shape and dropped rows (metadata is now logged, not returned)
     assert cleaned_df.shape[0] < initial_rows
-    assert metadata.total_rows_dropped > 0
 
     # Check for dropped duplicates
     assert cleaned_df.duplicated().sum() == 0
-    assert metadata.total_rows_dropped >= initial_duplicates
 
     # Check for dropped NA values
     assert cleaned_df['city'].isnull().sum() == 0
@@ -60,14 +62,7 @@ def test_autocleaner_chaining_and_execution(sample_data_for_cleaning):
     # Check that original df is untouched
     assert df.shape[0] == initial_rows
 
-    # Check metadata
-    assert metadata.start_shape == df.shape
-    assert metadata.end_shape == cleaned_df.shape
-    assert len(metadata.transformations) > 0
-    op_names = [t.operation_name for t in metadata.transformations]
-    assert "drop_missing_rows" in op_names
-    assert "drop_duplicate_rows" in op_names
-    assert "convert_to_categorical" in op_names
+    # Note: Metadata is now logged automatically rather than returned
 
 def test_autocleaner_fill_missing_strategy(sample_data_for_cleaning):
     """Tests the 'fill' strategy for missing data."""
@@ -78,10 +73,68 @@ def test_autocleaner_fill_missing_strategy(sample_data_for_cleaning):
         AutoCleaner()
         .check_for_missing_data(strategy='fill', check_columns=['city'], fill_value=fill_value)
     )
-    cleaned_df, metadata = autocleaner.clean(df)
+    cleaned_df = autocleaner.clean(df)
 
     assert cleaned_df['city'].isnull().sum() == 0
     assert (cleaned_df['city'] == fill_value).any()
-    assert metadata.total_rows_dropped == 0
-    op_names = [t.operation_name for t in metadata.transformations]
-    assert "fill_missing_with_value" in op_names 
+    # Note: Metadata is now logged automatically rather than returned 
+
+
+def test_autocleaner_unified_logging():
+    """Test that the unified clean() method properly logs metadata while maintaining backward compatibility."""
+    # Set up logging capture
+    log_capture = StringIO()
+    logger = logging.getLogger("pyautocausal.data_cleaner_interface.autocleaner.AutoCleaner")
+    handler = logging.StreamHandler(log_capture)
+    handler.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    
+    try:
+        # Create test data with various issues
+        data = pd.DataFrame({
+            'treat': [1, 0, 1, 0, 1, 1, 0],
+            'y': [1.2, 2.3, None, 4.5, 5.6, 6.7, 7.8],  # Missing value
+            'category': ['A', 'B', 'A', 'C', 'B', 'A', 'C'],  # Should be categorical
+            'duplicate_col': [1, 1, 1, 1, 1, 1, 1]  # Uniform values
+        })
+        
+        # Add a duplicate row
+        data = pd.concat([data, data.iloc[[0]]], ignore_index=True)
+        
+        # Create autocleaner
+        autocleaner = (
+            AutoCleaner()
+            .check_required_columns(required_columns=["treat", "y"])
+            .check_for_missing_data(strategy="drop_rows", check_columns=["y"])
+            .infer_and_convert_categoricals(ignore_columns=["treat", "y"])
+            .drop_duplicates()
+        )
+        
+        # Test the unified clean() method
+        cleaned_df = autocleaner.clean(data)
+        
+        # Verify clean method returns DataFrame only
+        assert isinstance(cleaned_df, pd.DataFrame)
+        
+        # Verify data was properly cleaned
+        assert len(cleaned_df) < len(data)  # Should have fewer rows due to missing data + duplicates
+        assert cleaned_df['y'].isnull().sum() == 0  # No missing values
+        assert not cleaned_df.duplicated().any()  # No duplicates
+        
+        # Verify categorical conversion (but not for treat/y which are ignored)
+        assert pd.api.types.is_categorical_dtype(cleaned_df['category'])
+        assert not pd.api.types.is_categorical_dtype(cleaned_df['treat'])
+        assert not pd.api.types.is_categorical_dtype(cleaned_df['y'])
+        
+        # Verify logging behavior
+        logged_content = log_capture.getvalue()
+        assert "Data cleaning completed" in logged_content
+        assert "operations performed" in logged_content
+        assert "rows dropped" in logged_content
+        
+        # Note: Metadata details are captured in logs, not returned
+        
+    finally:
+        # Clean up logging
+        logger.removeHandler(handler) 
