@@ -4,7 +4,7 @@ This module provides a node that can run multiple validation checks on a DataFra
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Type, Union
+from typing import Dict, List, Optional, Type, Union, Any
 import pandas as pd
 
 from .base import (
@@ -90,7 +90,7 @@ class AggregatedValidationResult:
                 if result.issues:
                     lines.append(f"\n{result.check_name}:")
                     for issue in result.issues:
-                        lines.append(f"  [{issue.severity.value.upper()}] {issue.message}")
+                        lines.append(f"  [{issue.severity.name.upper()}] {issue.message}")
                         if issue.affected_columns:
                             lines.append(f"    Affected columns: {', '.join(issue.affected_columns)}")
                         if issue.details:
@@ -126,18 +126,23 @@ class DataValidator:
     It aggregates multiple validation checks and returns a combined result.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  checks: List[Union[DataValidationCheck, Type[DataValidationCheck]]],
-                 config: Optional[DataValidatorConfig] = None):
+                 config: Optional[Union[DataValidatorConfig, Dict[str, Any]]] = None):
         """Initialize the validator node with a list of checks.
         
         Args:
             checks: List of validation check instances or classes
             config: Configuration for the validator node
         """
-        self.config = config or DataValidatorConfig()
+        # Handle different config types
+        if isinstance(config, dict):
+            self.config = DataValidatorConfig(check_configs=config)
+        else:
+            self.config = config or DataValidatorConfig()
+            
         self.checks: List[DataValidationCheck] = []
-        
+
         # Initialize checks
         for check in checks:
             if isinstance(check, type):

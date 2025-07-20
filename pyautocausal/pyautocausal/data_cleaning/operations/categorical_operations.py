@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 
 from ..base import CleaningOperation, TransformationRecord
-from ..hints import CleaningHint, ConvertToCategoricalHint, EncodeMissingAsCategoryHint
+from ..hints import CleaningHint, EncodeMissingAsCategoryHint, InferCategoricalHint
 
 
 class ConvertToCategoricalOperation(CleaningOperation):
@@ -17,31 +17,34 @@ class ConvertToCategoricalOperation(CleaningOperation):
     
     @property
     def priority(self) -> int:
-        return 90  # High priority - do this before other operations
+        return 80  # Runs after schema enforcement
     
     def can_apply(self, hint: CleaningHint) -> bool:
-        return isinstance(hint, ConvertToCategoricalHint)
+        return isinstance(hint, InferCategoricalHint)
     
     def apply(self, df: pd.DataFrame, hint: CleaningHint) -> Tuple[pd.DataFrame, TransformationRecord]:
-        """Convert specified columns to categorical dtype."""
-        assert isinstance(hint, ConvertToCategoricalHint)
+        """Convert specified columns to categorical dtype based on inference."""
+        assert self.can_apply(hint)
         df_cleaned = df.copy()
         modified_columns = []
         
         for col in hint.target_columns:
-            if col in df_cleaned.columns and not pd.api.types.is_categorical_dtype(df_cleaned[col]):
+            if col not in df_cleaned.columns:
+                raise ValueError(f"Error converting to categorical {col}: Column not found in dataframe")
+            elif not isinstance(df_cleaned[col].dtype, pd.CategoricalDtype):
                 df_cleaned[col] = df_cleaned[col].astype('category')
                 modified_columns.append(col)
         
+        details = { "columns_converted": len(modified_columns) }
+        if isinstance(hint, InferCategoricalHint):
+            details["threshold"] = hint.threshold
+            details["unique_counts"] = hint.unique_counts
+            
         record = TransformationRecord(
             operation_name=self.name,
             timestamp=datetime.now(),
             columns_modified=modified_columns,
-            details={
-                "columns_converted": len(modified_columns),
-                "threshold": hint.threshold,
-                "unique_counts": hint.unique_counts
-            }
+            details=details
         )
         
         return df_cleaned, record
@@ -70,7 +73,7 @@ class EncodeMissingAsCategoryOperation(CleaningOperation):
         
         for col in hint.target_columns:
             if col in df_cleaned.columns:
-                if pd.api.types.is_categorical_dtype(df_cleaned[col]):
+                if isinstance(df_cleaned[col].dtype, pd.CategoricalDtype):
                     # Add missing category if not present
                     if missing_category not in df_cleaned[col].cat.categories:
                         df_cleaned[col] = df_cleaned[col].cat.add_categories([missing_category])

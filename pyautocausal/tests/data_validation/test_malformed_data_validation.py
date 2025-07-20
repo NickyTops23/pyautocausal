@@ -489,26 +489,23 @@ class TestConfigurationEdgeCases:
         assert not result.passed
         assert len(result.issues) == 2  # Both rows and columns fail
     
-    def test_invalid_categorical_threshold(self):
-        """Test with edge case categorical thresholds."""
-        df = pd.DataFrame({
-            "single_value": ["A"] * 100,      # 1 unique value
-            "two_values": ["A", "B"] * 50,    # 2 unique values  
-            "many_values": list(range(100))   # 100 unique values
-        })
+    def test_invalid_categorical_threshold_for_inference(self):
+        """Test that an invalid categorical threshold raises an error for inference."""
+        from pyautocausal.data_validation.checks.categorical_checks import InferCategoricalColumnsCheck, InferCategoricalColumnsConfig
         
-        # Test with threshold of 1 (only single-value columns are categorical)
-        config = ColumnTypesConfig(
-            categorical_threshold=1,
-            infer_categorical=True
-        )
-        check = ColumnTypesCheck(config)
-        result = check.validate(df)
+        df = pd.DataFrame({'A': [1, 2, 3]})
         
-        # Should identify single_value as categorical
-        info_issues = result.get_issues_by_severity(ValidationSeverity.INFO)
-        categorical_messages = [i.message for i in info_issues if "categorical" in i.message]
-        assert any("single_value" in msg for msg in categorical_messages)
+        # Test with a non-integer threshold
+        with pytest.raises(TypeError):
+            InferCategoricalColumnsConfig(categorical_threshold="not-a-number")
+            
+        # Test with a negative threshold, which might be invalid depending on implementation
+        # For now, let's assume it should raise a ValueError
+        with pytest.raises(ValueError):
+            config = InferCategoricalColumnsConfig(categorical_threshold=-5)
+            check = InferCategoricalColumnsCheck(config)
+            # Depending on implementation, error might be at config or validate
+            check.validate(df)
 
 
 class TestAggregatedValidationScenarios:

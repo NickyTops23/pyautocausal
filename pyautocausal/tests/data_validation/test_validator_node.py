@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-from pyautocausal.data_cleaning.hints import ConvertToCategoricalHint
+from pyautocausal.data_cleaning.hints import UpdateColumnTypesHint
 from pyautocausal.data_validation.base import DataValidationResult, DataValidationCheck, ValidationIssue, ValidationSeverity, DataValidationConfig
 from pyautocausal.data_validation.validator_node import DataValidator, AggregatedValidationResult
 
@@ -30,8 +30,8 @@ def test_data_validator_node_all_pass():
     """Tests that the validator node passes when all checks pass."""
     df = pd.DataFrame()
     checks = [
-        MockCheck(is_valid=True, hints=[ConvertToCategoricalHint(target_columns=["A"], threshold=10)]),
-        MockCheck(is_valid=True, hints=[ConvertToCategoricalHint(target_columns=["B"], threshold=10)]),
+        MockCheck(is_valid=True, hints=[UpdateColumnTypesHint(type_mapping={"A": "category"})]),
+        MockCheck(is_valid=True, hints=[UpdateColumnTypesHint(type_mapping={"B": "category"})]),
     ]
     node = DataValidator(checks=checks)
     result = node.validate(df)
@@ -41,14 +41,14 @@ def test_data_validator_node_all_pass():
     
     all_hints = [h for res in result.individual_results for h in res.cleaning_hints]
     assert len(all_hints) == 2
-    assert isinstance(all_hints[0], ConvertToCategoricalHint)
+    assert isinstance(all_hints[0], UpdateColumnTypesHint)
 
 
 def test_data_validator_node_one_fails():
     """Tests that the validator node fails if any check fails."""
     df = pd.DataFrame()
     checks = [
-        MockCheck(is_valid=True, hints=[ConvertToCategoricalHint(target_columns=["A"], threshold=10)]),
+        MockCheck(is_valid=True, hints=[UpdateColumnTypesHint(type_mapping={"A": "category"})]),
         MockCheck(is_valid=False, errors=["Column C is bad"]),
     ]
     node = DataValidator(checks=checks)

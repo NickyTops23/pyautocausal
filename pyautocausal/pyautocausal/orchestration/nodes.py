@@ -177,6 +177,13 @@ class Node(BaseNode):
             if param.default is inspect.Parameter.empty # only include required parameters
               and param.kind != inspect.Parameter.VAR_KEYWORD # exclude varargs
         }
+
+        # If there's one required param and one available arg, map them
+        if len(required_params) == 1 and len(available_args) == 1:
+            param_name = list(required_params.keys())[0]
+            arg_name = list(available_args.keys())[0]
+            return {param_name: available_args[arg_name]}
+
         missing_required = set(required_params.keys())
 
         optional_params = {

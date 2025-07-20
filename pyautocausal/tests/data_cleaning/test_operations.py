@@ -3,7 +3,8 @@ import pytest
 from pyautocausal.data_cleaning.operations.categorical_operations import ConvertToCategoricalOperation
 from pyautocausal.data_cleaning.operations.duplicate_operations import DropDuplicateRowsOperation
 from pyautocausal.data_cleaning.operations.missing_data_operations import DropMissingRowsOperation
-from pyautocausal.data_cleaning.hints import ConvertToCategoricalHint, DropMissingRowsHint, DropDuplicateRowsHint
+from pyautocausal.data_cleaning.operations.schema_operations import UpdateColumnTypesOperation
+from pyautocausal.data_cleaning.hints import InferCategoricalHint, DropMissingRowsHint, DropDuplicateRowsHint, UpdateColumnTypesHint
 
 
 @pytest.fixture
@@ -19,9 +20,18 @@ def sample_df():
     )
 
 
+def test_update_column_types(sample_df):
+    op = UpdateColumnTypesOperation()
+    hint = UpdateColumnTypesHint(type_mapping={"A": "str", "D": "category"})
+    cleaned_df, _ = op.apply(sample_df, hint)
+    assert cleaned_df["A"].dtype == "object" # Pandas uses 'object' for strings
+    assert cleaned_df["D"].dtype == "category"
+    assert cleaned_df["B"].dtype == "object"  # Unchanged
+
+
 def test_convert_to_categorical(sample_df):
     op = ConvertToCategoricalOperation()
-    hint = ConvertToCategoricalHint(target_columns=["B", "D"], threshold=10)
+    hint = InferCategoricalHint(target_columns=["B", "D"], threshold=10, unique_counts={})
     cleaned_df, _ = op.apply(sample_df, hint)
     assert cleaned_df["B"].dtype == "category"
     assert cleaned_df["D"].dtype == "category"

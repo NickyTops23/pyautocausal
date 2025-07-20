@@ -11,7 +11,8 @@ from pyautocausal.data_validation.base import (
 )
 from pyautocausal.data_cleaning.hints import (
     CleaningHint,
-    ConvertToCategoricalHint,
+    UpdateColumnTypesHint,
+    InferCategoricalHint,
     DropMissingRowsHint,
     EncodeMissingAsCategoryHint,
 )
@@ -20,6 +21,7 @@ from pyautocausal.data_validation.validator_node import AggregatedValidationResu
 from pyautocausal.data_cleaning.planner import DataCleaningPlanner
 from pyautocausal.data_cleaning.base import CleaningOperation, TransformationRecord
 from pyautocausal.data_cleaning.operations import (
+    UpdateColumnTypesOperation,
     ConvertToCategoricalOperation,
     DropMissingRowsOperation,
     EncodeMissingAsCategoryOperation,
@@ -82,10 +84,8 @@ class TestDataCleaningPlanner:
     
     def test_single_cleaning_hint(self):
         """Test planner with a single cleaning hint."""
-        hint = ConvertToCategoricalHint(
-            target_columns=["status", "category"],
-            threshold=10,
-            unique_counts={"status": 3, "category": 5}
+        hint = UpdateColumnTypesHint(
+            type_mapping={"status": "category", "category": "category"}
         )
         
         validation_result = DataValidationResult(
@@ -104,13 +104,13 @@ class TestDataCleaningPlanner:
         
         assert len(plan.operations) == 1
         operation, matched_hint = plan.operations[0]
-        assert isinstance(operation, ConvertToCategoricalOperation)
+        assert isinstance(operation, UpdateColumnTypesOperation)
         assert matched_hint == hint
     
     def test_multiple_hints_different_operations(self):
         """Test planner with multiple hints for different operations."""
         hints = [
-            ConvertToCategoricalHint(
+            InferCategoricalHint(
                 target_columns=["col1"],
                 threshold=10,
                 unique_counts={"col1": 5}
@@ -141,8 +141,8 @@ class TestDataCleaningPlanner:
         
         # Check operations are in priority order
         operation_names = [op[0].name for op in plan.operations]
-        assert operation_names[0] == "convert_to_categorical"  # priority 90
-        assert operation_names[1] == "encode_missing_as_category"  # priority 85
+        assert operation_names[0] == "encode_missing_as_category"  # priority 85
+        assert operation_names[1] == "convert_to_categorical"  # priority 80
         assert operation_names[2] == "drop_missing_rows"  # priority 20
     
     def test_priority_ordering(self):
@@ -179,7 +179,7 @@ class TestDataCleaningPlanner:
     def test_unmatched_hints_ignored(self):
         """Test that hints without matching operations are ignored."""
         hints = [
-            ConvertToCategoricalHint(target_columns=["col1"], threshold=10),
+            InferCategoricalHint(target_columns=["col1"], threshold=10, unique_counts={}),
             MockHint(hint_type="unknown_operation", test_priority=50),  # No matching operation
             DropMissingRowsHint(target_columns=["col3"]),
         ]
@@ -210,7 +210,7 @@ class TestDataCleaningPlanner:
             check_name="check1",
             passed=True,
             cleaning_hints=[
-                ConvertToCategoricalHint(target_columns=["col1"], threshold=10)
+                InferCategoricalHint(target_columns=["col1"], threshold=10, unique_counts={})
             ]
         )
         
@@ -257,7 +257,7 @@ class TestDataCleaningPlanner:
                     check_name="test",
                     passed=True,
                     cleaning_hints=[
-                        ConvertToCategoricalHint(target_columns=["col1"], threshold=10)
+                        InferCategoricalHint(target_columns=["col1"], threshold=10, unique_counts={})
                     ]
                 )
             ]
@@ -274,9 +274,8 @@ class TestDataCleaningPlanner:
     def test_plan_description(self):
         """Test that plan description is informative."""
         hints = [
-            ConvertToCategoricalHint(
-                target_columns=["status", "category"],
-                threshold=10
+            UpdateColumnTypesHint(
+                type_mapping={"status": "category", "category": "category"}
             ),
             DropMissingRowsHint(
                 target_columns=["value"],
@@ -348,7 +347,7 @@ class TestDataCleaningPlanner:
                 message="Critical error"
             )],
             cleaning_hints=[
-                ConvertToCategoricalHint(target_columns=["col1"], threshold=10)
+                InferCategoricalHint(target_columns=["col1"], threshold=10, unique_counts={})
             ]
         )
         

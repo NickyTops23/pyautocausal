@@ -23,15 +23,25 @@ class CleaningHint(ABC):
 
 
 @dataclass
-class ConvertToCategoricalHint(CleaningHint):
-    """Hint to convert columns to categorical dtype."""
+class UpdateColumnTypesHint(CleaningHint):
+    """Hint to convert column dtypes for specified columns."""
+    type_mapping: Dict[str, Any]
+
+    @property
+    def priority(self) -> int:
+        return 95  # Highest priority to enforce schema
+
+
+@dataclass
+class InferCategoricalHint(CleaningHint):
+    """Hint to convert columns to categorical dtype based on inference."""
     target_columns: List[str]
     threshold: int
     unique_counts: Dict[str, int] = field(default_factory=dict)
-    
+
     @property
     def priority(self) -> int:
-        return 90  # High priority - do this before other operations
+        return 80  # Lower priority than explicit conversion
 
 
 @dataclass
@@ -86,7 +96,7 @@ def create_legacy_hint(operation_type: str, **kwargs) -> Optional[CleaningHint]:
     This function helps during migration from string-based hints to type-safe hints.
     """
     mapping = {
-        "convert_to_categorical": ConvertToCategoricalHint,
+        "update_column_types": UpdateColumnTypesHint,
         "encode_missing_as_category": EncodeMissingAsCategoryHint,
         "drop_missing_rows": DropMissingRowsHint,
         "fill_missing_with_value": FillMissingWithValueHint,
@@ -98,11 +108,9 @@ def create_legacy_hint(operation_type: str, **kwargs) -> Optional[CleaningHint]:
         return None
     
     # Extract relevant kwargs for each hint type
-    if operation_type == "convert_to_categorical":
+    if operation_type == "update_column_types":
         return hint_class(
-            target_columns=kwargs.get("target_columns", []),
-            threshold=kwargs.get("threshold", 10),
-            unique_counts=kwargs.get("unique_counts", {})
+            type_mapping=kwargs.get("type_mapping", {})
         )
     elif operation_type == "encode_missing_as_category":
         return hint_class(

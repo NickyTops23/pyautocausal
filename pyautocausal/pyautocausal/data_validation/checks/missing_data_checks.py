@@ -12,6 +12,7 @@ from ..base import (
     ValidationIssue,
     ValidationSeverity
 )
+from pyautocausal.data_cleaning.hints import DropMissingRowsHint
 
 
 @dataclass
@@ -38,6 +39,14 @@ class MissingDataCheck(DataValidationCheck[MissingDataConfig]):
         missing_stats = {}
         
         # Determine which columns to check
+        # validate that check_columns and ignore_columns are valid
+        if self.config.check_columns is not None and not all(col in df.columns for col in self.config.check_columns):
+            raise ValueError("check_columns contains columns not present in the DataFrame")
+        if self.config.ignore_columns is not None and not all(col in df.columns for col in self.config.ignore_columns):
+            raise ValueError("ignore_columns contains columns not present in the DataFrame")
+        if self.config.check_columns is not None and self.config.ignore_columns is not None:
+            raise ValueError("Cannot specify both check_columns and ignore_columns")
+
         columns_to_check = list(df.columns)
         if self.config.check_columns is not None:
             columns_to_check = [col for col in self.config.check_columns if col in df.columns]
@@ -53,28 +62,37 @@ class MissingDataCheck(DataValidationCheck[MissingDataConfig]):
                 "missing_fraction": float(missing_fraction)
             }
             
-            if missing_fraction > self.config.max_missing_fraction:
-                issues.append(ValidationIssue(
-                    severity=self.config.severity_on_fail,
-                    message=f"Column '{col}' has {missing_fraction:.1%} missing values, exceeding threshold of {self.config.max_missing_fraction:.1%}",
+            cleaning_hints = []
+            if missing_fraction > 0:
+                if missing_fraction > self.config.max_missing_fraction:
+                    issues.append(ValidationIssue(
+                        severity=self.config.severity_on_fail,
+                        message=f"Column '{col}' has {missing_fraction:.1%} missing values, exceeding threshold of {self.config.max_missing_fraction:.1%}",
+                        affected_columns=[col],
+                        details={
+                            "missing_count": int(missing_count),
+                            "missing_fraction": float(missing_fraction),
+                            "threshold": self.config.max_missing_fraction
+                        }
+                    ))
+                else:
+                    issues.append(ValidationIssue(
+                    severity=ValidationSeverity.INFO,
+                    message=f"Column '{col}' has {missing_count} missing values ({missing_fraction:.1%})",
                     affected_columns=[col],
                     details={
                         "missing_count": int(missing_count),
-                        "missing_fraction": float(missing_fraction),
-                        "threshold": self.config.max_missing_fraction
+                        "missing_fraction": float(missing_fraction)
                     }
                 ))
-        
-        # Add info about columns with any missing data
-        for col, stats in missing_stats.items():
-            if stats["missing_count"] > 0 and stats["missing_fraction"] <= self.config.max_missing_fraction:
-                issues.append(ValidationIssue(
-                    severity=ValidationSeverity.INFO,
-                    message=f"Column '{col}' has {stats['missing_count']} missing values ({stats['missing_fraction']:.1%})",
-                    affected_columns=[col],
-                    details=stats
-                ))
-        
+        cleaning_hints.append(
+            DropMissingRowsHint(
+                target_columns=list(missing_stats.keys()),
+                how="any"
+            )
+        )
+                
+        # Determine if the check passed
         passed = not any(issue.severity == self.config.severity_on_fail for issue in issues)
         metadata = {
             "missing_stats": missing_stats,
@@ -82,7 +100,7 @@ class MissingDataCheck(DataValidationCheck[MissingDataConfig]):
             "columns_checked": len(columns_to_check)
         }
         
-        return self._create_result(passed, issues, metadata)
+        return self._create_result(passed, issues, metadata, cleaning_hints=cleaning_hints)
 
 
 @dataclass

@@ -11,9 +11,11 @@ from .base import (
 )
 from .planner import DataCleaningPlanner
 from .cleaner import DataCleaner
+from .autocleaner import AutoCleaner
 from .hints import (
     CleaningHint,
-    ConvertToCategoricalHint,
+    UpdateColumnTypesHint,
+    InferCategoricalHint,
     EncodeMissingAsCategoryHint,
     DropMissingRowsHint,
     FillMissingWithValueHint,
@@ -32,7 +34,8 @@ __all__ = [
     'DataCleaner',
     # Hint classes
     'CleaningHint',
-    'ConvertToCategoricalHint',
+    'UpdateColumnTypesHint',
+    'InferCategoricalHint',
     'EncodeMissingAsCategoryHint',
     'DropMissingRowsHint',
     'FillMissingWithValueHint',

@@ -29,7 +29,7 @@ class DropMissingRowsOperation(CleaningOperation):
         
         if hint.target_columns:
             # Drop rows with missing values in specific columns
-            df_cleaned = df.dropna(subset=hint.target_columns)
+            df_cleaned = df.dropna(subset=hint.target_columns, how=hint.how)
         else:
             # Drop all rows with any missing values
             df_cleaned = df.dropna()

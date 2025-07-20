@@ -5,16 +5,16 @@ This module defines the core abstractions for the data validation system.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Any, Dict, List, Optional, Type, TypeVar, Generic
 import pandas as pd
 
 
-class ValidationSeverity(Enum):
+class ValidationSeverity(IntEnum):
     """Severity levels for validation issues."""
-    ERROR = "error"      # Critical issues that prevent analysis
-    WARNING = "warning"  # Issues that might affect results but don't prevent analysis
-    INFO = "info"        # Suggestions for data quality improvements
+    INFO = 1
+    WARNING = 2
+    ERROR = 3
 
 
 @dataclass

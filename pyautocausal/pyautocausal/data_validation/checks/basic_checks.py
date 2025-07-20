@@ -1,9 +1,10 @@
 """Basic data validation checks for pandas DataFrames."""
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Callable
 import pandas as pd
 import numpy as np
+import datetime
 
 from ..base import (
     DataValidationCheck,
@@ -12,6 +13,7 @@ from ..base import (
     ValidationIssue,
     ValidationSeverity
 )
+from pyautocausal.data_cleaning.hints import UpdateColumnTypesHint
 
 
 @dataclass
@@ -122,12 +124,13 @@ class RequiredColumnsCheck(DataValidationCheck[RequiredColumnsConfig]):
 class ColumnTypesConfig(DataValidationConfig):
     """Configuration for ColumnTypesCheck."""
     expected_types: Dict[str, type] = None  # Column name -> expected type
-    categorical_threshold: int = 10  # Max unique values to consider as categorical
-    infer_categorical: bool = True  # Whether to infer categorical columns
+    type_checkers: Optional[Dict[type, Callable[[pd.Series], bool]]] = None  # supplementary map of type to checker
     
     def __post_init__(self):
         if self.expected_types is None:
             self.expected_types = {}
+        if self.type_checkers is None:
+            self.type_checkers = {}
 
 
 class ColumnTypesCheck(DataValidationCheck[ColumnTypesConfig]):
@@ -144,7 +147,20 @@ class ColumnTypesCheck(DataValidationCheck[ColumnTypesConfig]):
     def validate(self, df: pd.DataFrame) -> DataValidationResult:
         issues = []
         actual_types = {}
-        inferred_categorical = []
+        cleaning_hints = []
+        columns_to_convert = {}
+
+        from pandas.api import types as ptypes
+        default_type_checkers: Dict[type, Callable[[pd.Series], bool]] = {
+            str: ptypes.is_string_dtype,
+            "object": ptypes.is_object_dtype,
+            int: ptypes.is_integer_dtype,
+            float: ptypes.is_float_dtype,
+            bool: ptypes.is_bool_dtype,
+            datetime.datetime: ptypes.is_datetime64_any_dtype,
+            pd.CategoricalDtype: ptypes.is_categorical_dtype,
+        }
+        type_checkers = {**default_type_checkers, **self.config.type_checkers}
         
         # Check specified column types
         for col, expected_type in self.config.expected_types.items():
@@ -159,58 +175,45 @@ class ColumnTypesCheck(DataValidationCheck[ColumnTypesConfig]):
             actual_dtype = df[col].dtype
             actual_types[col] = str(actual_dtype)
             
-            # Type checking logic
-            type_matches = False
-            if expected_type == str:
-                type_matches = pd.api.types.is_string_dtype(df[col])
-            elif expected_type == int:
-                type_matches = pd.api.types.is_integer_dtype(df[col])
-            elif expected_type == float:
-                type_matches = pd.api.types.is_float_dtype(df[col])
-            elif expected_type == bool:
-                type_matches = pd.api.types.is_bool_dtype(df[col])
-            elif expected_type == 'datetime':
-                type_matches = pd.api.types.is_datetime64_any_dtype(df[col])
-            elif expected_type == 'categorical':
-                type_matches = pd.api.types.is_categorical_dtype(df[col]) or \
-                              (self.config.infer_categorical and df[col].nunique() <= self.config.categorical_threshold)
-            
+            checker = type_checkers.get(expected_type)
+            if checker is None:
+                # Fallback to simple type checking if no checker is registered
+                if not issubclass(actual_dtype.type, np.dtype(expected_type).type):
+                    type_matches = False
+                else:
+                    type_matches = True
+            else:
+                type_matches = checker(df[col])
+ 
             if not type_matches:
-                issues.append(ValidationIssue(
-                    severity=self.config.severity_on_fail,
-                    message=f"Column '{col}' has type {actual_dtype}, expected {expected_type}",
-                    affected_columns=[col],
-                    details={"actual_type": str(actual_dtype), "expected_type": str(expected_type)}
-                ))
+                # If types don't match, try a safe conversion
+                try:
+                    df[col].astype(expected_type)
+                    # If conversion is possible, create an INFO issue and a hint
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.INFO,
+                        message=f"Column '{col}' has type {actual_dtype} but is convertible to {expected_type}",
+                        affected_columns=[col],
+                        details={"actual_type": str(actual_dtype), "expected_type": str(expected_type)}
+                    ))
+                    columns_to_convert[col] = expected_type
+
+                except (ValueError, TypeError, pd.errors.IntCastingNaNError):
+                    # If conversion fails, it's a more severe issue
+                    issues.append(ValidationIssue(
+                        severity=self.config.severity_on_fail,
+                        message=f"Column '{col}' has type {actual_dtype}, expected {expected_type}, and cannot be converted.",
+                        affected_columns=[col],
+                        details={"actual_type": str(actual_dtype), "expected_type": str(expected_type)}
+                    ))
         
-        # Infer categorical columns if enabled
-        if self.config.infer_categorical:
-            for col in df.columns:
-                if col not in self.config.expected_types:
-                    if df[col].nunique() <= self.config.categorical_threshold:
-                        inferred_categorical.append(col)
-                        issues.append(ValidationIssue(
-                            severity=ValidationSeverity.INFO,
-                            message=f"Column '{col}' appears to be categorical ({df[col].nunique()} unique values)",
-                            affected_columns=[col],
-                            details={"unique_values": df[col].nunique()}
-                        ))
-        
-        passed = not any(issue.severity == self.config.severity_on_fail for issue in issues)
+        if columns_to_convert:
+            cleaning_hints.append(UpdateColumnTypesHint(type_mapping=columns_to_convert))
+
+        passed = not any(issue.severity >= self.config.severity_on_fail for issue in issues)
         metadata = {
             "actual_types": actual_types,
-            "inferred_categorical": inferred_categorical
         }
-        
-        # Generate cleaning hints
-        cleaning_hints = []
-        if inferred_categorical:
-            from pyautocausal.data_cleaning.hints import ConvertToCategoricalHint
-            cleaning_hints.append(ConvertToCategoricalHint(
-                target_columns=inferred_categorical,
-                threshold=self.config.categorical_threshold,
-                unique_counts={col: df[col].nunique() for col in inferred_categorical}
-            ))
         
         return self._create_result(passed, issues, metadata, cleaning_hints)
 
@@ -261,4 +264,93 @@ class NoDuplicateColumnsCheck(DataValidationCheck[NoDuplicateColumnsConfig]):
             "duplicates": list(duplicates)
         }
         
-        return self._create_result(passed, issues, metadata) 
+        return self._create_result(passed, issues, metadata)
+
+
+@dataclass
+class DuplicateRowsConfig(DataValidationConfig):
+    """Configuration for DuplicateRowsCheck."""
+    subset: Optional[List[str]] = None  # Columns to check for duplicates (None = all columns)
+    keep: str = "first"  # Which duplicate to keep ("first", "last", False)
+    max_duplicate_fraction: float = 0.05  # Maximum allowed fraction of duplicate rows
+
+
+class DuplicateRowsCheck(DataValidationCheck[DuplicateRowsConfig]):
+    """Check for duplicate rows in the DataFrame."""
+    
+    @property
+    def name(self) -> str:
+        return "duplicate_rows"
+    
+    @classmethod
+    def get_default_config(cls) -> DuplicateRowsConfig:
+        return DuplicateRowsConfig()
+    
+    def validate(self, df: pd.DataFrame) -> DataValidationResult:
+        from pyautocausal.data_cleaning.hints import DropDuplicateRowsHint
+        
+        issues = []
+        cleaning_hints = []
+        
+        # Check for duplicates
+        if self.config.subset is not None:
+            # Validate that subset columns exist
+            missing_cols = set(self.config.subset) - set(df.columns)
+            if missing_cols:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    message=f"Duplicate check subset columns not found: {', '.join(missing_cols)}",
+                    details={"missing_columns": list(missing_cols)}
+                ))
+                return self._create_result(False, issues)
+            
+            duplicates = df.duplicated(subset=self.config.subset)
+        else:
+            duplicates = df.duplicated()
+        
+        duplicate_count = duplicates.sum()
+        duplicate_fraction = duplicate_count / len(df) if len(df) > 0 else 0
+        
+        # Create metadata
+        metadata = {
+            "total_rows": len(df),
+            "duplicate_rows": int(duplicate_count),
+            "duplicate_fraction": float(duplicate_fraction),
+            "subset_columns": self.config.subset or "all",
+            "keep_strategy": self.config.keep
+        }
+        
+        # Check if duplicates exceed threshold
+        if duplicate_count > 0:
+            if duplicate_fraction > self.config.max_duplicate_fraction:
+                issues.append(ValidationIssue(
+                    severity=self.config.severity_on_fail,
+                    message=f"Found {duplicate_count} duplicate rows ({duplicate_fraction:.1%}), exceeding threshold of {self.config.max_duplicate_fraction:.1%}",
+                    details={
+                        "duplicate_count": int(duplicate_count),
+                        "duplicate_fraction": float(duplicate_fraction),
+                        "threshold": self.config.max_duplicate_fraction,
+                        "sample_duplicate_indices": duplicates[duplicates].index[:5].tolist()
+                    }
+                ))
+            else:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.INFO,
+                    message=f"Found {duplicate_count} duplicate rows ({duplicate_fraction:.1%})",
+                    details={
+                        "duplicate_count": int(duplicate_count),
+                        "duplicate_fraction": float(duplicate_fraction)
+                    }
+                ))
+            
+            # Always generate cleaning hint when duplicates are found
+            cleaning_hints.append(
+                DropDuplicateRowsHint(
+                    subset=self.config.subset,
+                    keep=self.config.keep
+                )
+            )
+        
+        passed = not any(issue.severity == self.config.severity_on_fail for issue in issues)
+        
+        return self._create_result(passed, issues, metadata, cleaning_hints)

@@ -119,8 +119,8 @@ class TestColumnTypesCheck:
         assert result.passed
         assert len([i for i in result.issues if i.severity == ValidationSeverity.ERROR]) == 0
     
-    def test_incorrect_types(self):
-        """Test detection of incorrect types."""
+    def test_incorrect_types_are_convertible(self):
+        """Test detection of incorrect but convertible types."""
         df = pd.DataFrame({
             "should_be_int": [1.0, 2.0, 3.0],  # float instead of int
             "should_be_str": [1, 2, 3]  # int instead of str
@@ -133,22 +133,14 @@ class TestColumnTypesCheck:
         check = ColumnTypesCheck(config)
         result = check.validate(df)
         
-        assert not result.passed
-        errors = [i for i in result.issues if i.severity == ValidationSeverity.ERROR]
-        assert len(errors) == 2
-    
-    def test_categorical_inference(self):
-        """Test automatic categorical column detection."""
-        df = pd.DataFrame({
-            "cat_col": ["A", "B", "A", "B", "C"] * 20,
-            "num_col": list(range(100))
-        })
-        check = ColumnTypesCheck(config=ColumnTypesConfig(infer_categorical=True, categorical_threshold=10))
-        result = check.validate(df)
-
+        # The check should pass because the types are convertible
         assert result.passed
-        info_issues = result.get_issues_by_severity(ValidationSeverity.INFO)
-        assert any("appears to be categorical" in issue.message for issue in info_issues)
+        # It should generate INFO issues and cleaning hints
+        assert len(result.issues) == 2
+        assert all(i.severity == ValidationSeverity.INFO for i in result.issues)
+        assert len(result.cleaning_hints) == 1
+        assert "should_be_int" in result.cleaning_hints[0].type_mapping
+        assert "should_be_str" in result.cleaning_hints[0].type_mapping
 
 
 class TestNoDuplicateColumnsCheck:

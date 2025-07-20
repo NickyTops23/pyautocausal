@@ -6,15 +6,22 @@ from pyautocausal.data_cleaning.cleaner import DataCleaner
 from pyautocausal.data_cleaning.operations.categorical_operations import ConvertToCategoricalOperation, EncodeMissingAsCategoryOperation
 from pyautocausal.data_cleaning.operations.missing_data_operations import DropMissingRowsOperation, FillMissingWithValueOperation
 from pyautocausal.data_cleaning.operations.duplicate_operations import DropDuplicateRowsOperation
+from pyautocausal.data_cleaning.operations.schema_operations import UpdateColumnTypesOperation
 from pyautocausal.data_cleaning.planner import DataCleaningPlanner
 from pyautocausal.data_validation.checks.basic_checks import (
     ColumnTypesCheck, RequiredColumnsCheck, RequiredColumnsConfig, ColumnTypesConfig,
     NonEmptyDataCheck, NonEmptyDataConfig
 )
+from pyautocausal.data_validation.checks.categorical_checks import InferCategoricalColumnsCheck, InferCategoricalColumnsConfig
 from pyautocausal.data_validation.checks.missing_data_checks import MissingDataCheck, MissingDataConfig
 from pyautocausal.data_validation.checks.causal_checks import BinaryTreatmentCheck, BinaryTreatmentConfig
-from pyautocausal.data_validation.validator_node import DataValidator, DataValidatorConfig
+from pyautocausal.data_validation.validator_node import DataValidator, DataValidatorConfig, AggregatedValidationResult
 from pyautocausal.orchestration.graph import ExecutableGraph
+from pyautocausal.data_cleaning.base import CleaningPlan, CleaningMetadata
+from pyautocausal.data_cleaning.hints import DropDuplicateRowsHint, DropMissingRowsHint
+
+
+
 
 
 def test_validation_to_cleaning_integration(lalonde_data, output_dir):
@@ -37,34 +44,45 @@ def test_validation_to_cleaning_integration(lalonde_data, output_dir):
     # 1. Setup validation
     validation_checks = [
         RequiredColumnsCheck(config=RequiredColumnsConfig(required_columns=["treat", "age", "educ", "race", "married", "nodegree", "re74", "re75", "re78"])),
-        ColumnTypesCheck(config=ColumnTypesConfig(expected_types={"race": "category", "treat": "int64", "nodegree": "int64", "married": "int64"})),
+        ColumnTypesCheck(config=ColumnTypesConfig(expected_types={"treat": int, "nodegree": int, "married": int})),
         MissingDataCheck(config=MissingDataConfig(check_columns=["re74", "re75"])),
+        InferCategoricalColumnsCheck(config=InferCategoricalColumnsConfig(ignore_columns=["treat", "married", "nodegree"]))
     ]
     validator = DataValidator(checks=validation_checks)
 
+
+    # function to create a cleaning plan based on validation results
+    def create_cleaning_plan(validator: AggregatedValidationResult) -> CleaningPlan:
+    # Basic cleaning - applies to both cross-sectional and panel data
     # 2. Setup cleaning
-    cleaning_operations = [
-        ConvertToCategoricalOperation(),
-        DropMissingRowsOperation(),
-    ]
-    
-    cleaner = DataCleaner(plan=None)
+        cleaning_operations = [
+            UpdateColumnTypesOperation(),
+            ConvertToCategoricalOperation(),
+            DropMissingRowsOperation(),
+        ]
+
+        return DataCleaningPlanner(validator, operations=cleaning_operations).create_plan()
+
+
+    def execute_cleaning_plan(df: pd.DataFrame, plan: CleaningPlan) -> pd.DataFrame:
+        """Execute basic cleaning operations."""
+        return plan(df)
 
     # 3. Create and run graph
     graph = (
         ExecutableGraph()
         .configure_runtime(output_path=output_dir)
-        .create_input_node("data", input_dtype=pd.DataFrame)
-        .create_node("validator", validator.validate, predecessors=["data"])
-        .create_node("planner", lambda x: DataCleaningPlanner(x, operations=cleaning_operations).create_plan(), predecessors=["validator"])
-        .create_node("cleaner", cleaner, predecessors=["data", "planner"])
+        .create_input_node("df", input_dtype=pd.DataFrame)
+        .create_node("validator", validator.validate, predecessors=["df"])
+        .create_node("plan", create_cleaning_plan, predecessors=["validator"])
+        .create_node("cleaner", execute_cleaning_plan, predecessors=["df", "plan"])
     )
 
 
-    result = graph.fit(data=test_data)
+    result = graph.fit(df=test_data)
     
-    cleaned_df = result.get("cleaner").output[0]
-    metadata = result.get("cleaner").output[1]
+    cleaned_df = result.get("cleaner").output.get_only_item()
+    plan_metadata = result.get("plan").output.get_only_item().get_metadata()
 
     # 4. Assertions
     # Check that missing rows were dropped
@@ -76,12 +94,12 @@ def test_validation_to_cleaning_integration(lalonde_data, output_dir):
     assert pd.api.types.is_categorical_dtype(cleaned_df["race"])
 
     # Check metadata
-    assert len(metadata.transformations) > 0
-    op_names = [op.operation_name for op in metadata.transformations]
+    assert len(plan_metadata.transformations) > 0
+    op_names = [op.operation_name for op in plan_metadata.transformations]
     assert "convert_to_categorical" in op_names
     assert "drop_missing_rows" in op_names
-    assert metadata.total_rows_dropped > 0
-    assert "race" in metadata.transformations[0].columns_modified or "race" in metadata.transformations[1].columns_modified
+    assert plan_metadata.total_rows_dropped > 0
+    assert any("race" in t.columns_modified for t in plan_metadata.transformations)
 
 
 def test_comprehensive_validation_cleaning_direct():
@@ -138,6 +156,8 @@ def test_comprehensive_validation_cleaning_direct():
     # 4. Make sure categorical columns are stored as object dtype (not category)
     test_data['region'] = test_data['region'].astype('object')
     test_data['education_level'] = test_data['education_level'].astype('object')
+    test_data['employment_status'] = test_data['employment_status'].astype('object')
+    test_data['marital_status'] = test_data['marital_status'].astype('object')
     
     print(f"Original dataset: {test_data.shape}")
     print(f"Missing values: {test_data.isnull().sum().sum()}")
@@ -159,14 +179,14 @@ def test_comprehensive_validation_cleaning_direct():
                 expected_types={
                     "treatment": "int64",
                     "outcome": "float64", 
-                    "region": "category",
-                    "education_level": "category",
                     "age": "int64",
                     "income": "float64",
                     "id": "int64"
                 },
-                categorical_threshold=10,  # Columns with <= 10 unique values should be categorical
-                infer_categorical=True
+            ),
+            "infer_categorical_columns": InferCategoricalColumnsConfig(
+                categorical_threshold=10,
+                ignore_columns=['treatment']
             ),
             "missing_data": MissingDataConfig(
                 max_missing_fraction=0.1,  # Allow up to 10% missing per column
@@ -189,7 +209,8 @@ def test_comprehensive_validation_cleaning_direct():
         ColumnTypesCheck(),
         MissingDataCheck(),
         BinaryTreatmentCheck(),
-        NonEmptyDataCheck()
+        NonEmptyDataCheck(),
+        InferCategoricalColumnsCheck()
     ]
     
     validator = DataValidator(checks=validation_checks, config=validation_config)
@@ -213,6 +234,7 @@ def test_comprehensive_validation_cleaning_direct():
     
     # Setup all available cleaning operations
     cleaning_operations = [
+        UpdateColumnTypesOperation(),
         ConvertToCategoricalOperation(),
         EncodeMissingAsCategoryOperation(),
         DropMissingRowsOperation(),
@@ -228,25 +250,8 @@ def test_comprehensive_validation_cleaning_direct():
     planner = DataCleaningPlanner(validation_result, operations=cleaning_operations)
     cleaning_plan = planner.create_plan()
     
-    # Since validation checks don't generate all necessary hints yet, 
-    # let's manually add some cleaning hints based on the issues we know exist
-    from pyautocausal.data_cleaning.hints import (
-        DropMissingRowsHint, 
-        DropDuplicateRowsHint, 
-        FillMissingWithValueHint,
-        ConvertToCategoricalHint
-    )
-    
-    # Add hint to convert region and education_level to categorical
-    # (these are expected to be categorical but weren't automatically inferred)
-    cleaning_plan.add_operation(
-        ConvertToCategoricalOperation(),
-        ConvertToCategoricalHint(
-            target_columns=["region", "education_level"],
-            threshold=10,
-            unique_counts={"region": test_data['region'].nunique(), "education_level": test_data['education_level'].nunique()}
-        )
-    )
+    # Since validation checks generate all necessary hints now, 
+    # we can remove the manual hint creation.
     
     # Add hint to drop duplicates
     cleaning_plan.add_operation(
@@ -281,7 +286,8 @@ def test_comprehensive_validation_cleaning_direct():
     print("="*50)
     
     # Execute the cleaning plan
-    cleaned_data, cleaning_metadata = cleaning_plan(test_data)
+    cleaned_data = cleaning_plan(test_data)
+    cleaning_metadata = cleaning_plan.get_metadata()
     
     print(f"Cleaned dataset: {cleaned_data.shape}")
     print(f"Operations executed: {cleaning_metadata.total_operations}")
@@ -327,6 +333,8 @@ def test_comprehensive_validation_cleaning_direct():
     # Categorical conversion assertions
     assert pd.api.types.is_categorical_dtype(cleaned_data['region']), "Region should be categorical"
     assert pd.api.types.is_categorical_dtype(cleaned_data['education_level']), "Education level should be categorical"
+    assert pd.api.types.is_categorical_dtype(cleaned_data['employment_status']), "Employment status should be categorical"
+    assert pd.api.types.is_categorical_dtype(cleaned_data['marital_status']), "Marital status should be categorical"
     
     # Duplicate removal assertions
     assert cleaned_data.duplicated().sum() == 0, "Should have no duplicate rows"
@@ -344,7 +352,7 @@ def test_comprehensive_validation_cleaning_direct():
     
     # Check that specific operations were applied
     operation_names = [t.operation_name for t in cleaning_metadata.transformations]
-    assert "convert_to_categorical" in operation_names, "Should have converted categorical columns"
+    assert "convert_to_categorical" in operation_names, "Should have inferred categorical columns"
     assert "drop_duplicate_rows" in operation_names, "Should have dropped duplicate rows"
     
     # Data quality improvements
