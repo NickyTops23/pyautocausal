@@ -26,6 +26,7 @@ optional = true
 cloudpickle = "^3.0.0"
 ipykernel = "^6.29.5"
 linearmodels = "^6.1"
+fsspec = {extras = ["http"], version = "^2025.7.0"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.2"
