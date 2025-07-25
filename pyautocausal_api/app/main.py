@@ -16,6 +16,7 @@ from enum import Enum
 from .worker import run_graph_job
 from .utils.file_io import s3_client
 from fastapi.middleware.cors import CORSMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 import yaml
 from .utils.pipeline_registry import load_deployed_pipelines
 from pyautocausal.orchestration.graph import ExecutableGraph
