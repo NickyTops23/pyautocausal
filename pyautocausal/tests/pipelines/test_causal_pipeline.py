@@ -6,7 +6,8 @@ from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.pipelines.library.estimators import fit_double_lasso, fit_ols
 from pyautocausal.pipelines.library.specifications import create_cross_sectional_specification
 from pyautocausal.pipelines.library.output import write_statsmodels_summary
-from pyautocausal.pipelines.example_graph import causal_pipeline, generate_mock_data, simple_graph
+from pyautocausal.pipelines.example_graph import causal_pipeline, simple_graph
+from pyautocausal.pipelines.mock_data import generate_mock_data
 from pyautocausal.persistence.notebook_export import NotebookExporter
 from pyautocausal.persistence.visualizer import visualize_graph
 import json
@@ -186,9 +187,9 @@ def test_synthetic_did_branch(tmp_path):
     plot_files = list((output_path / "plots").glob("*.png"))
     text_files = list((output_path / "text").glob("*.txt"))
     
-    # Should have synthdid plot and DiD results
+    # Should have synthdid plot but NOT DiD results (single unit triggers only Synthetic DiD)
     assert any("synthdid_plot" in str(f) for f in plot_files), "Synthetic DiD plot not found"
-    assert any("save_ols_did" in str(f) for f in text_files), "DiD results not found"
+    # Single treated unit should NOT have standard DiD results - that's the point of Synthetic DiD
     
     # Verify nodes completed
     completed_nodes = [node.name for node in graph.nodes() 
@@ -339,7 +340,7 @@ def test_all_branches_comprehensive(tmp_path):
         {
             'name': 'synthetic_did',
             'data_params': {'n_units': 50, 'n_periods': 5, 'n_treated': 1},
-            'expected_files': ['save_ols_did.txt'],
+            'expected_files': [],  # Synthetic DiD doesn't produce standard DiD files
             'expected_plots': ['synthdid_plot.png'],
             'expected_nodes': ['synthdid_spec', 'synthdid_fit']
         },

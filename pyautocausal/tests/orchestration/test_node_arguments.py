@@ -1,6 +1,5 @@
 import pytest
 import pandas as pd
-from pyautocausal.orchestration.nodes import Node
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.orchestration.run_context import RunContext
 
@@ -21,20 +20,18 @@ def basic_graph():
     """Graph with just data and process nodes using default parameters"""
     graph = ExecutableGraph()
     graph.configure_runtime()  # Configure with defaults
-    data_node = Node(
-        name="data",
-        action_function=lambda: pd.DataFrame()
-    )
-    graph.add_node_to_graph(data_node)
     
-    process_node = Node(
-        name="process",
-        action_function=process_data
-    )
-    graph.add_node_to_graph(process_node)
+    # Create input node for data
+    graph.create_input_node("data", input_dtype=pd.DataFrame)
     
-    graph.add_edge(data_node, process_node, argument_name="df")
-    return graph, data_node, process_node
+    # Create process node
+    graph.create_node(
+        "process",
+        action_function=process_data,
+        predecessors=["data"]
+    )
+    
+    return graph
 
 @pytest.fixture
 def graph_with_context():
@@ -45,20 +42,18 @@ def graph_with_context():
     
     graph = ExecutableGraph()
     graph.configure_runtime(run_context=context)
-    data_node = Node(
-        name="data",
-        action_function=lambda: pd.DataFrame()
-    )
-    graph.add_node_to_graph(data_node)
     
-    process_node = Node(
-        name="process",
-        action_function=process_data
-    )
-    graph.add_node_to_graph(process_node)
+    # Create input node for data
+    graph.create_input_node("data", input_dtype=pd.DataFrame)
     
-    graph.add_edge(data_node, process_node, argument_name="df")
-    return graph, data_node, process_node
+    # Create process node
+    graph.create_node(
+        "process",
+        action_function=process_data,
+        predecessors=["data"]
+    )
+    
+    return graph
 
 @pytest.fixture
 def graph_with_verbose_data():
@@ -73,59 +68,70 @@ def graph_with_verbose_data():
     
     graph = ExecutableGraph()
     graph.configure_runtime(run_context=context)
-    data_node = Node(
-        name="data",
-        action_function=data_with_config
-    )
-    graph.add_node_to_graph(data_node)
     
-    process_node = Node(
-        name="process", 
+    # Create input node for data
+    graph.create_input_node("data", input_dtype=pd.DataFrame)
+    
+    # Create process node with custom argument mapping
+    graph.create_node(
+        "process", 
         action_function=process_data,
-        action_condition_kwarg_map={"verbose": "data"}
+        action_condition_kwarg_map={"verbose": "data"},
+        predecessors=["data"]
     )
-    graph.add_node_to_graph(process_node)
     
-    graph.add_edge(data_node, process_node, argument_name="df")
-    return graph, data_node, process_node
+    return graph
 
 def test_default_parameters(basic_graph):
     """Test that default parameter values are used when not overridden"""
-    graph, _, process_node = basic_graph
-    graph.execute_graph()
+    graph = basic_graph
+    result = graph.fit(data=pd.DataFrame())
+    
+    # Find the process node and check its result
+    process_node = None
+    for node in graph.nodes():
+        if node.name == "process":
+            process_node = node
+            break
+    
+    assert process_node is not None
     assert process_node.get_result_value() == "Processed 0 rows with 1 jobs, verbose=False, model_type=basic"
 
 def test_run_context_override(graph_with_context):
     """Test that run context values override default parameters"""
-    graph, _, process_node = graph_with_context
-    graph.execute_graph()
+    graph = graph_with_context
+    result = graph.fit(data=pd.DataFrame())
+    
+    # Find the process node and check its result
+    process_node = None
+    for node in graph.nodes():
+        if node.name == "process":
+            process_node = node
+            break
+    
+    assert process_node is not None
     assert process_node.get_result_value() == "Processed 0 rows with 4 jobs, verbose=False, model_type=advanced"
 
 def test_missing_required_argument():
     """Test that missing required parameters raise appropriate error"""
-    def process_data(required_param: str, df: pd.DataFrame):
+    def process_data(required_param: str, data: pd.DataFrame):
         return f"Processed {required_param}"
     
     graph = ExecutableGraph()
     graph.configure_runtime()  # Configure with defaults
     
-    # Update Node initialization to use named parameters
-    data_node = Node(
-        name="data",
-        action_function=lambda: pd.DataFrame()
-    )
-    graph.add_node_to_graph(data_node)
+    # Create input node for data
+    graph.create_input_node("data", input_dtype=pd.DataFrame)
     
-    process_node = Node(
-        name="process",
-        action_function=process_data
+    # Create process node
+    graph.create_node(
+        "process",
+        action_function=process_data,
+        predecessors=["data"]
     )
-    graph.add_node_to_graph(process_node)
-    
-    graph.add_edge(data_node, process_node, argument_name="df")
     
     with pytest.raises(ValueError) as exc_info:
-        graph.execute_graph()
+        graph.fit(data=pd.DataFrame())
     
     assert "Missing required parameters" in str(exc_info.value)
     assert "required_param" in str(exc_info.value) 
