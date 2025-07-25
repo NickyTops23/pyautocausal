@@ -8,8 +8,15 @@ export default function usePipelines() {
   useEffect(() => {
     async function fetchPipelines() {
       try {
-        const baseUrl = window?.PYAUTOCAUSAL_UI_CONFIG?.apiBaseUrl;
-        if (!baseUrl) throw new Error('apiBaseUrl is not defined in config');
+        // Resolve API base URL with graceful fall-backs
+        let baseUrl = window?.PYAUTOCAUSAL_UI_CONFIG?.apiBaseUrl;
+        if (!baseUrl) baseUrl = import.meta?.env?.VITE_API_BASE_URL;
+        if (!baseUrl) baseUrl = `${window.location.origin.replace(/\/$/, '')}/api`;
+        if (!baseUrl) {
+          throw new Error(
+            'Unable to determine API base URL. Please set it in config.js or as VITE_API_BASE_URL'
+          );
+        }
         const res = await fetch(`${baseUrl}/pipelines`);
         if (!res.ok) throw new Error(`Failed to fetch pipelines: ${res.status}`);
         const data = await res.json();
