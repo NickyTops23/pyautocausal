@@ -17,7 +17,7 @@ from pyautocausal.data_cleaning.hints import (
     EncodeMissingAsCategoryHint,
 )
 from dataclasses import dataclass
-from pyautocausal.data_validation.validator_node import AggregatedValidationResult
+from pyautocausal.data_validation.validator_base import AggregatedValidationResult
 from pyautocausal.data_cleaning.planner import DataCleaningPlanner
 from pyautocausal.data_cleaning.base import CleaningOperation, TransformationRecord
 from pyautocausal.data_cleaning.operations import (

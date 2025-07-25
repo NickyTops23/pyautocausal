@@ -3,7 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 # Import validation components
-from pyautocausal.data_validation.validator_node import DataValidator
+from pyautocausal.data_validation.validator_base import DataValidator
 from pyautocausal.data_validation.checks.basic_checks import RequiredColumnsCheck, RequiredColumnsConfig, ColumnTypesCheck, ColumnTypesConfig, DuplicateRowsCheck, DuplicateRowsConfig
 from pyautocausal.data_validation.checks.missing_data_checks import MissingDataCheck, MissingDataConfig
 from pyautocausal.data_validation.checks.categorical_checks import InferCategoricalColumnsCheck, InferCategoricalColumnsConfig

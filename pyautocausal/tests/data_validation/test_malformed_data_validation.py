@@ -34,7 +34,7 @@ from pyautocausal.data_validation.checks.basic_checks import (
     NonEmptyDataCheck,
     NonEmptyDataConfig
 )
-from pyautocausal.data_validation.validator_node import DataValidator, DataValidatorConfig
+from pyautocausal.data_validation.validator_base import DataValidator, DataValidatorConfig
 
 
 class TestMissingDataValidation:

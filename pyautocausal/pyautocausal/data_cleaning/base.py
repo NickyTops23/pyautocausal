@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import pandas as pd
 from datetime import datetime
 
-from ..data_validation.validator_node import AggregatedValidationResult
+from ..data_validation.validator_base import AggregatedValidationResult
 from .hints import CleaningHint
 
 

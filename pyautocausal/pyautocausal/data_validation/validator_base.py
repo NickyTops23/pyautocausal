@@ -1,6 +1,8 @@
-"""Data validator node for PyAutoCausal graphs.
+"""DataValidator node for PyAutoCausal.
 
-This module provides a node that can run multiple validation checks on a DataFrame.
+This module defines objects that aggregate and execute multiple data validation checks on a pandas DataFrame,
+returning a combined result. It is intended for use within PyAutoCausal graph pipelines to ensure data quality
+and provide detailed validation feedback.
 """
 
 from dataclasses import dataclass, field

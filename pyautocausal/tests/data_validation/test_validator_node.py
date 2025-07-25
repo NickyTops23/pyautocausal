@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 from pyautocausal.data_cleaning.hints import UpdateColumnTypesHint
 from pyautocausal.data_validation.base import DataValidationResult, DataValidationCheck, ValidationIssue, ValidationSeverity, DataValidationConfig
-from pyautocausal.data_validation.validator_node import DataValidator, AggregatedValidationResult
+from pyautocausal.data_validation.validator_base import DataValidator, AggregatedValidationResult
 
 
 class MockCheck(DataValidationCheck):

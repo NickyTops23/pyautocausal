@@ -15,7 +15,7 @@ from pyautocausal.data_validation.checks.basic_checks import (
 from pyautocausal.data_validation.checks.categorical_checks import InferCategoricalColumnsCheck, InferCategoricalColumnsConfig
 from pyautocausal.data_validation.checks.missing_data_checks import MissingDataCheck, MissingDataConfig
 from pyautocausal.data_validation.checks.causal_checks import BinaryTreatmentCheck, BinaryTreatmentConfig
-from pyautocausal.data_validation.validator_node import DataValidator, DataValidatorConfig, AggregatedValidationResult
+from pyautocausal.data_validation.validator_base import DataValidator, DataValidatorConfig, AggregatedValidationResult
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.data_cleaning.base import CleaningPlan, CleaningMetadata
 from pyautocausal.data_cleaning.hints import DropDuplicateRowsHint, DropMissingRowsHint

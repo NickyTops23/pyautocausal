@@ -1,7 +1,7 @@
 """Data cleaning planner that creates cleaning plans from validation results."""
 
 from typing import List, Optional
-from ..data_validation.validator_node import AggregatedValidationResult
+from ..data_validation.validator_base import AggregatedValidationResult
 from .base import CleaningPlan, CleaningOperation
 from .operations import get_all_operations
 
