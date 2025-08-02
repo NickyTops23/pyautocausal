@@ -17,8 +17,7 @@ from pyautocausal.pipelines.library.conditions import (
     has_single_treated_unit
 )
 from pyautocausal.data_cleaner_interface.autocleaner import AutoCleaner
-
-from pyautocausal.persistence.output_config import OutputConfig, OutputType
+from pyautocausal.persistence.parameter_mapper import make_transformable
 
 
 def create_basic_cleaner(df: pd.DataFrame) -> pd.DataFrame:
@@ -57,82 +56,50 @@ def create_cross_sectional_cleaner(df: pd.DataFrame) -> pd.DataFrame:
     )
     return autocleaner.clean(df)
 
-
 def _create_shared_head(graph: ExecutableGraph):
     """Creates the shared input and basic cleaning nodes for any graph."""
+    # Input node
     graph.create_input_node("df", input_dtype=pd.DataFrame)
     
-    def basic_clean_node(df: pd.DataFrame) -> pd.DataFrame:
-        return create_basic_cleaner(df)
-    
-    graph.create_node('basic_cleaning', action_function=basic_clean_node, predecessors=["df"])
+    # Basic cleaning node (this is a simple wrapper around the basic cleaner)
+    graph.create_node('basic_cleaning', action_function=basic_clean_node.get_function(), predecessors=["df"])
 
 
-def create_panel_decision_structure(graph: ExecutableGraph, abs_text_dir: Path, predecessor: str = "basic_cleaning") -> None:
+def create_panel_decision_structure(graph: ExecutableGraph, predecessor: str = "basic_cleaning") -> None:
     """Create the decision structure for the panel data path."""
     
     # === PANEL DATA PATH (assumes multi-period data) ===
-    def panel_clean_node(data_input: pd.DataFrame) -> pd.DataFrame:
-        return create_panel_cleaner(data_input)
-    
-    graph.create_node('panel_cleaned_data', action_function=panel_clean_node, predecessors=[predecessor])
-    
-    def get_panel_cleaning_metadata(panel_cleaned_data: pd.DataFrame) -> str:
-        return f"Panel Cleaning Summary:\nCleaned data has {len(panel_cleaned_data)} rows\nMetadata available in execution logs"
-    
-    graph.create_node(
-        'panel_cleaning_metadata',
-        action_function=get_panel_cleaning_metadata,
-        output_config=OutputConfig(
-            output_filename=str(abs_text_dir / 'panel_cleaning_metadata'),
-            output_type=OutputType.TEXT
-        ),
-        save_node=True,
-        predecessors=["panel_cleaned_data"]
-    )
+    graph.create_node('panel_cleaned_data', action_function=panel_clean_node.transform({predecessor: 'data_input'}), predecessors=[predecessor])
     
     # === PANEL DATA COMPLEXITY DECISIONS ===
     graph.create_decision_node(
         'single_treated_unit', 
-        condition=has_single_treated_unit.get_function(), 
+        condition=has_single_treated_unit.transform({'panel_cleaned_data': 'df'}), 
         predecessors=["panel_cleaned_data"]
     )
     
     graph.create_decision_node(
         'multi_post_periods', 
-        condition=has_minimum_post_periods.get_function(), 
+        condition=has_minimum_post_periods.transform({'panel_cleaned_data': 'df'}), 
         predecessors=["single_treated_unit"]
     )
     
     graph.create_decision_node(
         'stag_treat', 
-        condition=has_staggered_treatment.get_function(), 
+        condition=has_staggered_treatment.transform({'panel_cleaned_data': 'df'}), 
         predecessors=["multi_post_periods"]
     )
 
 
-def create_cross_sectional_decision_structure(graph: ExecutableGraph, abs_text_dir: Path, predecessor: str = "basic_cleaning") -> None:
+def create_cross_sectional_decision_structure(graph: ExecutableGraph, predecessor: str = "basic_cleaning") -> None:
     """Create the decision structure for the cross-sectional data path."""
 
     # === CROSS-SECTIONAL DATA PATH (assumes non-multi-period data) ===
-    def cross_sectional_clean_node(data_input: pd.DataFrame) -> pd.DataFrame:
-        return create_cross_sectional_cleaner(data_input)
+
     
-    graph.create_node('cross_sectional_cleaned_data', action_function=cross_sectional_clean_node, predecessors=[predecessor])
+    graph.create_node('cross_sectional_cleaned_data', action_function=cross_sectional_clean_node.transform({predecessor: 'data_input'}), predecessors=[predecessor])
     
-    def get_cross_sectional_cleaning_metadata(cross_sectional_cleaned_data: pd.DataFrame) -> str:
-        return f"Cross-Sectional Cleaning Summary:\nCleaned data has {len(cross_sectional_cleaned_data)} rows\nMetadata available in execution logs"
-    
-    graph.create_node(
-        'cross_sectional_cleaning_metadata',
-        action_function=get_cross_sectional_cleaning_metadata,
-        output_config=OutputConfig(
-            output_filename=str(abs_text_dir / 'cross_sectional_cleaning_metadata'),
-            output_type=OutputType.TEXT
-        ),
-        save_node=True,
-        predecessors=["cross_sectional_cleaned_data"]
-    )
+
 
 
 def configure_panel_decision_paths(graph: ExecutableGraph) -> None:
@@ -155,8 +122,15 @@ def configure_panel_decision_paths(graph: ExecutableGraph) -> None:
     graph.when_false("has_never_treated", "cs_not_yet_treated")
 
 
-def configure_cross_sectional_decision_paths(graph: ExecutableGraph) -> None:
-    """Configure the routing logic for the cross-sectional decision structure."""
-    
-    # No routing needed - cross-sectional graph has linear flow from basic_cleaning to analysis
-    pass 
+# Some utils for the graph
+@make_transformable
+def basic_clean_node(df: pd.DataFrame) -> pd.DataFrame:
+    return create_basic_cleaner(df)
+
+@make_transformable
+def panel_clean_node(data_input: pd.DataFrame) -> pd.DataFrame:
+    return create_panel_cleaner(data_input)
+
+@make_transformable
+def cross_sectional_clean_node(data_input: pd.DataFrame) -> pd.DataFrame:
+    return create_cross_sectional_cleaner(data_input)
