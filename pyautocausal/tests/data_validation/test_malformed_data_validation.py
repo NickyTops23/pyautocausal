@@ -287,6 +287,7 @@ class TestPanelDataEdgeCases:
         df = pd.DataFrame({
             "unit": [1, 1, 1, 2, 2, 3, 3, 3, 3],  # Unit 2 missing period 3
             "time": [1, 2, 3, 1, 2, 1, 2, 3, 4],  # Unit 3 has extra period 4
+            "treatment": [0, 1, 1, 0, 0, 0, 1, 1, 1],  # Add treatment column
             "outcome": range(9)
         })
         
@@ -302,6 +303,7 @@ class TestPanelDataEdgeCases:
         df = pd.DataFrame({
             "unit": [1, 1, 1, 1, 2, 2],  # Unit 1 appears twice in time 2
             "time": [1, 2, 2, 3, 1, 2],
+            "treatment": [0, 1, 1, 1, 0, 0],  # Add treatment column
             "outcome": range(6)
         })
         
