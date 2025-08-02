@@ -88,7 +88,7 @@ def extract_treatment_from_design(X: pd.DataFrame, treatment_col: str) -> Tuple[
 
 
 @make_transformable
-def fit_ols(spec: BaseSpec, weights: Optional[np.ndarray] = None) -> Results:
+def fit_ols(spec: BaseSpec, weights: Optional[np.ndarray] = None) -> BaseSpec:
     """
     Estimate treatment effect using OLS regression.
     
@@ -130,7 +130,7 @@ def format_regression_results(model_result: Results) -> str:
 
 
 @make_transformable
-def fit_weighted_ols(spec: BaseSpec) -> Results:
+def fit_weighted_ols(spec: BaseSpec) -> BaseSpec:
     """
     Estimate treatment effect using Weighted OLS regression.
     
@@ -347,7 +347,7 @@ def fit_panel_ols(spec: BaseSpec) -> BaseSpec:
 
 
 @make_transformable
-def fit_did_panel(spec: BaseSpec) -> BaseSpec:
+def fit_did_panel(spec: DiDSpec) -> DiDSpec:
     """
     Fit Difference-in-Differences using Panel OLS with entity and time fixed effects.
     
@@ -360,7 +360,7 @@ def fit_did_panel(spec: BaseSpec) -> BaseSpec:
     data = spec.data
     
     # Extract entity and time variables from the specification
-    entity_var = getattr(spec, 'entity_col', 'id_unit')
+    entity_var = getattr(spec, 'unit_col', 'id_unit')
     time_var = getattr(spec, 'time_col', 'period')
     
     # Create MultiIndex if not already present

@@ -162,7 +162,6 @@ class MyCustomCheck(DataValidationCheck[MyCustomConfig]):
 
 The `DataValidatorConfig` class controls how validation results are aggregated:
 
-- `fail_on_error`: Whether to fail if any ERROR-level issues are found (default: True)
 - `fail_on_warning`: Whether to fail if any WARNING-level issues are found (default: False)
 - `aggregation_strategy`: How to combine check results
   - `"all"`: All checks must pass (default)

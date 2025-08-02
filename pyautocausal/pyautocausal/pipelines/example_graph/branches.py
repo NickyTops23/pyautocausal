@@ -9,36 +9,41 @@ This module contains the specific implementations for each causal analysis branc
 """
 
 from pathlib import Path
+
+import pandas as pd
+
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
 
 from pyautocausal.pipelines.library.estimators import (
-    fit_ols, 
-    fit_callaway_santanna_estimator, 
-    fit_callaway_santanna_nyt_estimator, 
-    fit_synthdid_estimator,
-    fit_panel_ols, 
-    fit_did_panel
+    fit_ols,
+    fit_did_panel,
+    fit_panel_ols,
+    fit_callaway_santanna_estimator,
+    fit_callaway_santanna_nyt_estimator,
+    fit_synthdid_estimator
 )
 from pyautocausal.pipelines.library.output import (
-    write_statsmodels_summary, 
-    write_statsmodels_summary_notebook
+    write_linear_models_to_summary, 
+    write_statsmodels_to_summary
 )
 from pyautocausal.pipelines.library.specifications import (
     create_cross_sectional_specification, 
     create_did_specification, 
     create_event_study_specification, 
     create_staggered_did_specification, 
-    create_synthdid_specification
+    create_synthdid_specification,
+    StaggeredDiDSpec
 )
 from pyautocausal.pipelines.library.plots import event_study_plot, synthdid_plot
 from pyautocausal.pipelines.library.callaway_santanna import (
     format_callaway_santanna_results, 
     event_study_plot_callaway
 )
+from pyautocausal.pipelines.library.conditions import has_sufficient_never_treated_units
 
 
-def create_cross_sectional_branch(graph: ExecutableGraph, abs_text_dir: Path) -> None:
+def create_cross_sectional_branch(graph: ExecutableGraph) -> None:
     """Create nodes for cross-sectional analysis branch.
     
     This branch handles single-period data using OLS regression.
@@ -57,9 +62,9 @@ def create_cross_sectional_branch(graph: ExecutableGraph, abs_text_dir: Path) ->
 
     graph.create_node(
         'ols_stand_output',
-        action_function=write_statsmodels_summary.transform({'ols_stand': 'res'}),
-        output_config=OutputConfig(
-            output_filename=abs_text_dir / 'ols_stand_output', 
+        action_function=write_statsmodels_to_summary.transform({'ols_stand': 'res'}),
+                output_config=OutputConfig(
+            output_filename='ols_stand_output',
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -67,7 +72,7 @@ def create_cross_sectional_branch(graph: ExecutableGraph, abs_text_dir: Path) ->
     )
 
 
-def create_synthetic_did_branch(graph: ExecutableGraph, abs_plots_dir: Path) -> None:
+def create_synthetic_did_branch(graph: ExecutableGraph) -> None:
     """Create nodes for Synthetic DiD analysis branch.
     
     This branch handles panel data with a single treated unit using synthetic controls.
@@ -87,8 +92,8 @@ def create_synthetic_did_branch(graph: ExecutableGraph, abs_plots_dir: Path) -> 
     graph.create_node(
         'synthdid_plot',
         action_function=synthdid_plot.transform({'synthdid_fit': 'spec'}),
-        output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'synthdid_plot', 
+                output_config=OutputConfig(
+            output_filename='synthdid_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -96,7 +101,7 @@ def create_synthetic_did_branch(graph: ExecutableGraph, abs_plots_dir: Path) -> 
     )
 
 
-def create_did_branch(graph: ExecutableGraph, abs_text_dir: Path) -> None:
+def create_did_branch(graph: ExecutableGraph) -> None:
     """Create nodes for standard DiD analysis branch.
     
     This branch handles panel data with insufficient periods for event studies,
@@ -116,28 +121,16 @@ def create_did_branch(graph: ExecutableGraph, abs_text_dir: Path) -> None:
     
     graph.create_node(
         'save_ols_did',
-        action_function=write_statsmodels_summary.transform({'ols_did': 'res'}),
-        output_config=OutputConfig(
-            output_filename=abs_text_dir / 'save_ols_did', 
-            output_type=OutputType.TEXT
-        ),
-        save_node=True,
-        predecessors=["ols_did"]
-    )
-    
-    graph.create_node(
-        'save_did_output',
-        action_function=write_statsmodels_summary.transform({'ols_did': 'res'}),
-        output_config=OutputConfig(
-            output_filename=abs_text_dir / 'save_did_output', 
+        action_function=write_linear_models_to_summary.transform({'ols_did': 'res'}),
+                output_config=OutputConfig(
+            output_filename='save_ols_did',
             output_type=OutputType.TEXT
         ),
         save_node=True,
         predecessors=["ols_did"]
     )
 
-
-def create_event_study_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_plots_dir: Path) -> None:
+def create_event_study_branch(graph: ExecutableGraph) -> None:
     """Create nodes for event study analysis branch.
     
     This branch handles panel data with sufficient periods for dynamic treatment effects,
@@ -158,8 +151,8 @@ def create_event_study_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_pl
     graph.create_node(
         'event_plot', 
         action_function=event_study_plot.transform({'ols_event': 'spec'}),
-        output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'event_study_plot', 
+                output_config=OutputConfig(
+            output_filename='event_study_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -168,9 +161,9 @@ def create_event_study_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_pl
     
     graph.create_node(
         'save_event_output',
-        action_function=write_statsmodels_summary.transform({'ols_event': 'res'}),
-        output_config=OutputConfig(
-            output_filename=abs_text_dir / 'save_event_output', 
+        action_function=write_linear_models_to_summary.transform({'ols_event': 'res'}),
+                output_config=OutputConfig(
+            output_filename='save_event_output',
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -178,7 +171,7 @@ def create_event_study_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_pl
     )
 
 
-def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_plots_dir: Path) -> None:
+def create_staggered_did_branch(graph: ExecutableGraph) -> None:
     """Create nodes for staggered DiD analysis branch.
     
     This branch handles panel data with staggered treatment timing, using both
@@ -196,14 +189,17 @@ def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_
         action_function=fit_panel_ols.transform({'stag_spec': 'spec'}),
         predecessors=["stag_spec"]
     )
+
+
+    def has_never_treated_node(stag_spec: StaggeredDiDSpec) -> bool:
+        return has_sufficient_never_treated_units(stag_spec.data)
     
     # === CALLAWAY & SANT'ANNA METHOD SELECTION ===
     
     # Decision node for Callaway & Sant'Anna method selection
-    from pyautocausal.pipelines.library.conditions import has_sufficient_never_treated_units
     graph.create_decision_node(
         'has_never_treated', 
-        condition=lambda stag_spec: has_sufficient_never_treated_units(stag_spec.data), 
+        condition=has_never_treated_node, 
         predecessors=["stag_spec"]
     )
     
@@ -220,7 +216,7 @@ def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_
         'save_cs_never_treated',
         action_function=format_callaway_santanna_results.transform({'cs_never_treated': 'spec'}),
         output_config=OutputConfig(
-            output_filename=abs_text_dir / 'callaway_santanna_never_treated_results',
+            output_filename='callaway_santanna_never_treated_results',
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -231,7 +227,7 @@ def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_
         'cs_never_treated_plot',
         action_function=event_study_plot_callaway.transform({'cs_never_treated': 'spec'}),
         output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'callaway_santanna_never_treated_plot',
+            output_filename='callaway_santanna_never_treated_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -249,7 +245,7 @@ def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_
         'save_cs_not_yet_treated',
         action_function=format_callaway_santanna_results.transform({'cs_not_yet_treated': 'spec'}),
         output_config=OutputConfig(
-            output_filename=abs_text_dir / 'callaway_santanna_not_yet_treated_results',
+            output_filename='callaway_santanna_not_yet_treated_results',
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -260,7 +256,7 @@ def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_
         'cs_not_yet_treated_plot',
         action_function=event_study_plot_callaway.transform({'cs_not_yet_treated': 'spec'}),
         output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'callaway_santanna_not_yet_treated_plot',
+            output_filename='callaway_santanna_not_yet_treated_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -273,7 +269,7 @@ def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_
         'stag_event_plot',
         action_function=event_study_plot.transform({'ols_stag': 'spec'}),
         output_config=OutputConfig(
-            output_filename=abs_plots_dir / 'staggered_event_study_plot', 
+            output_filename='staggered_event_study_plot', 
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -282,9 +278,9 @@ def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_
     
     graph.create_node(
         'save_stag_output',
-        action_function=write_statsmodels_summary.transform({'ols_stag': 'res'}),
+        action_function=write_linear_models_to_summary.transform({'ols_stag': 'res'}),
         output_config=OutputConfig(
-            output_filename=abs_text_dir / 'save_stag_output', 
+            output_filename='save_stag_output', 
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -292,19 +288,3 @@ def create_staggered_did_branch(graph: ExecutableGraph, abs_text_dir: Path, abs_
     )
 
 
-def create_all_analysis_branches(graph: ExecutableGraph, abs_text_dir: Path, abs_plots_dir: Path) -> None:
-    """Create all analysis branches for the causal inference pipeline.
-    
-    This function adds all the specific causal analysis methods to the graph.
-    The core decision structure (created separately) determines which branches are executed.
-    
-    Args:
-        graph: The ExecutableGraph to add analysis nodes to
-        abs_text_dir: Directory for text outputs
-        abs_plots_dir: Directory for plot outputs
-    """
-    create_cross_sectional_branch(graph, abs_text_dir)
-    create_synthetic_did_branch(graph, abs_plots_dir)
-    create_did_branch(graph, abs_text_dir)
-    create_event_study_branch(graph, abs_text_dir, abs_plots_dir)
-    create_staggered_did_branch(graph, abs_text_dir, abs_plots_dir) 

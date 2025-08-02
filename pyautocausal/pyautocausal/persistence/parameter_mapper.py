@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Any, TypeVar, ParamSpec
+from typing import Callable, Dict, Any, TypeVar, ParamSpec, Optional
 from functools import wraps
 import inspect
 from pyautocausal.persistence.notebook_decorators import expose_in_notebook
@@ -37,7 +37,7 @@ class TransformableFunction:
     def get_function(self) -> Callable[P, R]:
         return self._func
 
-    def transform(self, arg_mapping: Dict[str, str]) -> Callable[P, R]:
+    def transform(self, arg_mapping: Optional[Dict[str, str]] = None) -> Callable[P, R]:
         """
         Transform the function's parameter names using the provided mapping.
         
@@ -49,6 +49,8 @@ class TransformableFunction:
         Returns:
             A wrapped function with renamed parameters
         """
+        if not arg_mapping:
+            return self.get_function()
         # Create a reverse mapping for parameter inspection
         reverse_mapping = {v: k for k, v in arg_mapping.items()}
         

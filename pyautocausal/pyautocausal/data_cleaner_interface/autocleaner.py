@@ -95,6 +95,10 @@ class AutoCleaner:
 
         Returns:
             The cleaned DataFrame. Metadata is automatically logged using Python's logging system for framework capture.
+            
+        Raises:
+            DataValidationError: If any validation checks fail with ERROR-level issues. 
+                                 The exception contains detailed validation results for debugging.
         """
         logger = logging.getLogger(f"{__name__}.AutoCleaner")
         

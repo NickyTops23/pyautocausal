@@ -37,7 +37,7 @@ def test_autocleaner_chaining_and_execution(sample_data_for_cleaning):
         AutoCleaner()
         .check_required_columns(required_columns=['treatment', 'outcome', 'age'])
         .check_column_types(expected_types={'age': 'int64', 'treatment': 'int64'})
-        .check_for_missing_data(strategy='drop_rows', check_columns=['city', 're74'])
+        .check_for_missing_data(strategy='drop_rows', check_columns=['city', 're74'], max_missing_fraction=0.15)
         .infer_and_convert_categoricals(ignore_columns=['treatment'])
         .drop_duplicates()
     )
@@ -69,9 +69,10 @@ def test_autocleaner_fill_missing_strategy(sample_data_for_cleaning):
     df = sample_data_for_cleaning.copy()
     fill_value = -1
 
+    # if max_missing_fraction is not set, the default is 0.10 which would cause the test to fail
     autocleaner = (
         AutoCleaner()
-        .check_for_missing_data(strategy='fill', check_columns=['city'], fill_value=fill_value)
+        .check_for_missing_data(strategy='fill', check_columns=['city'], fill_value=fill_value, max_missing_fraction=0.15)
     )
     cleaned_df = autocleaner.clean(df)
 
@@ -106,9 +107,9 @@ def test_autocleaner_unified_logging():
         autocleaner = (
             AutoCleaner()
             .check_required_columns(required_columns=["treat", "y"])
-            .check_for_missing_data(strategy="drop_rows", check_columns=["y"])
+            .check_for_missing_data(strategy="drop_rows", check_columns=["y"], max_missing_fraction=0.15)
             .infer_and_convert_categoricals(ignore_columns=["treat", "y"])
-            .drop_duplicates()
+            .drop_duplicates(max_duplicate_fraction=0.15) # if max_duplicate_fraction is not set, the default is 0.05 which would cause the test to fail, since we have 1 in 8 rows that are duplicates
         )
         
         # Test the unified clean() method

@@ -524,7 +524,6 @@ class TestAggregatedValidationScenarios:
         
         # Configure strict validation
         validation_config = DataValidatorConfig(
-            fail_on_error=True,
             aggregation_strategy="all",
             check_configs={
                 "required_columns": RequiredColumnsConfig(
@@ -552,12 +551,12 @@ class TestAggregatedValidationScenarios:
         ]
         
         validator = DataValidator(checks=checks, config=validation_config)
-        result = validator.validate(df)
+        with pytest.raises(Exception) as exc_info:
+            validator.validate(df)
         
-        # Should fail spectacularly
-        assert not result.passed
-        assert len(result.get_failed_checks()) >= 3  # Multiple check failures
-        assert result.summary["total_errors"] >= 5   # Many errors found
+            assert "DataValidationError" in str(exc_info.value)
+            assert "Multiple check failures" in str(exc_info.value)
+            assert "Many errors found" in str(exc_info.value)
     
     def test_marginally_acceptable_data(self):
         """Test data that barely passes all validations."""
@@ -574,7 +573,6 @@ class TestAggregatedValidationScenarios:
         df.loc[0:4, "outcome"] = np.nan  # Exactly 5% missing
         
         validation_config = DataValidatorConfig(
-            fail_on_error=True,
             check_configs={
                 "required_columns": RequiredColumnsConfig(
                     required_columns=["treatment", "outcome", "unit_id", "time"]

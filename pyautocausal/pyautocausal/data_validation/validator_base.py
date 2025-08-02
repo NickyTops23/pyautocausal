@@ -8,6 +8,7 @@ and provide detailed validation feedback.
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Type, Union, Any
 import pandas as pd
+import logging
 
 from .base import (
     DataValidationCheck,
@@ -16,6 +17,23 @@ from .base import (
     ValidationIssue,
     ValidationSeverity
 )
+
+
+class DataValidationError(Exception):
+    """Exception raised when data validation fails with ERROR-level issues.
+    
+    This exception includes the aggregated validation result for detailed error information.
+    """
+    
+    def __init__(self, message: str, validation_result: 'AggregatedValidationResult'):
+        super().__init__(message)
+        self.validation_result = validation_result
+    
+    def __str__(self) -> str:
+        """Return a detailed error message including validation results."""
+        base_message = super().__str__()
+        validation_summary = self.validation_result.to_string(verbose=True)
+        return f"{base_message}\n\n{validation_summary}"
 
 
 @dataclass
@@ -110,7 +128,6 @@ class DataValidatorConfig:
     2. Individual check configurations
     """
     # Node-level configuration
-    fail_on_error: bool = True  # Whether to fail the node if any ERROR-level issues are found
     fail_on_warning: bool = False  # Whether to fail the node if any WARNING-level issues are found
     aggregation_strategy: str = "all"  # "all" = all checks must pass, "any" = at least one must pass
     
@@ -159,14 +176,17 @@ class DataValidator:
                     check.config = self.config.check_configs[check.name]
                 self.checks.append(check)
     
-    def validate(self, df: pd.DataFrame) -> AggregatedValidationResult:
+    def validate(self, df: pd.DataFrame, dry_run: bool = False) -> AggregatedValidationResult:
         """Run all validation checks on the DataFrame.
+        
+        Execution will stop immediately when a check encounters ERROR-level issues 
+        to prevent cascading failures from dependency violations.
         
         Args:
             df: The DataFrame to validate
             
         Returns:
-            AggregatedValidationResult containing results from all checks
+            AggregatedValidationResult containing results from all executed checks
         """
         results = []
         
@@ -181,6 +201,16 @@ class DataValidator:
             if check.config.enabled:
                 result = check.validate(df)
                 results.append(result)
+                
+                # Apply fail-fast behavior: stop execution if this check has ERROR-level issues
+                if result.has_errors and not dry_run:
+                    logger = logging.getLogger(f"{__name__}.DataValidator")
+                    remaining_checks = len(checks_to_run) - len(results)
+                    logger.warning(
+                        f"Stopping validation early due to ERROR in check '{check.name}'. "
+                        f"Skipping {remaining_checks} remaining checks to prevent cascading failures."
+                    )
+                    break
         
         # Aggregate results based on strategy
         if self.config.aggregation_strategy == "all":
@@ -192,21 +222,33 @@ class DataValidator:
         else:
             raise ValueError(f"Unknown aggregation strategy: {self.config.aggregation_strategy}")
         
-        # Apply fail_on_error and fail_on_warning settings
-        if self.config.fail_on_error:
-            has_errors = any(r.has_errors for r in results)
-            if has_errors:
-                passed = False
-        
         if self.config.fail_on_warning:
             has_warnings = any(r.has_warnings for r in results)
             if has_warnings:
                 passed = False
         
-        return AggregatedValidationResult(
+        aggregated_result = AggregatedValidationResult(
             passed=passed,
             individual_results=results
         )
+        
+        # Raise exception if there are any ERROR-level issues
+        if aggregated_result.summary['total_errors'] > 0:
+            error_checks = [r.check_name for r in results if r.has_errors]
+            if not dry_run:
+                raise DataValidationError(
+                    f"Data validation failed with {aggregated_result.summary['total_errors']} error(s) "
+                    f"in {len(error_checks)} check(s): {', '.join(error_checks)}",
+                    aggregated_result
+                )
+            else:
+                logger = logging.getLogger(f"{__name__}.DataValidator")
+                logger.warning(
+                    f"Data validation failed with {aggregated_result.summary['total_errors']} error(s) "
+                    f"in {len(error_checks)} check(s): {', '.join(error_checks)}"
+                )
+        
+        return aggregated_result
     
     def __call__(self, df: pd.DataFrame) -> AggregatedValidationResult:
         """Make the validator node callable for use as an action function."""
