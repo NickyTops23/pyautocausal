@@ -7,77 +7,65 @@ This module contains the main execution function that demonstrates the full work
 """
 
 from pathlib import Path
+import pandas as pd
 
-from pyautocausal.pipelines.mock_data import generate_mock_data
-from .core import create_core_decision_structure, configure_core_decision_paths
-from .branches import create_all_analysis_branches  
-from .utils import setup_output_directories, print_execution_summary, export_outputs, print_data_characteristics
+from pyautocausal.orchestration.graph import ExecutableGraph, RunContext
+from . import create_panel_graph, create_cross_sectional_graph
+from ..library.conditions import has_multiple_periods
+from .utils import setup_output_directories
 
 
-def main():
-    """Main execution function for running the example graph.
-    
-    This demonstrates the full workflow:
-    1. Generate mock data with staggered treatment
-    2. Execute the causal inference graph
-    3. Export results and visualizations
+def main(file_path: str | Path, output_dir: str | Path):
     """
-    # Setup
-    output_path = Path('output')
-    output_path.mkdir(parents=True, exist_ok=True)
+    Load data, determine the appropriate analysis path (panel or cross-sectional),
+    and execute the corresponding causal inference graph.
+
+    Args:
+        file_path (str or Path): Path to the input data file (CSV or Parquet).
+        output_dir (str or Path): Path to the output directory.
+    """
+    file_path = Path(file_path)
+    output_dir = Path(output_dir)
+
+    # 1. Load Data
+    if file_path.suffix == '.csv':
+        df = pd.read_csv(file_path)
+    elif file_path.suffix == '.parquet':
+        df = pd.read_parquet(file_path)
+    else:
+        raise ValueError("Unsupported file format. Please use CSV or Parquet.")
+        
+    # 2. Setup Output Directories
+    abs_text_dir, abs_plot_dir, abs_data_dir = setup_output_directories(output_dir)
+
+    # 3. Determine Data Type and Create Appropriate Graph
+    if has_multiple_periods(df):
+        print("Panel data detected. Creating and executing the panel data graph.")
+        graph = create_panel_graph(abs_text_dir, abs_plot_dir)
+    else:
+        print("Cross-sectional data detected. Creating and executing the cross-sectional data graph.")
+        graph = create_cross_sectional_graph(abs_text_dir, abs_plot_dir)
     
-    print("======= Running PyAutoCausal Example Graph =======")
-    
-    # Initialize graph and create directory structure
-    from pyautocausal.orchestration.graph import ExecutableGraph
-    graph = ExecutableGraph()
-    graph.configure_runtime(output_path=output_path)
-    abs_plots_dir, abs_text_dir, abs_notebooks_dir = setup_output_directories(output_path)
-    
-    # Build the complete graph
-    print("Building causal inference graph...")
-    create_core_decision_structure(graph, abs_text_dir)
-    create_all_analysis_branches(graph, abs_text_dir, abs_plots_dir)
-    configure_core_decision_paths(graph)
-    print(f"Graph built with {len(list(graph.nodes()))} nodes")
-    
-    # Generate realistic mock data for demonstration
-    data = generate_mock_data(
-        n_units=100, 
-        n_periods=10, 
-        n_treated=70, 
-        staggered_treatment=True, 
-        noise_to_signal_ratio=1.5
+    # 4. Execute Graph
+    graph.execute(
+        input_data={"df": df}, 
+        output_dir=output_dir, 
+        run_context=RunContext(
+            y_col="y",
+            id_col="id_unit",
+            t_col="t",
+            treat_col="treat"
+        )
     )
     
-    # Save data for reference
-    data_csv_path = output_path / "notebooks" / "causal_pipeline_data.csv"
-    data.to_csv(data_csv_path, index=False)
-    print(f"Mock data generated and saved to {data_csv_path}")
-
-    # Display data characteristics
-    print("\n" + "="*30 + " DATA CHARACTERISTICS " + "="*30)
-    print_data_characteristics(data)
-    print("\n")
-
-    # Execute graph
-    try:
-        print("Executing causal inference graph...")
-        graph.fit(df=data)
-        print("Graph execution completed successfully.")
-        
-    except Exception as e:
-        print(f"Error during graph execution: {e}")
-        return
-
-    # Results summary and export
-    print("\n" + "="*30 + " EXECUTION SUMMARY " + "="*30)
-    print_execution_summary(graph)
-    print("-" * 50)
-    
-    export_outputs(graph, output_path)
-    print("\n======= Example Graph Run Finished =======")
+    print(f"\nGraph execution complete. Outputs are saved in: {output_dir}")
 
 
 if __name__ == "__main__":
-    main() 
+    # This is placeholder for if you want to make this script runnable
+    # For example:
+    # if len(sys.argv) > 2:
+    #     main(sys.argv[1], sys.argv[2])
+    # else:
+    #     print("Usage: python -m pyautocausal.pipelines.example_graph.main <path_to_data> <output_dir>")
+    pass 

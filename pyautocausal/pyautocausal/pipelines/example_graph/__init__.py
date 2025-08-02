@@ -37,9 +37,63 @@ The pipeline is organized into separate modules:
 
 from pathlib import Path
 from pyautocausal.orchestration.graph import ExecutableGraph
-from .core import create_core_decision_structure, configure_core_decision_paths
-from .branches import create_all_analysis_branches
-from .utils import setup_output_directories, create_simple_graph
+# All branch imports are now done locally within each function as needed
+from .core import (
+    _create_shared_head,
+    create_panel_decision_structure,
+    configure_panel_decision_paths,
+    create_cross_sectional_decision_structure,
+    configure_cross_sectional_decision_paths
+)
+
+
+def create_panel_graph(abs_text_dir: str, abs_plot_dir: str) -> ExecutableGraph:
+    """Create the panel data causal inference graph."""
+    graph = ExecutableGraph()
+    
+    # 1. Shared Head
+    _create_shared_head(graph)
+    
+    # 2. Panel Decision Structure
+    create_panel_decision_structure(graph, abs_text_dir=abs_text_dir)
+    
+    # 3. Add Analysis Branches (using complete functions with saving functionality)
+    from .branches import (
+        create_did_branch,
+        create_event_study_branch, 
+        create_synthetic_did_branch,
+        create_staggered_did_branch
+    )
+    
+    create_did_branch(graph, Path(abs_text_dir))
+    create_event_study_branch(graph, Path(abs_text_dir), Path(abs_plot_dir))
+    create_synthetic_did_branch(graph, Path(abs_plot_dir))
+    create_staggered_did_branch(graph, Path(abs_text_dir), Path(abs_plot_dir))
+    
+    # 4. Configure Paths
+    configure_panel_decision_paths(graph)
+    
+    return graph
+
+
+def create_cross_sectional_graph(abs_text_dir: str, abs_plot_dir: str) -> ExecutableGraph:
+    """Create the cross-sectional data causal inference graph."""
+    graph = ExecutableGraph()
+    
+    # 1. Shared Head
+    _create_shared_head(graph)
+    
+    # 2. Cross-Sectional Decision Structure
+    create_cross_sectional_decision_structure(graph, abs_text_dir=abs_text_dir)
+    
+    # 3. Add Analysis Branches (using complete function with saving functionality)
+    from .branches import create_cross_sectional_branch
+    create_cross_sectional_branch(graph, Path(abs_text_dir))
+    
+    # 4. Configure Paths
+    configure_cross_sectional_decision_paths(graph)
+    
+    return graph
 
 
 def causal_pipeline(output_path: Path) -> ExecutableGraph:
@@ -59,15 +113,50 @@ def causal_pipeline(output_path: Path) -> ExecutableGraph:
     Returns:
         Configured ExecutableGraph ready for execution
     """
+    if not isinstance(output_path, Path):
+        output_path = Path(output_path);
     # Initialize graph and directories
     graph = ExecutableGraph()
     graph.configure_runtime(output_path=output_path)
     abs_plots_dir, abs_text_dir, abs_notebooks_dir = setup_output_directories(output_path)
     
-    # Create the complete pipeline
-    create_core_decision_structure(graph, abs_text_dir)
-    create_all_analysis_branches(graph, abs_text_dir, abs_plots_dir)
-    configure_core_decision_paths(graph)
+    # Create the complete pipeline with both panel and cross-sectional paths
+    _create_shared_head(graph)
+    
+    # Add top-level routing decision based on data characteristics
+    from .core import has_multiple_periods
+    graph.create_decision_node(
+        'is_panel_data',
+        condition=has_multiple_periods.get_function(),
+        predecessors=["basic_cleaning"]
+    )
+    
+    # Create both decision structures with routing dependencies
+    create_panel_decision_structure(graph, abs_text_dir, predecessor="is_panel_data")
+    create_cross_sectional_decision_structure(graph, abs_text_dir, predecessor="is_panel_data")
+    
+    # Add all analysis branches (using complete functions with saving functionality)
+    from .branches import (
+        create_did_branch,
+        create_event_study_branch, 
+        create_synthetic_did_branch,
+        create_staggered_did_branch,
+        create_cross_sectional_branch
+    )
+    
+    create_did_branch(graph, abs_text_dir)
+    create_event_study_branch(graph, abs_text_dir, abs_plots_dir)
+    create_synthetic_did_branch(graph, abs_plots_dir)
+    create_staggered_did_branch(graph, abs_text_dir, abs_plots_dir)
+    create_cross_sectional_branch(graph, abs_text_dir)
+    
+    # Configure top-level routing
+    graph.when_true("is_panel_data", "panel_cleaned_data")
+    graph.when_false("is_panel_data", "cross_sectional_cleaned_data")
+    
+    # Configure both decision paths
+    configure_panel_decision_paths(graph)
+    configure_cross_sectional_decision_paths(graph)
     
     return graph
 
@@ -81,12 +170,25 @@ def simple_graph() -> ExecutableGraph:
     Returns:
         Configured ExecutableGraph ready for execution
     """
-    return create_simple_graph()
+    from pathlib import Path
+    
+    graph = ExecutableGraph()
+    
+    # Create the shared head nodes
+    _create_shared_head(graph)
+    
+    # Add simple cross-sectional branches for testing
+    create_cross_sectional_decision_structure(graph, abs_text_dir=Path("/tmp/text"))
+    from .branches import create_cross_sectional_branch
+    create_cross_sectional_branch(graph, Path("/tmp/text"))
+    configure_cross_sectional_decision_paths(graph)
+    
+    return graph
 
 
 # Import main execution function and utilities for convenience
 from .main import main
-from .utils import export_outputs
+from .utils import export_outputs, setup_output_directories
 
 # Backward compatibility alias for the test
 _export_outputs = export_outputs

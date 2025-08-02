@@ -102,7 +102,7 @@ def test_validation_to_cleaning_integration(lalonde_data, output_dir):
     assert any("race" in t.columns_modified for t in plan_metadata.transformations)
 
 
-def test_comprehensive_validation_cleaning_direct():
+def test_comprehensive_validation_cleaning_direct_dry_run():
     """
     Comprehensive integration test that directly tests validation -> planning -> cleaning 
     pipeline without using a graph. Tests multiple validation scenarios and cleaning operations.
@@ -168,7 +168,6 @@ def test_comprehensive_validation_cleaning_direct():
     
     # Setup validation checks
     validation_config = DataValidatorConfig(
-        fail_on_error=False,  # Don't fail on errors, just collect them
         fail_on_warning=False,
         aggregation_strategy="all",
         check_configs={
@@ -220,7 +219,7 @@ def test_comprehensive_validation_cleaning_direct():
     print("RUNNING VALIDATION")
     print("="*50)
     
-    validation_result = validator.validate(test_data)
+    validation_result = validator.validate(test_data, dry_run=True)
     
     print(f"Validation passed: {validation_result.passed}")
     print(f"Total issues found: {len(validation_result.get_all_issues())}")

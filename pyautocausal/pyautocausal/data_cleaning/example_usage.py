@@ -28,7 +28,6 @@ def create_validation_cleaning_graph() -> ExecutableGraph:
     
     # Configure validation
     validator_config = DataValidatorConfig(
-        fail_on_error=True,
         check_configs={
             "column_types": ColumnTypesConfig(
                 categorical_threshold=10,  # Columns with <= 10 unique values are categorical

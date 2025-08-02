@@ -283,7 +283,6 @@ class Node(BaseNode):
         """Mark this node as passed (skipped due to decision branching)."""
         if self.state == NodeState.PENDING:
             self.state = NodeState.PASSED
-            self.logger.info(f"Node {self.name} marked as PASSED (skipped due to decision branching)")
         
     def is_completed(self):
         return self.state == NodeState.COMPLETED
@@ -313,7 +312,6 @@ class Node(BaseNode):
         predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
         
         arguments = self._resolve_function_arguments(self.action_function, predecessor_outputs)
-        print(f"Executing {self.name} with arguments: {arguments}")
         return (
             self.action_function(**arguments) if arguments 
             else self.action_function()
@@ -458,17 +456,13 @@ class DecisionNode(Node):
             if condition_result:
                 if successor in self._ewt_nodes:
                     edge['traversable'] = True # this is not strictly necessary, since edges are traversable by default
-                    self.logger.info(f"Edge to '{successor.name}' is traversable (condition is TRUE)")
                 else:
                     edge['traversable'] = False
-                    self.logger.info(f"Edge to '{successor.name}' is NOT traversable (condition is TRUE)")
             elif not condition_result:
                 if successor in self._ewf_nodes:
                     edge['traversable'] = True
-                    self.logger.info(f"Edge to '{successor.name}' is traversable (condition is FALSE)")
                 else:
                     edge['traversable'] = False
-                    self.logger.info(f"Edge to '{successor.name}' is NOT traversable (condition is FALSE)")
             else:
                 raise ValueError(f"Decision node '{self.name}' received an unexpected condition result: {condition_result}")
         
