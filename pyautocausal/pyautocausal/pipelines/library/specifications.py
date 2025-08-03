@@ -2,7 +2,6 @@ import pandas as pd
 from typing import Optional, Any, List, Tuple
 from dataclasses import dataclass
 from pyautocausal.persistence.parameter_mapper import make_transformable
-from pyautocausal.pipelines.library.output import write_statsmodels_summary
 from sklearn.linear_model import LogisticRegression, Lasso
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
@@ -61,20 +60,6 @@ class StaggeredDiDSpec(BaseSpec):
     time_col: str
     unit_col: str
     treatment_time_col: str
-    model: Optional[Any] = None
-
-@dataclass
-class SynthDIDSpec(BaseSpec):
-    """Synthetic Difference-in-Differences specification."""
-    outcome_col: str
-    treatment_cols: List[str]
-    control_cols: List[str]
-    time_col: str
-    unit_col: str
-    Y: np.ndarray  # Outcome matrix (N x T)
-    N0: int  # Number of control units
-    T0: int  # Number of pre-treatment periods
-    X: Optional[np.ndarray] = None  # Covariates matrix (N x T x C)
     model: Optional[Any] = None
 
 @dataclass
