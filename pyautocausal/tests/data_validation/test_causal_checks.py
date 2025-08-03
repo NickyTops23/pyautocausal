@@ -32,6 +32,7 @@ def test_panel_structure_check_valid():
             "unit": [1, 1, 2, 2, 3, 3],
             "time": [2000, 2001, 2000, 2001, 2000, 2001],
             "value": [10, 12, 20, 22, 30, 32],
+            "treatment": [0, 1, 0, 0, 0, 1],  # Treatment respects monotonicity
         }
     )
     check = PanelStructureCheck(config=PanelStructureConfig(unit_column="unit", time_column="time"))
@@ -46,9 +47,27 @@ def test_panel_structure_check_unbalanced():
             "unit": [1, 1, 2, 3, 3],
             "time": [2000, 2001, 2000, 2000, 2001],
             "value": [10, 12, 20, 30, 32],
+            "treatment": [0, 1, 0, 0, 1],  # Treatment respects monotonicity
         }
     )
     check = PanelStructureCheck(config=PanelStructureConfig(unit_column="unit", time_column="time"))
     result = check.validate(df)
     assert not result.passed
-    assert "Panel is unbalanced" in result.issues[0].message 
+    assert "Panel is unbalanced" in result.issues[0].message
+
+
+def test_panel_structure_check_treatment_monotonicity_violation():
+    """Tests that the panel structure check detects treatment monotonicity violations."""
+    df = pd.DataFrame(
+        {
+            "unit": [1, 1, 1, 2, 2, 2],
+            "time": [2000, 2001, 2002, 2000, 2001, 2002],
+            "value": [10, 12, 14, 20, 22, 24],
+            "treatment": [0, 1, 0, 0, 0, 1],  # Unit 1 violates monotonicity (1 -> 0)
+        }
+    )
+    check = PanelStructureCheck(config=PanelStructureConfig(unit_column="unit", time_column="time"))
+    result = check.validate(df)
+    assert not result.passed
+    assert "Treatment monotonicity violated" in result.issues[0].message
+    assert result.issues[0].details["violation_count"] == 1 

@@ -207,6 +207,7 @@ class PanelStructureConfig(DataValidationConfig):
     """Configuration for PanelStructureCheck."""
     unit_column: str = "unit_id"
     time_column: str = "time"
+    treatment_column: Optional[str] = "treatment"  # Treatment column for monotonicity check
     require_balanced: bool = True  # Whether to require balanced panel
 
 
@@ -221,7 +222,8 @@ class PanelStructureCheck(DataValidationCheck[PanelStructureConfig]):
     def get_default_config(cls) -> PanelStructureConfig:
         return PanelStructureConfig()
     
-    def validate(self, df: pd.DataFrame) -> DataValidationResult:
+    def _check_required_columns(self, df: pd.DataFrame) -> tuple[list[ValidationIssue], bool]:
+        """Check that required columns exist in the dataframe."""
         issues = []
         
         # Check required columns exist
@@ -233,12 +235,21 @@ class PanelStructureCheck(DataValidationCheck[PanelStructureConfig]):
                     details={"available_columns": list(df.columns)}
                 ))
         
-        if issues:
-            return self._create_result(False, issues)
+        # Check treatment column exists if specified
+        treatment_col_exists = True
+        if self.config.treatment_column and self.config.treatment_column not in df.columns:
+            treatment_col_exists = False
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"Treatment column '{self.config.treatment_column}' not found",
+                details={"available_columns": list(df.columns)}
+            ))
         
-        # Get unique units and time periods
-        units = df[self.config.unit_column].unique()
-        times = df[self.config.time_column].unique()
+        return issues, treatment_col_exists
+    
+    def _check_panel_structure(self, df: pd.DataFrame, units: np.ndarray, times: np.ndarray) -> list[ValidationIssue]:
+        """Check panel structure for duplicates and balance."""
+        issues = []
         n_units = len(units)
         n_times = len(times)
         
@@ -281,6 +292,79 @@ class PanelStructureCheck(DataValidationCheck[PanelStructureConfig]):
                     "sample_missing": [f"{u}-{t}" for u, t in missing_combinations[:5]]
                 }
             ))
+        
+        return issues
+    
+    def _check_treatment_monotonicity(self, df: pd.DataFrame, units: np.ndarray, treatment_col_exists: bool) -> list[ValidationIssue]:
+        """Check treatment monotonicity for each unit."""
+        issues = []
+        
+        if not (self.config.treatment_column and treatment_col_exists):
+            return issues
+        
+        df_sorted = df.sort_values([self.config.unit_column, self.config.time_column])
+        violations = []
+        
+        for unit in units:
+            unit_data = df_sorted[df_sorted[self.config.unit_column] == unit]
+            treatment_sequence = unit_data[self.config.treatment_column].values
+            
+            # Check monotonicity: once treated (1), should remain treated
+            treated_once = False
+            for i, treatment in enumerate(treatment_sequence):
+                if treatment == 1:
+                    treated_once = True
+                elif treated_once and treatment == 0:
+                    # Found violation: unit was treated but then reverted to control
+                    violations.append({
+                        "unit": unit,
+                        "violation_at_time": unit_data.iloc[i][self.config.time_column],
+                        "treatment_sequence": treatment_sequence.tolist()
+                    })
+                    break  # Only report first violation per unit
+        
+        if violations:
+            sample_violations = violations[:5]  # Show up to 5 examples
+            issues.append(ValidationIssue(
+                severity=self.config.severity_on_fail,
+                message=f"Treatment monotonicity violated for {len(violations)} units",
+                details={
+                    "violation_count": len(violations),
+                    "sample_violations": sample_violations,
+                    "treatment_column": self.config.treatment_column
+                }
+            ))
+        
+        return issues
+    
+    def validate(self, df: pd.DataFrame) -> DataValidationResult:
+        issues = []
+        
+        # Check required columns exist
+        missing_cols_issues, treatment_col_exists = self._check_required_columns(df)
+        issues.extend(missing_cols_issues)
+        
+        if issues:
+            return self._create_result(False, issues)
+        
+        # Get unique units and time periods
+        units = df[self.config.unit_column].unique()
+        times = df[self.config.time_column].unique()
+        n_units = len(units)
+        n_times = len(times)
+        
+        # Check panel structure (duplicates and balance)
+        panel_issues = self._check_panel_structure(df, units, times)
+        issues.extend(panel_issues)
+        
+        # Check treatment monotonicity if treatment column is available
+        monotonicity_issues = self._check_treatment_monotonicity(df, units, treatment_col_exists)
+        issues.extend(monotonicity_issues)
+        
+        # Calculate balance for metadata
+        expected_obs = n_units * n_times
+        actual_obs = len(df.drop_duplicates(subset=[self.config.unit_column, self.config.time_column]))
+        is_balanced = expected_obs == actual_obs
         
         passed = not any(issue.severity == self.config.severity_on_fail for issue in issues)
         metadata = {

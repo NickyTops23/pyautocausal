@@ -1,25 +1,17 @@
 import pandas as pd
-import statsmodels.api as sm
-import io
-from typing import Optional, Any, Dict, List, Union, Tuple
-from dataclasses import dataclass, field
-from pyautocausal.persistence.output_config import OutputType, OutputConfig
+from typing import Optional, Any, List, Tuple
+from dataclasses import dataclass
 from pyautocausal.persistence.parameter_mapper import make_transformable
-from pyautocausal.pipelines.library.output import write_statsmodels_summary
-from sklearn.linear_model import LogisticRegression, Lasso
-from sklearn.preprocessing import StandardScaler
-from sklearn.neighbors import NearestNeighbors
-from sklearn.model_selection import KFold
 import numpy as np
-import patsy
-from enum import Enum
 
 @dataclass
 class BaseSpec:
     """Base specification with common fields."""
     data: pd.DataFrame
     formula: str
-
+    # we can't put model here because it needs to have a default value of None
+    # and if we put it in the baseSpec, it will cause an error because it comes before other
+    # fields in the subclasses that do not have a default value. So we put it in the subclasses.
 
 @dataclass
 class CrossSectionalSpec(BaseSpec):
@@ -27,7 +19,7 @@ class CrossSectionalSpec(BaseSpec):
     outcome_col: str
     treatment_cols: List[str]
     control_cols: List[str]
-
+    model: Optional[Any] = None
 @dataclass
 class DiDSpec(BaseSpec):
     """Difference-in-Differences specification."""
@@ -40,7 +32,6 @@ class DiDSpec(BaseSpec):
     include_unit_fe: bool
     include_time_fe: bool
     model: Optional[Any] = None
-
 @dataclass
 class EventStudySpec(BaseSpec):
     """Event Study specification."""
@@ -70,7 +61,6 @@ class StaggeredDiDSpec(BaseSpec):
     interaction_cols: List[str]
     model: Optional[Any] = None
 
-
 @dataclass
 class SynthDIDSpec(BaseSpec):
     """Synthetic Difference-in-Differences specification."""
@@ -84,7 +74,6 @@ class SynthDIDSpec(BaseSpec):
     T0: int  # Number of pre-treatment periods
     X: Optional[np.ndarray] = None  # Covariates matrix (N x T x C)
     model: Optional[Any] = None
-
 
 def validate_and_prepare_data(
     data: pd.DataFrame,

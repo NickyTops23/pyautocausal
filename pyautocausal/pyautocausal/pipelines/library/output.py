@@ -2,24 +2,41 @@ from typing import Optional
 import io
 import statsmodels.api as sm
 from statsmodels.base.model import Results
+from statsmodels.base.wrapper import ResultsWrapper
 from sklearn.base import BaseEstimator
 from pyautocausal.persistence.parameter_mapper import make_transformable
 from typing import Any
+from pyautocausal.pipelines.library.specifications import BaseSpec
+from linearmodels.shared.base import _SummaryStr
+
 
 @make_transformable
-def write_statsmodels_summary(res: Any) -> str:
+def write_linear_models_to_summary(res: BaseSpec) -> str:
     # Handle the case where res is a BaseSpec object with a model attribute
     if hasattr(res, 'model'):
         result = res.model
-    elif isinstance(res, Results):
-        # Assume res is already a statsmodels Results object
-        result = res
     else:
-        # For statsmodels OLS objects that aren't fitted, return type info
-        import statsmodels.regression.linear_model as lm
-        if isinstance(res, lm.OLS):
-            return f"OLS model (unfitted): {type(res).__name__}\nThis model needs to be fitted before a summary can be generated."
-        result = res
+        raise ValueError("res must be a BaseSpec object with a model attribute")
+    if not isinstance(result, _SummaryStr):
+        raise ValueError("res must be a BaseSpec object with a model attribute that is a (linearmodels) _SummaryStr object")
+    
+    # Create summary
+    try:
+        buffer = io.StringIO()
+        buffer.write(str(result))
+        return buffer.getvalue()
+    except Exception as e:
+        return f"Error creating summary: {str(e)}"
+    
+@make_transformable
+def write_statsmodels_to_summary(res: BaseSpec) -> str:
+    # Handle the case where res is a BaseSpec object with a model attribute
+    if hasattr(res, 'model'):
+        result = res.model
+    else:
+        raise ValueError("res must be a BaseSpec object with a model attribute")
+    if not isinstance(result, Results) and not isinstance(result, ResultsWrapper):
+        raise ValueError("res must be a BaseSpec object with a model attribute that is a (statsmodels) Results or ResultsWrapper object")
     
     # Create summary
     try:

@@ -3,7 +3,7 @@ import pandas as pd
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.pipelines.library.specifications import create_cross_sectional_specification
 from pyautocausal.pipelines.library.estimators import fit_double_lasso, fit_ols
-from pyautocausal.pipelines.library.output import write_statsmodels_summary
+from pyautocausal.pipelines.library.output import write_linear_models_to_summary
 
 
 @pytest.fixture
@@ -61,13 +61,13 @@ def causal_graph(tmp_path):
         .when_false("doubleml_condition", "ols")
         .create_node(
             "doubleml_summary",
-            write_statsmodels_summary.transform(arg_mapping={"doubleml": "res"}),
+            write_linear_models_to_summary.transform(arg_mapping={"doubleml": "res"}),
             predecessors=["doubleml"],
             save_node=True,
         )
         .create_node(
             "ols_summary",
-            write_statsmodels_summary.transform(arg_mapping={"ols": "res"}),
+            write_linear_models_to_summary.transform(arg_mapping={"ols": "res"}),
             predecessors=["ols"],
             save_node=True,
         )

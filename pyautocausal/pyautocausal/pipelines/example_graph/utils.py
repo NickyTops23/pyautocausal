@@ -26,6 +26,7 @@ def setup_output_directories(output_path: Path) -> Tuple[Path, Path, Path]:
     Returns:
         Tuple of (plots_dir, text_dir, notebooks_dir) as absolute paths
     """
+    
     plots_dir = output_path / "plots"
     text_dir = output_path / "text"
     notebooks_dir = output_path / "notebooks"
@@ -138,81 +139,4 @@ def print_data_characteristics(data) -> None:
     elif data[data['treat'] == 1].groupby('id_unit')['t'].min().nunique() > 1:
         print("Staggered treatment → Callaway & Sant'Anna methods")
     else:
-        print("Panel data → Standard DiD or Event study")
-
-
-def create_simple_graph() -> ExecutableGraph:
-    """Create a simple graph for testing purposes.
-    
-    This creates a basic pipeline with cross-sectional and DiD branches
-    for testing serialization and basic functionality.
-    
-    Returns:
-        Configured ExecutableGraph ready for execution
-    """
-    from pyautocausal.pipelines.library.conditions import has_multiple_periods
-    from pyautocausal.pipelines.library.specifications import (
-        create_cross_sectional_specification, 
-        create_did_specification
-    )
-    from pyautocausal.pipelines.library.estimators import fit_ols, fit_did_panel
-    from pyautocausal.pipelines.library.output import write_statsmodels_summary
-    
-    # Initialize graph
-    graph = ExecutableGraph()
-    
-    # Create basic input node
-    graph.create_input_node("df", input_dtype=pd.DataFrame)
-    
-    # Create multi-period decision node
-    graph.create_decision_node(
-        'multi_period', 
-        condition=has_multiple_periods.get_function(), 
-        predecessors=["df"]
-    )
-    
-    # Cross-sectional branch
-    graph.create_node(
-        'stand_spec', 
-        action_function=create_cross_sectional_specification.transform({'df': 'data'}), 
-        predecessors=["multi_period"]
-    )
-    
-    graph.create_node(
-        'ols_stand', 
-        action_function=fit_ols.transform({'stand_spec': 'spec'}),
-        predecessors=["stand_spec"]
-    )
-    
-    graph.create_node(
-        'ols_stand_output',
-        action_function=write_statsmodels_summary.transform({'ols_stand': 'res'}),
-        save_node=True,
-        predecessors=["ols_stand"]
-    )
-    
-    # DiD branch
-    graph.create_node(
-        'did_spec', 
-        action_function=create_did_specification.transform({'df': 'data'}), 
-        predecessors=["multi_period"]
-    )
-    
-    graph.create_node(
-        'ols_did', 
-        action_function=fit_did_panel.transform({'did_spec': 'spec'}),
-        predecessors=["did_spec"]
-    )
-    
-    graph.create_node(
-        'save_ols_did',
-        action_function=write_statsmodels_summary.transform({'ols_did': 'res'}),
-        save_node=True,
-        predecessors=["ols_did"]
-    )
-    
-    # Configure decision routing
-    graph.when_false("multi_period", "stand_spec")
-    graph.when_true("multi_period", "did_spec")
-    
-    return graph 
+        print("Panel data → Standard DiD or Event study") 

@@ -2,6 +2,7 @@ import pytest
 import pandas as pd
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.orchestration.run_context import RunContext
+from pyautocausal.orchestration.nodes import NodeExecutionError
 
 def process_data(
     data: pd.DataFrame,           # required param from predecessor
@@ -130,8 +131,12 @@ def test_missing_required_argument():
         predecessors=["data"]
     )
     
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(NodeExecutionError) as exc_info:
         graph.fit(data=pd.DataFrame())
     
+    # Check that the original ValueError is wrapped and contains the expected message
     assert "Missing required parameters" in str(exc_info.value)
-    assert "required_param" in str(exc_info.value) 
+    assert "required_param" in str(exc_info.value)
+    assert isinstance(exc_info.value.original_exception, ValueError)
+    assert "Missing required parameters" in str(exc_info.value.original_exception)
+    assert "required_param" in str(exc_info.value.original_exception) 

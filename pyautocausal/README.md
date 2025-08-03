@@ -1,43 +1,104 @@
 # PyAutoCausal
 
-PyAutoCausal is a computational framework for building and executing reproducible causal inference workflows. The library provides a flexible, graph-based system to define, connect, and execute analytical steps in causal analysis pipelines.
+**Automated causal inference pipelines for data scientists**
 
-## Overview
+## Why Causal Inference Matters in Tech
 
-PyAutoCausal makes causal inference workflows more modular, testable, and reproducible by organizing them as directed graphs of connected computational nodes. This approach simplifies complex analysis pipelines and enables conditional execution paths based on data characteristics.
+As data scientists, we're often asked to go beyond correlation and answer causal questions: 
+- "Did our new recommendation algorithm actually increase user engagement, or was it just seasonal trends?"
+- "What's the true impact of our premium subscription tier on customer retention?"
+- "How much did our marketing campaign increase conversions versus organic growth?"
+- "Did our product redesign cause the drop in user activity, or was it market conditions?"
 
-## Key Features
+These questions can't be answered with standard predictive models or A/B tests alone. Real-world constraints often prevent randomized experiments:
+- **Ethical concerns**: Can't randomly deny users important features
+- **Business constraints**: Can't risk revenue on large-scale experiments  
+- **Natural experiments**: Sometimes changes happen organically (competitor exits, policy changes)
+- **Historical analysis**: Need to evaluate past decisions without experimental data
 
-### Computational Graph Model
+## The Challenge of Observational Data
 
-- **Node-based architecture**: Each step in your causal analysis is represented as a node
-- **Directed workflow**: Nodes are connected to form directed acyclic graphs (DAGs)
-- **Automatic execution**: The framework handles execution order and data passing between nodes
+When working with observational data (logs, user behavior, historical metrics), we face fundamental challenges:
 
-### Node Types
+1. **Confounding**: Users who adopt premium features might be inherently more engaged
+2. **Selection bias**: Treatment assignment isn't random
+3. **Time-varying effects**: Impact changes over time
+4. **Heterogeneous effects**: Different user segments respond differently
 
-- **Standard Nodes**: Process inputs and produce outputs using configurable action functions
-- **Input Nodes**: Accept external data and pass it into the workflow
-- **Decision Nodes**: Conditionally route execution based on data characteristics or intermediate results
+Traditional ML models are built for prediction, not causal inference. They'll happily exploit confounders and selection bias to maximize accuracy, giving you precisely wrong answers to causal questions.
 
-### Data Flow Management
+## PyAutoCausal: Causal Inference Made Practical
 
-- **Automatic data passing**: Results from predecessor nodes are passed to dependent nodes
-- **Type validation**: Optional type checking at connection points
-- **Run context**: Global variables available to all nodes
+PyAutoCausal automates the complex decision tree of modern causal inference methods. Instead of manually implementing and choosing between dozens of estimators, PyAutoCausal:
 
-### Output Persistence
+1. **Analyzes your data structure** to understand treatment timing, units, and available controls
+2. **Selects appropriate methods** based on your data characteristics
+3. **Validates assumptions** and warns about potential violations
+4. **Executes analysis** with proper statistical inference
+5. **Exports results** in formats ready for stakeholder communication
 
-- **Multiple output formats**: Save node results in various formats (CSV, Parquet, PNG, JSON, etc.)
-- **Automatic type inference**: System tries to determine appropriate format based on output type
-- **Configurable paths**: Control where outputs are saved
+## Quick Example: Measuring Feature Impact
 
-### Extensibility
+```python
+from pyautocausal.pipelines.example_graph import causal_pipeline
+import pandas as pd
 
-- **Library nodes**: Create standardized, reusable nodes for common operations
-- **Custom nodes**: Implement specialized node types for specific analytical needs
-- **Graph composition**: Merge and connect multiple graphs to build complex workflows
-- **Notebook export**: Convert pipelines to Jupyter notebooks for interactive exploration
+# Your product data with treatment (feature rollout) and outcome (engagement)
+data = pd.DataFrame({
+    'id_unit': [...],        # User identifier
+    't': [...],              # Time periods
+    'treat': [...],          # 1 if user has feature, 0 otherwise
+    'y': [...],              # Your KPI (DAU, sessions, revenue, etc.)
+    'x1': [...],             # User characteristics
+    'x2': [...]              # Additional controls
+})
+
+# PyAutoCausal automatically:
+# - Detects this is panel data with staggered treatment
+# - Chooses modern DiD methods (e.g., Callaway-Sant'Anna)
+# - Handles heterogeneous treatment effects
+# - Produces event study plots
+
+pipeline = causal_pipeline(output_path="./feature_impact_analysis")
+pipeline.fit(df=data)
+
+# Results include:
+# - Average treatment effect with confidence intervals
+# - Dynamic effects over time since treatment
+# - Heterogeneity analysis across user segments
+# - Diagnostic plots and assumption checks
+```
+
+## Real Tech Applications
+
+### Product & Feature Analysis
+- **Feature rollout impact**: Measure true lift from new features beyond selection effects
+- **UI/UX changes**: Isolate design impact from user self-selection
+- **Pricing changes**: Estimate elasticity when users choose their plans
+- **Platform migrations**: Quantify the causal effect of moving users to new systems
+
+### Marketing & Growth
+- **Campaign effectiveness**: Separate campaign impact from organic trends
+- **Channel attribution**: Understand true incremental value of marketing channels
+- **Retention interventions**: Measure causal impact of win-back campaigns
+- **Geographic expansions**: Estimate market entry effects using synthetic controls
+
+### Business Operations
+- **Policy changes**: Evaluate impact of new policies on user behavior
+- **Competitive effects**: Measure how competitor actions affect your metrics
+- **Seasonal adjustments**: Separate true treatment effects from seasonality
+- **Long-term impacts**: Track how effects evolve over months/years
+
+## Why Automation Matters
+
+Modern causal inference has seen an explosion of methods in recent years. Choosing correctly requires deep knowledge of:
+- Parallel trends assumptions
+- Staggered treatment timing
+- Heterogeneous treatment effects
+- Two-way fixed effects bias
+- Synthetic control construction
+
+PyAutoCausal encodes this expertise, automatically routing your analysis through the appropriate methods while maintaining transparency about assumptions and limitations.
 
 ## Installation
 
@@ -45,176 +106,112 @@ PyAutoCausal makes causal inference workflows more modular, testable, and reprod
 pip install pyautocausal
 ```
 
-## Example Usage
+Or for development:
 
-### Basic Pipeline
+```bash
+git clone https://github.com/yourusername/pyautocausal.git
+cd pyautocausal
+poetry install
+```
+
+## Core Concepts
+
+### Graph-Based Pipeline Architecture
+
+PyAutoCausal organizes causal analysis as directed graphs of computational nodes:
 
 ```python
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-import pandas as pd
 
-def create_sample_data() -> pd.DataFrame:
-    """Create sample DataFrame for testing"""
-    return pd.DataFrame({
-        'category': ['A', 'B', 'A', 'B', 'A', 'B'],
-        'value': [10, 20, 15, 25, 30, 35]
-    })
-
-def compute_average(df: pd.DataFrame) -> pd.Series:
-    """Compute average values by category"""
-    return df.groupby('category')['value'].mean()
-
-# Build graph using builder pattern
-graph = (ExecutableGraph(output_path="./outputs")
-    .create_node(
-        "create_data", 
-        create_sample_data,
-        save_node=True,
-        output_config=OutputConfig(
-            output_filename="create_data",
-            output_type=OutputType.PARQUET
-        )
-    )
-    .create_node(
-        "compute_average",
-        compute_average,
-        predecessors=["create_data"],
-        save_node=True,
-        output_config=OutputConfig(
-            output_filename="compute_average",
-            output_type=OutputType.CSV
-        )
-    )
+# Build custom pipelines using the graph API
+graph = (ExecutableGraph()
+    .configure_runtime(output_path="./outputs")
+    .create_input_node("data", input_dtype=pd.DataFrame)
+    .create_decision_node("has_multiple_periods", 
+                         condition=lambda df: df['t'].nunique() > 1,
+                         predecessors=["data"])
+    .create_node("cross_sectional_analysis", 
+                cross_sectional_estimator,
+                predecessors=["has_multiple_periods"])
+    .create_node("panel_analysis",
+                panel_estimator, 
+                predecessors=["has_multiple_periods"])
+    .when_false("has_multiple_periods", "cross_sectional_analysis")
+    .when_true("has_multiple_periods", "panel_analysis")
 )
 
-# Execute the graph
-graph.execute_graph()
-
-# Access results
-data_node = [n for n in graph.nodes() if n.name == "create_data"][0]
-df = data_node.get_result_value()
-
-average_node = [n for n in graph.nodes() if n.name == "compute_average"][0]
-averages = average_node.get_result_value()
+graph.fit(data=your_dataframe)
 ```
 
-### Conditional Execution
+### Automated Method Selection
 
-```python
-from pyautocausal.orchestration.graph import ExecutableGraph
-from pyautocausal.persistence.output_config import OutputConfig, OutputType
-from pathlib import Path
+The framework automatically routes your data through appropriate causal inference methods:
 
-# Define analytical functions
-def load_data() -> pd.DataFrame:
-    return pd.DataFrame({
-        'treatment': [0, 1, 0, 1, 0, 1],
-        'outcome': [10, 12, 9, 14, 11, 13],
-        'confounder': [5, 6, 4, 7, 5, 8]
-    })
+- **Cross-sectional** (single time period) → OLS with robust inference
+- **Panel with single treated unit** → Synthetic control methods
+- **Panel with multiple treatment timing** → Modern DiD estimators
+- **Staggered treatment adoption** → Callaway-Sant'Anna, BACON decomposition
+- **Large datasets** → Double/debiased machine learning approaches
 
-def check_sample_size(data: pd.DataFrame) -> bool:
-    # Determine if sample size is sufficient for DoubleML
-    return len(data) >= 1000
+### Built-in Validation
 
-def analyze_with_doubleml(data: pd.DataFrame) -> str:
-    # Run DoubleML analysis (simplified)
-    return "DoubleML results for small sample"
-
-def analyze_with_ols(data: pd.DataFrame) -> str:
-    # Run OLS analysis (simplified)
-    outcome = data['outcome']
-    treatment = data['treatment']
-    confounder = data['confounder']
-    
-    # Simple OLS model
-    import statsmodels.api as sm
-    X = sm.add_constant(pd.DataFrame({'treatment': treatment, 'confounder': confounder}))
-    model = sm.OLS(outcome, X).fit()
-    return model.summary().as_text()
-
-# Create and configure the graph
-output_path = Path("./results")
-graph = (ExecutableGraph(output_path=output_path)
-    .create_input_node("df", input_dtype=pd.DataFrame)
-    .create_decision_node(
-        "sample_size_check",
-        check_sample_size,
-        predecessors=["df"],
-    )
-    .create_node(
-        "doubleml",
-        analyze_with_doubleml,
-        predecessors=["df"],
-        save_node=True,
-        output_config=OutputConfig(
-            output_filename="doubleml_results",
-            output_type=OutputType.TEXT 
-        )
-    )
-    .create_node(
-        "ols",
-        analyze_with_ols,
-        predecessors=["df"],
-        save_node=True,
-        output_config=OutputConfig(
-            output_filename="ols_results",
-            output_type=OutputType.TEXT 
-        )
-    )
-    .when_true("sample_size_check", "doubleml")
-    .when_false("sample_size_check", "ols")
-)
-
-# Execute the workflow with input data
-data = load_data()
-graph.fit(df=data)
-```
+Every analysis includes:
+- **Data quality checks**: Missing values, duplicates, proper formatting
+- **Assumption testing**: Parallel trends, common support, balance
+- **Robustness checks**: Alternative specifications and estimators
+- **Diagnostic plots**: Visual assumption validation
 
 ## Project Structure
 
 ```
 pyautocausal/
-├── orchestration/        # Core graph execution system
-│   ├── graph.py          # ExecutableGraph class for workflow orchestration
-│   ├── nodes.py          # Node, DecisionNode, InputNode implementations
-│   ├── node_state.py     # State management for nodes
-│   ├── result.py         # Result wrapper for node outputs
-│   ├── base.py           # Base protocols and interfaces
-│   └── run_context.py    # Global execution context
-├── persistence/          # Output storage and visualization
-│   ├── output_config.py  # Configuration for output formats
-│   ├── output_types.py   # Supported output types
-│   ├── serialization.py  # Serialization utilities
-│   ├── type_inference.py # Type-based format selection
-│   ├── output_handler.py # Abstract output handler
-│   ├── local_output_handler.py # Local filesystem handler
-│   ├── notebook_export.py # Export to Jupyter notebooks
-│   └── visualizer.py     # Graph visualization tools
-├── pipelines/            # Pre-configured analysis pipelines
-│   ├── library.py        # Reusable node templates
-│   └── example.py        # Example pipelines
-└── utils/                # Utility functions
-    └── logger.py         # Logging configuration
+├── orchestration/          # Core graph execution framework
+│   ├── graph.py            # ExecutableGraph class and execution logic
+│   ├── nodes.py            # Node types (standard, decision, input)
+│   └── ...
+├── pipelines/              # Pre-built causal inference workflows
+│   ├── library/            # Reusable causal analysis components
+│   │   ├── specifications.py  # Treatment/outcome specifications
+│   │   ├── estimators.py      # Statistical estimators
+│   │   ├── conditions.py      # Data characteristic detectors
+│   │   ├── plots.py           # Visualization functions
+│   │   └── ...
+│   └── example_graph.py    # Main causal inference pipeline
+├── causal_methods/         # Core statistical methods
+│   └── double_ml.py        # DoubleML implementation
+├── persistence/            # Output handling and export
+│   ├── notebook_export.py  # Jupyter notebook generation
+│   ├── output_config.py    # Output format configuration
+│   └── ...
+└── utils/                  # Utility functions
 ```
 
-## Benefits
+## Next Steps
 
-- **Reproducibility**: Explicitly defined workflows with saved outputs
-- **Modularity**: Break complex analyses into independent, reusable components
-- **Testability**: Test individual components or entire workflows
-- **Flexibility**: Adapt execution paths based on data characteristics
-- **Transparency**: Clearly visible analysis steps and data flow
+- **📖 [Getting Started Guide](docs/getting-started.md)** - Step-by-step tutorial
+- **📊 [Causal Methods Reference](docs/causal-methods.md)** - All available estimators
+- **🔧 [Pipeline Development](docs/pipeline-guide.md)** - Building custom workflows
+- **📋 [Data Requirements](docs/data-requirements.md)** - Input formats and validation
+- **💡 [Examples](docs/examples/)** - Real-world case studies
 
 ## Contributing
 
-Contributions to PyAutoCausal are welcome! Please see our contributing guidelines for more information.
+We welcome contributions! Please see our [contributing guidelines](CONTRIBUTING.md) for details.
 
 ## License
 
-[Add your license information here]
+[MIT License](LICENSE)
 
-## Contact
+## Citation
 
-[Add your contact information here]
+If you use PyAutoCausal in your research, please cite:
+
+```bibtex
+@software{pyautocausal,
+  title={PyAutoCausal: Automated Causal Inference Pipelines},
+  author={Your Name},
+  year={2024},
+  url={https://github.com/yourusername/pyautocausal}
+}
+```

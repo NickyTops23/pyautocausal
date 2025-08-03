@@ -16,6 +16,19 @@ import warnings
 import types
 
 
+class NodeExecutionError(Exception):
+    """Generic wrapper for node execution failures."""
+    
+    def __init__(self, message: str, node_name: str, original_exception: Exception):
+        super().__init__(message)
+        self.node_name = node_name
+        self.original_exception = original_exception
+        self.original_exception_type = type(original_exception).__name__
+    
+    def __str__(self) -> str:
+        return f"Error in node '{self.node_name}' ({self.original_exception_type}): {self.original_exception}"
+
+
 def is_lambda(func):
     """
     Reliably detect if a function is a lambda function.
@@ -259,6 +272,39 @@ class Node(BaseNode):
         
         return {**required_params, **optional_params}
 
+    def _try_recreate_exception_with_node_context(self, original_exception: Exception) -> Optional[Exception]:
+        """Attempt to recreate the original exception with node context added."""
+        try:
+            # Import DataValidationError here to avoid circular imports
+            from ..data_validation.validator_base import DataValidationError
+            
+            # Special handling for DataValidationError
+            if isinstance(original_exception, DataValidationError):
+                enhanced_message = f"Error in node '{self.name}': {original_exception.args[0]}"
+                return DataValidationError(enhanced_message, original_exception.validation_result).with_traceback(original_exception.__traceback__)
+            
+            # For other exceptions, try to recreate with single message parameter
+            exception_type = type(original_exception)
+            
+            # Get the constructor signature
+            sig = inspect.signature(exception_type.__init__)
+            params = list(sig.parameters.keys())[1:]  # Skip 'self'
+            
+            # Check if it's a simple single-argument constructor
+            if len(params) == 1:
+                param_name = params[0]
+                # Common parameter names for message
+                if param_name in ('message', 'msg', 'args'):
+                    enhanced_message = f"Error in node '{self.name}': {original_exception}"
+                    return exception_type(enhanced_message).with_traceback(original_exception.__traceback__)
+            
+            # If we can't safely recreate, return None to use generic wrapper
+            return None
+            
+        except Exception:
+            # If anything goes wrong during recreation, return None to fall back to generic wrapper
+            return None
+
     def execute(self):
         """Execute the node's action function"""
         self.execution_count += 1
@@ -268,7 +314,19 @@ class Node(BaseNode):
             self.mark_completed()
         except Exception as e:
             self.mark_failed()
-            raise e
+            
+            # Try to preserve original exception type with enhanced message
+            enhanced_exception = self._try_recreate_exception_with_node_context(e)
+            
+            if enhanced_exception is not None:
+                raise enhanced_exception
+            else:
+                # Fall back to generic wrapper that preserves all info
+                raise NodeExecutionError(
+                    f"Error in node '{self.name}': {e}",
+                    self.name,
+                    e
+                ).with_traceback(e.__traceback__)
 
     def mark_running(self):
         self.state = NodeState.RUNNING
@@ -283,7 +341,6 @@ class Node(BaseNode):
         """Mark this node as passed (skipped due to decision branching)."""
         if self.state == NodeState.PENDING:
             self.state = NodeState.PASSED
-            self.logger.info(f"Node {self.name} marked as PASSED (skipped due to decision branching)")
         
     def is_completed(self):
         return self.state == NodeState.COMPLETED
@@ -313,7 +370,6 @@ class Node(BaseNode):
         predecessor_outputs = self.graph.get_node_predecessor_outputs(self)
         
         arguments = self._resolve_function_arguments(self.action_function, predecessor_outputs)
-        print(f"Executing {self.name} with arguments: {arguments}")
         return (
             self.action_function(**arguments) if arguments 
             else self.action_function()
@@ -458,17 +514,13 @@ class DecisionNode(Node):
             if condition_result:
                 if successor in self._ewt_nodes:
                     edge['traversable'] = True # this is not strictly necessary, since edges are traversable by default
-                    self.logger.info(f"Edge to '{successor.name}' is traversable (condition is TRUE)")
                 else:
                     edge['traversable'] = False
-                    self.logger.info(f"Edge to '{successor.name}' is NOT traversable (condition is TRUE)")
             elif not condition_result:
                 if successor in self._ewf_nodes:
                     edge['traversable'] = True
-                    self.logger.info(f"Edge to '{successor.name}' is traversable (condition is FALSE)")
                 else:
                     edge['traversable'] = False
-                    self.logger.info(f"Edge to '{successor.name}' is NOT traversable (condition is FALSE)")
             else:
                 raise ValueError(f"Decision node '{self.name}' received an unexpected condition result: {condition_result}")
         

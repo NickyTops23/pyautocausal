@@ -1,5 +1,5 @@
 import pytest
-from pyautocausal.orchestration.nodes import Node, DecisionNode, NodeState
+from pyautocausal.orchestration.nodes import Node, DecisionNode, NodeState, NodeExecutionError
 from pyautocausal.orchestration.graph import ExecutableGraph
 from typing import Any
 
@@ -197,10 +197,13 @@ def test_decision_node_validation():
     # graph.when_true("decision", "unclassified")
     
     # Executing should raise an error during validation
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(NodeExecutionError) as exc_info:
         graph.execute_graph()
     
+    # Check that the original ValueError is wrapped and contains the expected message
     assert "not classified" in str(exc_info.value)
+    assert isinstance(exc_info.value.original_exception, ValueError)
+    assert "not classified" in str(exc_info.value.original_exception)
 
 def test_chained_decisions():
     """
