@@ -6,6 +6,7 @@ from .categorical_operations import ConvertToCategoricalOperation, EncodeMissing
 from .missing_data_operations import DropMissingRowsOperation, FillMissingWithValueOperation
 from .duplicate_operations import DropDuplicateRowsOperation
 from .schema_operations import UpdateColumnTypesOperation
+from .time_operations import StandardizeTimePeriodsOperation
 
 
 def get_all_operations() -> List[CleaningOperation]:
@@ -16,7 +17,8 @@ def get_all_operations() -> List[CleaningOperation]:
         EncodeMissingAsCategoryOperation(),
         DropMissingRowsOperation(),
         FillMissingWithValueOperation(),
-        DropDuplicateRowsOperation()
+        DropDuplicateRowsOperation(),
+        StandardizeTimePeriodsOperation()
     ]
 
 __all__ = [
@@ -28,4 +30,5 @@ __all__ = [
     "DropMissingRowsOperation",
     'FillMissingWithValueOperation',
     'DropDuplicateRowsOperation',
+    'StandardizeTimePeriodsOperation',
 ] 

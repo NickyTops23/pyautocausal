@@ -138,4 +138,95 @@ def test_autocleaner_unified_logging():
         
     finally:
         # Clean up logging
-        logger.removeHandler(handler) 
+        logger.removeHandler(handler)
+
+
+def test_autocleaner_time_period_standardization():
+    """Test the time period standardization functionality."""
+    # Create test data with different time formats but consistent types
+    data = pd.DataFrame({
+        'unit': [1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+        'time': ['2020-01-01', '2020-02-01', '2020-03-01', '2020-04-01', 
+                 '2020-01-01', '2020-02-01', '2020-03-01', '2020-04-01',
+                 '2020-01-01', '2020-02-01', '2020-03-01', '2020-04-01'],
+        'treatment': [0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1],  # First treatment in 2020-02-01 (unit 2)
+        'outcome': [10, 12, 15, 18, 8, 11, 14, 16, 9, 10, 11, 14]
+    })
+    
+    # Create autocleaner with time period standardization
+    autocleaner = (
+        AutoCleaner()
+        .standardize_time_periods(treatment_column="treatment", time_column="time")
+    )
+    
+    # Apply cleaning
+    cleaned_df = autocleaner.clean(data)
+    
+    # Verify that time column was standardized
+    unique_times = sorted(cleaned_df['time'].unique())
+    expected_times = [-1, 0, 1, 2]  # 2020-02-01 becomes 0 (first treatment)
+    assert unique_times == expected_times
+    
+    # Verify that the mapping is correct for specific cases
+    # Original 2020-02-01 should become 0 (first treatment period)
+    # Original 2020-01-01 should become -1 (before first treatment)
+    # Original 2020-03-01 should become 1 (after first treatment)
+    # Original 2020-04-01 should become 2 (two periods after first treatment)
+    
+    # Check specific rows to verify the mapping
+    unit_2_data = cleaned_df[cleaned_df['unit'] == 2].sort_values('time')
+    assert unit_2_data['time'].tolist() == [-1, 0, 1, 2]
+    
+    # Verify treatment data is preserved
+    assert cleaned_df['treatment'].tolist() == data['treatment'].tolist()
+    assert cleaned_df['outcome'].tolist() == data['outcome'].tolist()
+    assert cleaned_df['unit'].tolist() == data['unit'].tolist()
+
+
+def test_autocleaner_time_period_standardization_error_cases():
+    """Test that time period standardization properly handles error cases."""
+    
+    # Test 1: No treatment data (should raise error)
+    data_no_treatment = pd.DataFrame({
+        'unit': [1, 1, 1],
+        'time': [1, 2, 3],
+        'treatment': [0, 0, 0]  # No treatment==1
+    })
+    
+    autocleaner = AutoCleaner().standardize_time_periods()
+    
+    with pytest.raises(Exception) as exc_info:
+        autocleaner.clean(data_no_treatment)
+    
+    assert "No treatment data found" in str(exc_info.value)
+    
+    # Test 2: Mixed data types (should raise error)
+    data_mixed_types = pd.DataFrame({
+        'unit': [1, 1, 1],
+        'time': [1, '2020-02-01', 3],  # Mixed int and string
+        'treatment': [0, 1, 1]
+    })
+    
+    autocleaner = AutoCleaner().standardize_time_periods()
+    
+    with pytest.raises(Exception) as exc_info:
+        autocleaner.clean(data_mixed_types)
+    
+    assert "mixed data types" in str(exc_info.value)
+
+
+def test_autocleaner_time_period_standardization_with_integer_periods():
+    """Test time period standardization with integer time periods."""
+    data = pd.DataFrame({
+        'unit': [1, 1, 1, 2, 2, 2],
+        'time': [1, 2, 3, 1, 2, 3],
+        'treatment': [0, 1, 1, 0, 0, 1],  # Treatment starts in period 2
+        'outcome': [10, 15, 20, 12, 18, 25]
+    })
+    
+    autocleaner = AutoCleaner().standardize_time_periods()
+    cleaned_df = autocleaner.clean(data)
+    
+    # Expected mapping: 1->-1, 2->0, 3->1
+    expected_times = [-1, 0, 1, -1, 0, 1]
+    assert cleaned_df['time'].tolist() == expected_times 

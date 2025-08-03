@@ -89,6 +89,19 @@ class DropDuplicateRowsHint(CleaningHint):
         return 70  # Relatively high priority
 
 
+@dataclass
+class StandardizeTimePeriodHint(CleaningHint):
+    """Hint to standardize time periods relative to first treatment period."""
+    time_column: str
+    value_mapping: Dict[str, int]  # original_value -> standardized_index (str keys for JSON serialization)
+    treatment_start_period: str   # original value that becomes index 0 (str for consistency)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    @property
+    def priority(self) -> int:
+        return 75  # High priority - standardize before most other operations
+
+
 # For backward compatibility during migration
 def create_legacy_hint(operation_type: str, **kwargs) -> Optional[CleaningHint]:
     """Create a hint from legacy string-based operation type.
@@ -101,6 +114,7 @@ def create_legacy_hint(operation_type: str, **kwargs) -> Optional[CleaningHint]:
         "drop_missing_rows": DropMissingRowsHint,
         "fill_missing_with_value": FillMissingWithValueHint,
         "drop_duplicate_rows": DropDuplicateRowsHint,
+        "standardize_time_periods": StandardizeTimePeriodHint,
     }
     
     hint_class = mapping.get(operation_type)
@@ -132,6 +146,13 @@ def create_legacy_hint(operation_type: str, **kwargs) -> Optional[CleaningHint]:
         return hint_class(
             subset=kwargs.get("subset"),
             keep=kwargs.get("keep", "first")
+        )
+    elif operation_type == "standardize_time_periods":
+        return hint_class(
+            time_column=kwargs.get("time_column", "time"),
+            value_mapping=kwargs.get("value_mapping", {}),
+            treatment_start_period=kwargs.get("treatment_start_period", ""),
+            metadata=kwargs.get("metadata", {})
         )
     
     return None 
