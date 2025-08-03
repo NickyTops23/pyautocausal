@@ -1,6 +1,9 @@
 import pandas as pd
-from typing import Optional, Any, List, Tuple
-from dataclasses import dataclass
+import statsmodels.api as sm
+import io
+from typing import Optional, Any, Dict, List, Union, Tuple
+from dataclasses import dataclass, field
+from pyautocausal.persistence.output_config import OutputType, OutputConfig
 from pyautocausal.persistence.parameter_mapper import make_transformable
 from sklearn.linear_model import LogisticRegression, Lasso
 from sklearn.preprocessing import StandardScaler
@@ -8,15 +11,15 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import KFold
 from pyautocausal.pipelines.library.synthdid.utils import panel_matrices
 import numpy as np
+import patsy
+from enum import Enum
 
 @dataclass
 class BaseSpec:
     """Base specification with common fields."""
     data: pd.DataFrame
     formula: str
-    # we can't put model here because it needs to have a default value of None
-    # and if we put it in the baseSpec, it will cause an error because it comes before other
-    # fields in the subclasses that do not have a default value. So we put it in the subclasses.
+
 
 @dataclass
 class CrossSectionalSpec(BaseSpec):
@@ -24,7 +27,7 @@ class CrossSectionalSpec(BaseSpec):
     outcome_col: str
     treatment_cols: List[str]
     control_cols: List[str]
-    model: Optional[Any] = None
+
 @dataclass
 class DiDSpec(BaseSpec):
     """Difference-in-Differences specification."""
@@ -37,6 +40,7 @@ class DiDSpec(BaseSpec):
     include_unit_fe: bool
     include_time_fe: bool
     model: Optional[Any] = None
+
 @dataclass
 class EventStudySpec(BaseSpec):
     """Event Study specification."""
@@ -62,6 +66,7 @@ class StaggeredDiDSpec(BaseSpec):
     treatment_time_col: str
     model: Optional[Any] = None
 
+
 @dataclass
 class SynthDIDSpec(BaseSpec):
     """Synthetic Difference-in-Differences specification."""
@@ -75,6 +80,22 @@ class SynthDIDSpec(BaseSpec):
     T0: int  # Number of pre-treatment periods
     X: Optional[np.ndarray] = None  # Covariates matrix (N x T x C)
     model: Optional[Any] = None
+
+@dataclass
+class UpliftSpec(BaseSpec):
+    """Uplift modeling specification for binary treatment and outcomes."""
+    outcome_col: str
+    treatment_cols: List[str]  # List to match existing pattern
+    control_cols: List[str]    # Renamed from feature_cols to match convention
+    unit_col: str              # Added to match existing specs
+    model: Optional[Any] = None  # IMPORTANT: Required for compatibility with existing pipeline
+    propensity_score: Optional[np.ndarray] = None
+    cate_estimates: Optional[Dict[str, np.ndarray]] = None
+    ate_estimate: Optional[float] = None
+    ate_ci: Optional[Tuple[float, float]] = None
+    model_type: Optional[str] = None
+    models: Optional[Dict[str, Any]] = None
+    evaluation_metrics: Optional[Dict[str, float]] = None
 
 
 def validate_and_prepare_data(
@@ -130,6 +151,48 @@ def validate_and_prepare_data(
         control_cols = [col for col in numeric_cols if col not in to_exclude]
         
     return cleaned_data, control_cols
+
+
+@make_transformable
+def create_uplift_specification(
+    data: pd.DataFrame,
+    outcome_col: str = 'y',
+    treatment_cols: List[str] = ['treat'],
+    unit_col: str = 'id_unit',
+    control_cols: Optional[List[str]] = None
+) -> UpliftSpec:
+    """
+    Create uplift modeling specification following PyAutoCausal patterns.
+    
+    Uses validate_and_prepare_data to handle control column auto-detection
+    and data validation, matching existing specification functions.
+    """
+    # Validate and prepare data using existing utility
+    data, control_cols = validate_and_prepare_data(
+        data=data,
+        outcome_col=outcome_col,
+        treatment_cols=treatment_cols,
+        control_cols=control_cols,
+        excluded_cols=[unit_col]  # Exclude ID from controls
+    )
+    
+    # Additional validation for uplift modeling
+    treatment_col = treatment_cols[0]  # Use first treatment
+    if data[outcome_col].nunique() != 2:
+        raise ValueError(f"Outcome {outcome_col} must be binary for uplift modeling")
+    if data[treatment_col].nunique() != 2:
+        raise ValueError(f"Treatment {treatment_col} must be binary for uplift modeling")
+    
+    formula = f"{outcome_col} ~ {treatment_col} + " + " + ".join(control_cols)
+    
+    return UpliftSpec(
+        data=data,
+        formula=formula,
+        outcome_col=outcome_col,
+        treatment_cols=treatment_cols,
+        control_cols=control_cols,
+        unit_col=unit_col
+    )
 
 
 @make_transformable
@@ -631,7 +694,6 @@ def spec_constructor(spec: Any) -> str:
 
     # Return the constructor call as a string with proper indentation
     return f"{class_name}(\n" + ",\n".join(attrs) + "\n)"
-
 
 
 
