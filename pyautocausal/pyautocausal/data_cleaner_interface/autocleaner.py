@@ -7,13 +7,14 @@ from pyautocausal.data_validation.validator_base import DataValidator
 from pyautocausal.data_validation.checks.basic_checks import RequiredColumnsCheck, RequiredColumnsConfig, ColumnTypesCheck, ColumnTypesConfig, DuplicateRowsCheck, DuplicateRowsConfig
 from pyautocausal.data_validation.checks.missing_data_checks import MissingDataCheck, MissingDataConfig
 from pyautocausal.data_validation.checks.categorical_checks import InferCategoricalColumnsCheck, InferCategoricalColumnsConfig
-from pyautocausal.data_validation.checks.causal_checks import BinaryTreatmentCheck, BinaryTreatmentConfig
+from pyautocausal.data_validation.checks.causal_checks import BinaryTreatmentCheck, BinaryTreatmentConfig, TimePeriodStandardizationCheck, TimePeriodStandardizationConfig
 
 # Import cleaning components
 from pyautocausal.data_cleaning.operations.missing_data_operations import DropMissingRowsOperation, FillMissingWithValueOperation
 from pyautocausal.data_cleaning.operations.categorical_operations import ConvertToCategoricalOperation, EncodeMissingAsCategoryOperation
 from pyautocausal.data_cleaning.operations.duplicate_operations import DropDuplicateRowsOperation
 from pyautocausal.data_cleaning.operations.schema_operations import UpdateColumnTypesOperation
+from pyautocausal.data_cleaning.operations.time_operations import StandardizeTimePeriodsOperation
 from pyautocausal.data_cleaning.planner import DataCleaningPlanner
 from pyautocausal.data_cleaning.base import CleaningMetadata
 
@@ -77,6 +78,38 @@ class AutoCleaner:
         self._checks.append(BinaryTreatmentCheck())
         self._configs["binary_treatment"] = BinaryTreatmentConfig(treatment_column=treatment_column, **kwargs)
         # Note: No default cleaning operation for this. Assumes user handles it or that it's a validation stop.
+        return self
+    
+    def standardize_time_periods(self, treatment_column: str = "treatment", time_column: str = "time", **kwargs):
+        """
+        Adds a check to standardize time periods relative to first treatment period.
+        
+        This check:
+        1. Finds the minimum time period where treatment==1 occurs
+        2. Creates a standardized mapping where that period becomes index 0
+        3. Earlier periods get negative indices (-1, -2, etc.)
+        4. Later periods get positive indices (1, 2, etc.)
+        5. Automatically applies the standardization as a cleaning operation
+        
+        Args:
+            treatment_column (str): Name of the treatment column. Defaults to "treatment".
+            time_column (str): Name of the time column. Defaults to "time".
+            **kwargs: Additional configuration options.
+            
+        Returns:
+            AutoCleaner: Self for method chaining.
+            
+        Raises:
+            ValidationError: If no treatment data exists (no rows where treatment==1).
+            ValidationError: If time column contains mixed data types.
+        """
+        self._checks.append(TimePeriodStandardizationCheck())
+        self._operations.append(StandardizeTimePeriodsOperation())
+        self._configs["time_period_standardization"] = TimePeriodStandardizationConfig(
+            treatment_column=treatment_column, 
+            time_column=time_column, 
+            **kwargs
+        )
         return self
 
     def drop_duplicates(self, **kwargs):
