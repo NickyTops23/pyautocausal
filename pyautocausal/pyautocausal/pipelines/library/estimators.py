@@ -13,7 +13,7 @@ import copy
 import re
 from linearmodels import PanelOLS, RandomEffects, FirstDifferenceOLS, BetweenOLS
 from pyautocausal.pipelines.library.synthdid.synthdid import synthdid_estimate
-from pyautocausal.pipelines.library.HainmuellerSyntheticControl.SyntheticControlMethods import Synth
+from pyautocausal.pipelines.library.synthcontrol.SyntheticControlMethods import Synth
 from pyautocausal.persistence.parameter_mapper import make_transformable
 from pyautocausal.pipelines.library.specifications import (
     BaseSpec,

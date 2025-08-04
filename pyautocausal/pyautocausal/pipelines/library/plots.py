@@ -15,6 +15,7 @@ from pyautocausal.pipelines.library.specifications import (
 )
 from pyautocausal.persistence.parameter_mapper import make_transformable
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
+from pyautocausal.pipelines.library.synthdid.plot import plot_synthdid
 
 
 from pyautocausal.pipelines.library.specifications import UpliftSpec
@@ -497,13 +498,9 @@ def synthdid_plot(spec, output_config: Optional[OutputConfig] = None, **kwargs) 
     Returns:
         matplotlib figure object
     """
-    from pyautocausal.pipelines.library.synthdid.plot import plot_synthdid
-    
-    if not hasattr(spec, 'model') or spec.model is None:
-        raise ValueError("Specification must have a fitted model")
-    
+        
     # Create the plot using the synthdid plotting function
-    fig = plot_synthdid(spec.model, **kwargs)
+    fig, ax = plot_synthdid(spec.model, **kwargs)
     
     # Save if output config provided
     if output_config:

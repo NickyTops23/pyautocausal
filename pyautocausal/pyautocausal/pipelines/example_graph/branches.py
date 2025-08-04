@@ -155,25 +155,25 @@ def create_synthetic_did_branch(graph: ExecutableGraph) -> None:
         predecessors=["single_treated_unit"]
     )
 
-    # # Add balance tests to synthetic DiD spec
-    # balance_node = _add_balance_tests_to_spec(graph, 'synthdid_spec', 'synthetic_did')
+    # Add balance tests to synthetic DiD spec
+    balance_node = _add_balance_tests_to_spec(graph, 'synthdid_spec', 'synthetic_did')
 
-    # graph.create_node(
-    #     'synthdid_fit', 
-    #     action_function=fit_synthdid_estimator.transform({balance_node: 'spec'}),
-    #     predecessors=[balance_node]
-    # )
+    graph.create_node(
+        'synthdid_fit', 
+        action_function=fit_synthdid_estimator.transform({balance_node: 'spec'}),
+        predecessors=[balance_node]
+    )
     
-    # graph.create_node(
-    #     'synthdid_plot',
-    #     action_function=synthdid_plot.transform({'synthdid_fit': 'spec'}),
-    #             output_config=OutputConfig(
-    #         output_filename='plots/synthdid_plot',
-    #         output_type=OutputType.PNG
-    #     ),
-    #     save_node=True,
-    #     predecessors=["synthdid_fit"]
-    # )
+    graph.create_node(
+        'synthdid_plot',
+        action_function=synthdid_plot.transform({'synthdid_fit': 'spec'}),
+        output_config=OutputConfig(
+            output_filename='plots/synthdid_plot',
+            output_type=OutputType.PNG
+        ),
+        save_node=True,
+        predecessors=["synthdid_fit"]
+    )
 
 
 def create_hainmueller_synth_branch(graph: ExecutableGraph) -> None:
@@ -208,7 +208,7 @@ def create_hainmueller_synth_branch(graph: ExecutableGraph) -> None:
 
     graph.create_node(
         'hainmueller_validity_plot',
-        action_function=hainmueller_synth_validity_plot.transform({'hainmueller_fit': 'spec'}),
+        action_function=hainmueller_synth_validity_plot.transform({'hainmueller_placebo_test': 'spec'}),
         predecessors=["hainmueller_placebo_test"],
         output_config=OutputConfig(
             output_filename='plots/hainmueller_validity_plot',
@@ -217,7 +217,6 @@ def create_hainmueller_synth_branch(graph: ExecutableGraph) -> None:
         save_node=True,
     )
 
-    # Text output for Hainmueller results
     graph.create_node(
         'hainmueller_output',
         action_function=write_hainmueller_summary.transform({'hainmueller_placebo_test': 'spec'}),
