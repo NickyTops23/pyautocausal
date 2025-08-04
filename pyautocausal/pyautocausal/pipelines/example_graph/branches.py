@@ -22,6 +22,8 @@ from pyautocausal.pipelines.library.estimators import (
     fit_callaway_santanna_estimator,
     fit_callaway_santanna_nyt_estimator,
     fit_synthdid_estimator,
+    fit_hainmueller_synth_estimator,
+    fit_hainmueller_placebo_test,
     fit_s_learner,
     fit_t_learner,
     fit_x_learner,
@@ -46,7 +48,8 @@ from pyautocausal.pipelines.library.specifications import (
 from pyautocausal.pipelines.library.plots import (
     event_study_plot, 
     synthdid_plot,
-    hainmueller_synth_plot,
+    hainmueller_synth_effect_plot,
+    hainmueller_synth_validity_plot,
     uplift_curve_plot_adaptive,
     plot_balance_coefficients,
     callaway_santanna_group_event_plot,
@@ -86,7 +89,7 @@ def _add_balance_tests_to_spec(graph: ExecutableGraph, spec_node: str, spec_name
         balance_table_node,
         action_function=write_balance_summary_table.transform({balance_node: 'spec'}),
         output_config=OutputConfig(
-            output_filename=f'{spec_name}_balance_results', 
+            output_filename=f'text/{spec_name}_balance_results', 
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -98,7 +101,7 @@ def _add_balance_tests_to_spec(graph: ExecutableGraph, spec_node: str, spec_name
         balance_plot_node,
         action_function=plot_balance_coefficients.transform({balance_node: 'spec'}),
         output_config=OutputConfig(
-            output_filename=f'{spec_name}_balance_plot', 
+            output_filename=f'plots/{spec_name}_balance_plot', 
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -133,7 +136,7 @@ def create_cross_sectional_branch(graph: ExecutableGraph) -> None:
         'ols_stand_output',
         action_function=write_statsmodels_to_summary.transform({'ols_stand': 'res'}),
         output_config=OutputConfig(
-            output_filename='ols_stand_output',
+            output_filename='text/ols_stand_output',
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -152,24 +155,78 @@ def create_synthetic_did_branch(graph: ExecutableGraph) -> None:
         predecessors=["single_treated_unit"]
     )
 
-    # Add balance tests to synthetic DiD spec
-    balance_node = _add_balance_tests_to_spec(graph, 'synthdid_spec', 'synthetic_did')
+    # # Add balance tests to synthetic DiD spec
+    # balance_node = _add_balance_tests_to_spec(graph, 'synthdid_spec', 'synthetic_did')
+
+    # graph.create_node(
+    #     'synthdid_fit', 
+    #     action_function=fit_synthdid_estimator.transform({balance_node: 'spec'}),
+    #     predecessors=[balance_node]
+    # )
+    
+    # graph.create_node(
+    #     'synthdid_plot',
+    #     action_function=synthdid_plot.transform({'synthdid_fit': 'spec'}),
+    #             output_config=OutputConfig(
+    #         output_filename='plots/synthdid_plot',
+    #         output_type=OutputType.PNG
+    #     ),
+    #     save_node=True,
+    #     predecessors=["synthdid_fit"]
+    # )
+
+
+def create_hainmueller_synth_branch(graph: ExecutableGraph) -> None:
+    """Create nodes for Hainmueller Synthetic Control analysis branch.
+    
+    This branch handles panel data with a single treated unit using Hainmueller synthetic controls
+    with in-space placebo tests.
+    """
+    # Hainmueller Synthetic Control specification (reuses synthdid_spec)
+    graph.create_node(
+        'hainmueller_fit', 
+        action_function=fit_hainmueller_synth_estimator.transform({'synthdid_spec': 'spec'}),
+        predecessors=["synthdid_spec"]
+    )
 
     graph.create_node(
-        'synthdid_fit', 
-        action_function=fit_synthdid_estimator.transform({balance_node: 'spec'}),
-        predecessors=[balance_node]
+        'hainmueller_placebo_test',
+        action_function=fit_hainmueller_placebo_test.transform({'hainmueller_fit': 'spec'}),
+        predecessors=["hainmueller_fit"],
     )
-    
+        
     graph.create_node(
-        'synthdid_plot',
-        action_function=synthdid_plot.transform({'synthdid_fit': 'spec'}),
-                output_config=OutputConfig(
-            output_filename='synthdid_plot',
+        'hainmueller_effect_plot',
+        action_function=hainmueller_synth_effect_plot.transform({'hainmueller_fit': 'spec'}),
+        predecessors=["hainmueller_fit"],
+        output_config=OutputConfig(
+            output_filename='plots/hainmueller_effect_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
-        predecessors=["synthdid_fit"]
+    )
+
+    graph.create_node(
+        'hainmueller_validity_plot',
+        action_function=hainmueller_synth_validity_plot.transform({'hainmueller_fit': 'spec'}),
+        predecessors=["hainmueller_placebo_test"],
+        output_config=OutputConfig(
+            output_filename='plots/hainmueller_validity_plot',
+            output_type=OutputType.PNG
+        ),
+        save_node=True,
+    )
+
+    # Text output for Hainmueller results
+    graph.create_node(
+        'hainmueller_output',
+        action_function=write_hainmueller_summary.transform({'hainmueller_placebo_test': 'spec'}),
+        output_config=OutputConfig(
+            output_filename='text/hainmueller_output',
+            output_type=OutputType.TEXT
+        ),
+        save_node=True,
+        predecessors=["hainmueller_placebo_test"]
     )
 
 def create_did_branch(graph: ExecutableGraph) -> None:
@@ -197,7 +254,7 @@ def create_did_branch(graph: ExecutableGraph) -> None:
         'save_ols_did',
         action_function=write_linear_models_to_summary.transform({'ols_did': 'res'}),
                 output_config=OutputConfig(
-            output_filename='save_ols_did',
+            output_filename='text/save_ols_did',
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -229,7 +286,7 @@ def create_event_study_branch(graph: ExecutableGraph) -> None:
         'event_plot', 
         action_function=event_study_plot.transform({'ols_event': 'spec'}),
                 output_config=OutputConfig(
-            output_filename='event_study_plot',
+            output_filename='plots/event_study_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -240,7 +297,7 @@ def create_event_study_branch(graph: ExecutableGraph) -> None:
         'save_event_output',
         action_function=write_linear_models_to_summary.transform({'ols_event': 'res'}),
                 output_config=OutputConfig(
-            output_filename='save_event_output',
+            output_filename='text/save_event_output',
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -296,7 +353,7 @@ def create_staggered_did_branch(graph: ExecutableGraph) -> None:
         'cs_never_treated_plot',
         action_function=callaway_santana_event_study_plot.transform({'cs_never_treated': 'spec'}),
         output_config=OutputConfig(
-            output_filename='callaway_santanna_never_treated_plot',
+            output_filename='plots/callaway_santanna_never_treated_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -307,7 +364,7 @@ def create_staggered_did_branch(graph: ExecutableGraph) -> None:
         'cs_never_treated_group_plot',
         action_function=callaway_santanna_group_event_plot.transform({'cs_never_treated': 'spec'}),
         output_config=OutputConfig(
-            output_filename='callaway_santanna_never_treated_group_plot',
+            output_filename='plots/callaway_santanna_never_treated_group_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -325,7 +382,7 @@ def create_staggered_did_branch(graph: ExecutableGraph) -> None:
         'cs_not_yet_treated_plot',
         action_function=callaway_santana_event_study_plot.transform({'cs_not_yet_treated': 'spec'}),
         output_config=OutputConfig(
-            output_filename='callaway_santanna_not_yet_treated_plot',
+            output_filename='plots/callaway_santanna_not_yet_treated_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -336,7 +393,7 @@ def create_staggered_did_branch(graph: ExecutableGraph) -> None:
         'cs_not_yet_treated_group_plot',
         action_function=callaway_santanna_group_event_plot.transform({'cs_not_yet_treated': 'spec'}),
         output_config=OutputConfig(
-            output_filename='callaway_santanna_not_yet_treated_group_plot',
+            output_filename='plots/callaway_santanna_not_yet_treated_group_plot',
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -349,7 +406,7 @@ def create_staggered_did_branch(graph: ExecutableGraph) -> None:
         'stag_event_plot',
         action_function=event_study_plot.transform({'ols_stag': 'spec'}),
         output_config=OutputConfig(
-            output_filename='staggered_event_study_plot', 
+            output_filename='plots/staggered_event_study_plot', 
             output_type=OutputType.PNG
         ),
         save_node=True,
@@ -360,7 +417,7 @@ def create_staggered_did_branch(graph: ExecutableGraph) -> None:
         'save_stag_output',
         action_function=write_linear_models_to_summary.transform({'ols_stag': 'res'}),
         output_config=OutputConfig(
-            output_filename='save_stag_output', 
+            output_filename='text/save_stag_output', 
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -397,7 +454,7 @@ def create_uplift_branch(graph: ExecutableGraph) -> None:
         's_learner_output',
         action_function=write_uplift_summary.transform({'s_learner_fit': 'spec'}),
         output_config=OutputConfig(
-            output_filename='s_learner_results', 
+            output_filename='text/s_learner_results', 
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -424,7 +481,7 @@ def create_uplift_branch(graph: ExecutableGraph) -> None:
         't_learner_output',
         action_function=write_uplift_summary.transform({'t_learner_fit': 'spec'}),
         output_config=OutputConfig(
-            output_filename='t_learner_results', 
+            output_filename='text/t_learner_results', 
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -451,7 +508,7 @@ def create_uplift_branch(graph: ExecutableGraph) -> None:
         'x_learner_output',
         action_function=write_uplift_summary.transform({'x_learner_fit': 'spec'}),
         output_config=OutputConfig(
-            output_filename='x_learner_results', 
+            output_filename='text/x_learner_results', 
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -478,7 +535,7 @@ def create_uplift_branch(graph: ExecutableGraph) -> None:
         'double_ml_output',
         action_function=write_uplift_summary.transform({'double_ml_fit': 'spec'}),
         output_config=OutputConfig(
-            output_filename='double_ml_results', 
+            output_filename='text/double_ml_results', 
             output_type=OutputType.TEXT
         ),
         save_node=True,
@@ -488,7 +545,7 @@ def create_uplift_branch(graph: ExecutableGraph) -> None:
         'double_ml_plot',
         action_function=uplift_curve_plot_adaptive.transform({'double_ml_fit': 'spec'}),
         output_config=OutputConfig(
-            output_filename='double_ml_curve', 
+            output_filename='plots/double_ml_curve', 
             output_type=OutputType.PNG
         ),
         save_node=True,

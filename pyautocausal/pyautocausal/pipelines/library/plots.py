@@ -14,9 +14,10 @@ from pyautocausal.pipelines.library.specifications import (
     BaseSpec, DiDSpec, StaggeredDiDSpec, EventStudySpec
 )
 from pyautocausal.persistence.parameter_mapper import make_transformable
-from pyautocausal.pipelines.library.callaway_santanna import CSResults
 from pyautocausal.persistence.output_config import OutputConfig, OutputType
-from pyautocausal.pipelines.library.synthdid.plot import plot_synthdid
+
+
+from pyautocausal.pipelines.library.specifications import UpliftSpec
 
 def _get_confidence_intervals(model, confidence_level: float):
     """
@@ -49,19 +50,152 @@ def _get_confidence_intervals(model, confidence_level: float):
             raise ValueError(f"Could not get confidence intervals from model: {e}")
 
 
-def _extract_cs_results(cs_model: CSResults) -> pd.DataFrame:
-    """Extract event study results from Callaway & Sant'Anna model."""
-    cs_event_results = cs_model.summary[cs_model.summary['type'] == 'event_time'].copy()
+def _plot_uplift_curve_native(y_true, uplift_scores, treatment, ax=None, **kwargs):
+    """
+    Native uplift curve plotting using only matplotlib and pandas.
     
-    if cs_event_results.empty:
-        raise ValueError("No event-time results found in the Callaway and Sant'Anna model")
+    Creates uplift curve showing treatment effect by score deciles.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12, 8))
+    else:
+        fig = ax.figure
     
-    return pd.DataFrame({
-        'period': cs_event_results['event_time'].tolist(),
-        'coef': cs_event_results['att'].tolist(),
-        'lower': cs_event_results['lower_ci'].tolist(),
-        'upper': cs_event_results['upper_ci'].tolist()
+    # Create analysis dataframe
+    df = pd.DataFrame({
+        'y': y_true,
+        'uplift': uplift_scores,
+        'treatment': treatment
     })
+    
+    # Sort by uplift score (descending) and create deciles
+    df = df.sort_values('uplift', ascending=False).reset_index(drop=True)
+    df['decile'] = pd.qcut(range(len(df)), 10, labels=False) + 1
+    
+    # Calculate metrics by decile
+    decile_results = []
+    print(f"DEBUG: Total observations: {len(df)}")
+    print(f"DEBUG: Treatment balance: {df['treatment'].value_counts().to_dict()}")
+    print(f"DEBUG: Outcome rate: {df['y'].mean():.4f}")
+    
+    for decile in range(1, 11):
+        decile_data = df[df['decile'] == decile]
+        
+        # Treatment and control groups within this decile
+        treated = decile_data[decile_data['treatment'] == 1]
+        control = decile_data[decile_data['treatment'] == 0]
+        
+        # Calculate rates
+        treated_rate = treated['y'].mean() if len(treated) > 0 else 0
+        control_rate = control['y'].mean() if len(control) > 0 else 0
+        uplift = treated_rate - control_rate
+        
+        # Sample sizes
+        n_treated = len(treated)
+        n_control = len(control)
+        
+        # Debug information for problematic deciles
+        if n_treated == 0 or n_control == 0:
+            print(f"DEBUG: Decile {decile} has imbalanced groups - Treated: {n_treated}, Control: {n_control}")
+        
+        # Standard error for uplift (approximate)
+        if n_treated > 1 and n_control > 1:
+            se_treated = np.sqrt(treated_rate * (1 - treated_rate) / n_treated) if treated_rate > 0 else 0
+            se_control = np.sqrt(control_rate * (1 - control_rate) / n_control) if control_rate > 0 else 0
+            uplift_se = np.sqrt(se_treated**2 + se_control**2)
+        else:
+            uplift_se = 0
+        
+        decile_results.append({
+            'decile': decile,
+            'uplift': uplift,
+            'uplift_se': uplift_se,
+            'treated_rate': treated_rate,
+            'control_rate': control_rate,
+            'n_treated': n_treated,
+            'n_control': n_control,
+            'avg_score': decile_data['uplift'].mean()
+        })
+    
+    results_df = pd.DataFrame(decile_results)
+    
+    # Print diagnostic information
+    print(f"DEBUG: Decile analysis summary:")
+    for _, row in results_df.iterrows():
+        print(f"  Decile {int(row['decile'])}: uplift={row['uplift']:.4f}, n_treated={row['n_treated']}, n_control={row['n_control']}")
+    
+    # Create the plot
+    x = results_df['decile']
+    y = results_df['uplift']
+    yerr = results_df['uplift_se']
+    
+    # Bar plot with error bars - use different colors for different uplift levels
+    colors = ['darkred' if val < -0.001 else 'darkgreen' if val > 0.001 else 'gray' for val in y]
+    bars = ax.bar(x, y, alpha=0.7, color=colors, edgecolor='navy', linewidth=1)
+    ax.errorbar(x, y, yerr=yerr, fmt='none', color='red', capsize=5, capthick=2)
+    
+    # Styling
+    ax.axhline(y=0, color='red', linestyle='--', alpha=0.8, linewidth=2)
+    ax.set_xlabel('Uplift Score Decile (1 = Highest Predicted Uplift)', fontsize=12)
+    ax.set_ylabel('Observed Uplift (Treated Rate - Control Rate)', fontsize=12)
+    ax.set_title('Uplift Curve: Observed vs Predicted', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(x)
+    
+    # Force y-axis to show small values clearly
+    y_max = max(0.01, max(abs(y.min()), abs(y.max())))
+    ax.set_ylim(-y_max * 1.2, y_max * 1.2)
+    
+    # Add value labels on bars - show all values including zeros
+    for i, (bar, row) in enumerate(zip(bars, results_df.itertuples())):
+        height = bar.get_height()
+        # Show all values, not just meaningful ones
+        label_y = height + row.uplift_se + y_max * 0.05 if height >= 0 else height - row.uplift_se - y_max * 0.05
+        ax.text(bar.get_x() + bar.get_width()/2., label_y,
+               f'{height:.4f}', ha='center', 
+               va='bottom' if height >= 0 else 'top', 
+               fontsize=9, fontweight='bold')
+    
+    # Add sample size annotations with treatment/control breakdown
+    for i, row in results_df.iterrows():
+        ax.text(row['decile'], -y_max * 1.1, 
+               f'T:{row["n_treated"]}/C:{row["n_control"]}', 
+               ha='center', va='top', fontsize=8, alpha=0.7)
+    
+    # Enhanced summary statistics in text box
+    overall_ate = np.mean(y_true[treatment == 1]) - np.mean(y_true[treatment == 0])
+    predicted_ate = np.mean(uplift_scores)
+    
+    # Count deciles with both groups
+    valid_deciles = sum(1 for _, row in results_df.iterrows() if row['n_treated'] > 0 and row['n_control'] > 0)
+    
+    textstr = f'Overall ATE: {overall_ate:.4f}\nPredicted ATE: {predicted_ate:.4f}\nValid Deciles: {valid_deciles}/10'
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=10,
+           verticalalignment='top', bbox=props)
+    
+    plt.tight_layout()
+    return fig, ax
+
+
+@make_transformable
+def uplift_curve_plot(spec: UpliftSpec, **kwargs) -> plt.Figure:
+    """
+    Create uplift curve plot using native implementation.
+    """
+    if spec.cate_estimates is None or spec.ate_estimate is None:
+        raise ValueError("No uplift estimates found. Ensure model is fitted.")
+
+    y_true = spec.data[spec.outcome_col].values
+    uplift_scores = list(spec.cate_estimates.values())[0]
+    treatment = spec.data[spec.treatment_cols[0]].values
+
+    fig, ax = _plot_uplift_curve_native(y_true, uplift_scores, treatment, **kwargs)
+    ax.set_title(f"Uplift Curve - {spec.model_type.title()}", fontsize=14, fontweight='bold')
+    
+    return fig
+
+
 
 
 def _extract_event_study_results(spec: Union[EventStudySpec, StaggeredDiDSpec], params: pd.Series, conf_int: pd.DataFrame) -> pd.DataFrame:
@@ -143,86 +277,6 @@ def _extract_event_study_results(spec: Union[EventStudySpec, StaggeredDiDSpec], 
             coeffs.append(0.0)
             lower_ci.append(0.0)
             upper_ci.append(0.0)
-    
-    return pd.DataFrame({
-        'period': periods,
-        'coef': coeffs,
-        'lower': lower_ci,
-        'upper': upper_ci
-    })
-
-
-def _extract_generic_results(params: pd.Series, conf_int: pd.DataFrame) -> pd.DataFrame:
-    """Extract results from generic model with event patterns or treat_post fallback."""
-    periods = []
-    coeffs = []
-    lower_ci = []
-    upper_ci = []
-    
-    # Look for event_pre* columns (pre-treatment periods)
-    event_pattern_pre = re.compile(r'event_pre(\d+)')
-    for param_name in params.index:
-        match = event_pattern_pre.match(param_name)
-        if match:
-            period = -int(match.group(1))  # Negative for pre-periods
-            periods.append(period)
-            coeffs.append(params[param_name])
-            lower_ci.append(conf_int.loc[param_name, 'lower'])
-            upper_ci.append(conf_int.loc[param_name, 'upper'])
-    
-    # Look for event_post* columns (post-treatment periods)
-    event_pattern_post = re.compile(r'event_post(\d+)')
-    for param_name in params.index:
-        match = event_pattern_post.match(param_name)
-        if match:
-            period = int(match.group(1))  # Positive for post-periods
-            periods.append(period)
-            coeffs.append(params[param_name])
-            lower_ci.append(conf_int.loc[param_name, 'lower'])
-            upper_ci.append(conf_int.loc[param_name, 'upper'])
-    
-    # Check for event_period0 (t=0)
-    if 'event_period0' in params.index:
-        periods.append(0)
-        coeffs.append(params['event_period0'])
-        lower_ci.append(conf_int.loc['event_period0', 'lower'])
-        upper_ci.append(conf_int.loc['event_period0', 'upper'])
-    
-    # Fallback to old event_* pattern for backward compatibility
-    if not periods:
-        event_pattern_old = re.compile(r'event_(-?\d+)')
-        for param_name in params.index:
-            match = event_pattern_old.match(param_name)
-            if match:
-                period = int(match.group(1))
-                periods.append(period)
-                coeffs.append(params[param_name])
-                lower_ci.append(conf_int.loc[param_name, 'lower'])
-                upper_ci.append(conf_int.loc[param_name, 'upper'])
-    
-    if not periods:
-        # Final fallback - if treat_post exists, create basic DiD plot
-        if 'treat_post' in params.index:
-            periods = [-1, 1]
-            coeffs = [0, params['treat_post']]
-            lower_ci = [0, conf_int.loc['treat_post', 'lower']]
-            upper_ci = [0, conf_int.loc['treat_post', 'upper']]
-        else:
-            raise ValueError("Could not identify any event time indicators in the model parameters")
-    
-    # Add reference period - use -1 if we have pre-treatment periods, otherwise use 0
-    if any(p < 0 for p in periods) and -1 not in periods:
-        # If we have pre-treatment periods, use -1 as reference
-        periods.append(-1)
-        coeffs.append(0.0)
-        lower_ci.append(0.0)
-        upper_ci.append(0.0)
-    elif 0 not in periods:
-        # Otherwise use 0 as reference
-        periods.append(0)
-        coeffs.append(0.0)
-        lower_ci.append(0.0)
-        upper_ci.append(0.0)
     
     return pd.DataFrame({
         'period': periods,
@@ -443,13 +497,13 @@ def synthdid_plot(spec, output_config: Optional[OutputConfig] = None, **kwargs) 
     Returns:
         matplotlib figure object
     """
-    
+    from pyautocausal.pipelines.library.synthdid.plot import plot_synthdid
     
     if not hasattr(spec, 'model') or spec.model is None:
         raise ValueError("Specification must have a fitted model")
     
-    # Create the plot
-    fig, ax = plot_synthdid(spec.model, **kwargs)
+    # Create the plot using the synthdid plotting function
+    fig = plot_synthdid(spec.model, **kwargs)
     
     # Save if output config provided
     if output_config:
@@ -676,7 +730,36 @@ def callaway_santana_event_study_plot(
         raise ValueError("Dynamic effects object does not have aggregated results")
 
 @make_transformable
-def hainmueller_synth_plot(spec, output_config: Optional[OutputConfig] = None, 
+def hainmueller_synth_effect_plot(spec, save_path: Optional[str] = None, 
+                          figsize: tuple = (12, 8), **kwargs) -> plt.Figure:
+    """
+    Create a plot for Hainmueeller synthetic effect size.
+    
+    Args:
+        spec: A SynthDIDSpec object with fitted Hainmueeller model
+        output_config: Configuration for saving the plot
+        figsize: Figure size as (width, height)
+        **kwargs: Additional arguments for plot customization
+        
+    Returns:
+        matplotlib figure object
+    """
+
+    # Call the plot method - it will handle display appropriately based on environment
+    fig = spec.hainmueller_model.plot(
+        ["original", "pointwise", "cumulative"], 
+        treated_label="Treated Unit", 
+        synth_label=f"Synthetic Control",
+        figsize=figsize
+    )
+
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    return fig
+
+@make_transformable
+def hainmueller_synth_validity_plot(spec, save_path: Optional[str] = None, 
                           figsize: tuple = (12, 8), **kwargs) -> plt.Figure:
     """
     Create a plot for Hainmueeller synthetic control results with placebo tests.
@@ -690,9 +773,72 @@ def hainmueller_synth_plot(spec, output_config: Optional[OutputConfig] = None,
     Returns:
         matplotlib figure object
     """
-    model = spec.hainmueller_model
 
-    treated_unit = spec.data[spec.data[spec.treatment_cols[0]] == 1][spec.unit_col].unique()[0]
+    # Call the plot method - it will handle display appropriately based on environment
+    fig = spec.hainmueller_model.plot(
+        ["in-space placebo", "in-time placebo"], 
+        treated_label="Treated Unit", 
+        synth_label=f"Synthetic Control",
+        figsize=figsize
+    )
 
-    model.plot(["original", "pointwise", "cumulative", "in-space placebo", "rmspe ratio"], treated_label=treated_unit, synth_label=f"Synthetic {treated_unit}")
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    return fig
+
+
+@make_transformable
+def plot_balance_coefficients(spec, **kwargs) -> plt.Figure:
+    """
+    Create horizontal error bar plot showing standardized coefficients for balance tests.
+    
+    Shows point estimates with horizontal error bars and vertical dashed line at 0.
+    
+    Args:
+        spec: Specification object with balance_stats attribute containing balance results
+        **kwargs: Additional plotting arguments
+        
+    Returns:
+        matplotlib Figure object
+    """
+    if not hasattr(spec, 'balance_stats'):
+        raise ValueError("No balance statistics found. Run balance tests first.")
+    
+    balance_df = spec.balance_stats
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, max(6, len(balance_df) * 0.4)))
+    
+    # Extract data for plotting
+    variables = balance_df['covariate']
+    differences = balance_df['diff']
+    std_errors = balance_df['se_diff']
+    
+    # Create y positions
+    y_positions = range(len(variables))
+    
+    # Plot horizontal error bars with point estimates
+    ax.errorbar(differences, y_positions, xerr=1.96*std_errors, 
+                fmt='o', color='blue', capsize=5, capthick=2, 
+                ecolor='blue', alpha=0.7, markersize=6)
+    
+    # Add vertical reference line at 0
+    ax.axvline(0, color='black', linestyle='--', alpha=0.8, linewidth=2)
+    
+    # Customize plot
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels(variables)
+    ax.set_xlabel('Standardized Coefficient (95% CI)', fontsize=12)
+    ax.set_ylabel('Covariates', fontsize=12)
+    ax.set_title('Balance Test Results', fontsize=14, fontweight='bold')
+    
+    # Add grid for easier reading
+    ax.grid(True, axis='x', alpha=0.3)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig
+
 

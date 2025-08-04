@@ -13,6 +13,7 @@ import copy
 import re
 from linearmodels import PanelOLS, RandomEffects, FirstDifferenceOLS, BetweenOLS
 from pyautocausal.pipelines.library.synthdid.synthdid import synthdid_estimate
+from pyautocausal.pipelines.library.HainmuellerSyntheticControl.SyntheticControlMethods import Synth
 from pyautocausal.persistence.parameter_mapper import make_transformable
 from pyautocausal.pipelines.library.specifications import (
     BaseSpec,
@@ -1064,7 +1065,6 @@ def fit_hainmueller_synth_estimator(spec: SynthDIDSpec) -> SynthDIDSpec:
     Returns:
         SynthDIDSpec with fitted model (Synth object)
     """
-    from SyntheticControlMethods import Synth
     
     # Extract information from spec
     data = spec.data.copy()
@@ -1073,6 +1073,10 @@ def fit_hainmueller_synth_estimator(spec: SynthDIDSpec) -> SynthDIDSpec:
     unit_col = spec.unit_col
     treatment_col = spec.treatment_cols[0]
     
+    # Convert unit column to string to avoid TypeError in Synth library
+    if pd.api.types.is_numeric_dtype(data[unit_col]):
+        data[unit_col] = data[unit_col].astype(str)
+
     # Find the treated unit and treatment period
     treated_units = data[data[treatment_col] == 1][unit_col].unique()
 
@@ -1122,7 +1126,20 @@ def fit_hainmueller_placebo_test(spec: SynthDIDSpec, n_placebo: int = 1) -> Synt
     Perform in-space  and in-time placebo test for Hainmueeller Synthetic Control method.
     """
     
+        # Choose number of in space placebo tests
     spec.hainmueller_model.in_space_placebo(n_placebo)
+
+    min_period = spec.data[spec.time_col].min()
+    treatment_period = spec.data[spec.data[spec.treatment_cols[0]] == 1][spec.time_col].min()
+    
+    #Choose random placebo period between min and max, leaving buffer at edges
+    buffer = (treatment_period - min_period) // 4  # Use 1/4 of range as buffer
+    placebo_period = np.random.randint(min_period + buffer, treatment_period - buffer)
+
+    print(f"Placebo period: {placebo_period}")
+    spec.hainmueller_model.in_time_placebo(placebo_period)
+
+
     
     return spec
     
