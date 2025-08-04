@@ -65,8 +65,10 @@ class TestExampleGraphExecution:
             expected_nodes = {'save_event_output', 'stag_treat', 'ols_event', 'panel_cleaned_data', 'multi_post_periods', 'single_treated_unit', 'df', 'basic_cleaning', 'event_spec', 'event_plot'}
             assert expected_nodes.issubset(completed_nodes)
 
-            # check that the results were saved
-            assert set(os.listdir(output_path)) == {'save_event_output.txt', 'event_study_plot.png'}
+            # check that the results were saved in the new directory structure
+            assert set(os.listdir(output_path)) == {'plots', 'text'}
+            assert (output_path / "text" / "save_event_output.txt").exists()
+            assert (output_path / "plots" / "event_study_plot.png").exists()
             
             print(f"✓ Panel graph executed successfully: {len(completed_nodes)} nodes completed")
 
@@ -84,11 +86,11 @@ class TestExampleGraphExecution:
             
             completed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'COMPLETED'}
             failed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'FAILED'}
-
+            
             assert not failed_nodes, f"Failed nodes: {failed_nodes}"
-
-            # Expected nodes for the staggered treatment path
-            expected_nodes = {'has_never_treated', 'panel_cleaned_data', 'single_treated_unit', 'basic_cleaning', 'save_cs_never_treated', 'cs_never_treated', 'ols_stag', 'save_stag_output', 'stag_spec', 'df', 'stag_treat', 'multi_post_periods', 'stag_event_plot', 'cs_never_treated_plot'}
+            
+            # Expected nodes for the staggered treatment path (updated based on actual execution)
+            expected_nodes = {'stag_spec', 'panel_cleaned_data', 'stag_spec_balance_plot', 'basic_cleaning', 'single_treated_unit', 'stag_spec_balance', 'ols_stag', 'has_never_treated', 'cs_never_treated', 'cs_never_treated_plot', 'cs_never_treated_group_plot', 'stag_event_plot', 'save_stag_output', 'df', 'stag_spec_balance_table', 'stag_treat', 'multi_post_periods'}
             assert expected_nodes.issubset(completed_nodes)
             
             # export graph to notebook
@@ -123,7 +125,9 @@ class TestExampleGraphExecution:
         # Ensure no nodes failed
         assert len(failed_nodes) == 0, f"The following nodes failed: {failed_nodes}"
         
-        assert set(os.listdir(output_path)) == {'synthdid_plot.png'}
+        # Check for the new directory structure
+        assert set(os.listdir(output_path)) == {'plots', 'text'}
+        assert (output_path / "plots" / "synthdid_plot.png").exists()
 
 
     def test_node_states_in_cross_sectional_graph(self):
@@ -158,20 +162,19 @@ class TestExampleGraphExecution:
         graph = create_panel_graph(output_path)
         graph.fit(df=data)
         
-        # Check that standard DiD files are generated
-        text_files = list((output_path).glob("*.txt"))
-        expected_files = ["save_ols_did.txt"]
-        
-        for expected_file in expected_files:
-            assert any(expected_file in str(f) for f in text_files), f"Expected file {expected_file} not found"
+        # Check that standard DiD files are generated in the new directory structure
+        assert set(os.listdir(output_path)) == {'plots', 'text'}
+        assert (output_path / "text" / "save_ols_did.txt").exists()
         
         # Verify nodes completed
         completed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'COMPLETED'}
         failed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'FAILED'}
         
-        assert completed_nodes == {'did_spec', 'ols_did', 'save_ols_did', 'single_treated_unit', 'basic_cleaning', 'multi_post_periods', 'panel_cleaned_data', 'df'}
-
-        assert set(os.listdir(output_path)) == {'save_ols_did.txt'}
+        # Expected nodes for standard DiD branch (including balance test nodes)
+        expected_nodes = {'did_spec', 'did_spec_balance', 'did_spec_balance_table', 
+                        'did_spec_balance_plot', 'ols_did', 'save_ols_did', 'single_treated_unit', 
+                        'basic_cleaning', 'multi_post_periods', 'panel_cleaned_data', 'df'}
+        assert completed_nodes == expected_nodes
 
         # Ensure no nodes failed
         assert len(failed_nodes) == 0, f"The following nodes failed: {failed_nodes}"

@@ -91,7 +91,7 @@ def test_validation_to_cleaning_integration(lalonde_data, output_dir):
     assert cleaned_df["re75"].isnull().sum() == 0
 
     # Check that column types were corrected
-    assert pd.api.types.is_categorical_dtype(cleaned_df["race"])
+    assert isinstance(cleaned_df["race"].dtype, pd.CategoricalDtype)
 
     # Check metadata
     assert len(plan_metadata.transformations) > 0
@@ -330,10 +330,10 @@ def test_comprehensive_validation_cleaning_direct_dry_run():
     assert treatment_values.issubset({0, 1}), f"Treatment should only contain 0 and 1, found: {treatment_values}"
     
     # Categorical conversion assertions
-    assert pd.api.types.is_categorical_dtype(cleaned_data['region']), "Region should be categorical"
-    assert pd.api.types.is_categorical_dtype(cleaned_data['education_level']), "Education level should be categorical"
-    assert pd.api.types.is_categorical_dtype(cleaned_data['employment_status']), "Employment status should be categorical"
-    assert pd.api.types.is_categorical_dtype(cleaned_data['marital_status']), "Marital status should be categorical"
+    assert isinstance(cleaned_data['region'].dtype, pd.CategoricalDtype), "Region should be categorical"
+    assert isinstance(cleaned_data['education_level'].dtype, pd.CategoricalDtype), "Education level should be categorical"
+    assert isinstance(cleaned_data['employment_status'].dtype, pd.CategoricalDtype), "Employment status should be categorical"
+    assert isinstance(cleaned_data['marital_status'].dtype, pd.CategoricalDtype), "Marital status should be categorical"
     
     # Duplicate removal assertions
     assert cleaned_data.duplicated().sum() == 0, "Should have no duplicate rows"
