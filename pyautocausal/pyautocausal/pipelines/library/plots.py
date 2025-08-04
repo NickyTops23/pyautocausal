@@ -842,3 +842,331 @@ def plot_balance_coefficients(spec, **kwargs) -> plt.Figure:
     return fig
 
 
+
+def _plot_uplift_curve_imbalanced(y_true, uplift_scores, treatment, ax=None, **kwargs):
+    """
+    Uplift curve plotting optimized for highly imbalanced datasets.
+    
+    Uses cumulative gains and response rates instead of deciles when 
+    treatment/control groups are severely imbalanced.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12, 8))
+    else:
+        fig = ax.figure
+    
+    # Create analysis dataframe
+    df = pd.DataFrame({
+        'y': y_true,
+        'uplift': uplift_scores,
+        'treatment': treatment
+    })
+    
+    # DEBUG: Print raw input data characteristics
+    print(f"DEBUG: RAW INPUT DATA:")
+    print(f"  - Total observations: {len(df)}")
+    print(f"  - Uplift scores range: [{uplift_scores.min():.8f}, {uplift_scores.max():.8f}]")
+    print(f"  - Uplift scores std: {uplift_scores.std():.8f}")
+    print(f"  - Unique uplift values: {len(np.unique(uplift_scores))}")
+    print(f"  - Non-zero uplift values: {np.sum(np.abs(uplift_scores) > 1e-8)}/{len(uplift_scores)}")
+    print(f"  - Treatment distribution: {np.bincount(treatment)}")
+    print(f"  - Outcome distribution: {np.bincount(y_true.astype(int))}")
+    
+    # Sort by uplift score (descending)
+    df = df.sort_values('uplift', ascending=False).reset_index(drop=True)
+    
+    # DEBUG: Print sorted data sample
+    print(f"DEBUG: SORTED DATA SAMPLE (first 20 rows):")
+    print(df.head(20)[['y', 'uplift', 'treatment']].to_string())
+    print(f"DEBUG: SORTED DATA SAMPLE (last 20 rows):")
+    print(df.tail(20)[['y', 'uplift', 'treatment']].to_string())
+    
+    # Check treatment balance
+    treatment_balance = df['treatment'].mean()
+    print(f"DEBUG: Treatment proportion: {treatment_balance:.3f}")
+    
+    # For severely imbalanced data, use cumulative approach instead of deciles
+    if treatment_balance > 0.8 or treatment_balance < 0.2:
+        print("Using cumulative approach for imbalanced data")
+        
+        # Create percentile groups
+        n_groups = 10
+        group_size = len(df) // n_groups
+        
+        # Calculate cumulative and incremental metrics
+        cumulative_results = []
+        for i in range(1, n_groups + 1):
+            # Take top i*10% of predictions
+            top_data = df.iloc[:i * group_size]
+            
+            # Calculate cumulative metrics
+            treated = top_data[top_data['treatment'] == 1]
+            control = top_data[top_data['treatment'] == 0]
+            
+            treated_rate = treated['y'].mean() if len(treated) > 0 else 0
+            control_rate = control['y'].mean() if len(control) > 0 else 0
+            uplift = treated_rate - control_rate
+            
+            # Calculate incremental lift for this decile only
+            if i == 1:
+                incremental_data = df.iloc[:group_size]
+            else:
+                incremental_data = df.iloc[(i-1)*group_size:i*group_size]
+            
+            inc_treated = incremental_data[incremental_data['treatment'] == 1]
+            inc_control = incremental_data[incremental_data['treatment'] == 0]
+            inc_treated_rate = inc_treated['y'].mean() if len(inc_treated) > 0 else 0
+            inc_control_rate = inc_control['y'].mean() if len(inc_control) > 0 else 0
+            inc_uplift = inc_treated_rate - inc_control_rate
+            
+            # DEBUG: Print detailed calculations
+            print(f"  DECILE {i} CALCULATION DETAILS:")
+            print(f"    Incremental data range: [{(i-1)*group_size}:{i*group_size}]")
+            print(f"    Inc Treated: {len(inc_treated)} obs, {inc_treated['y'].sum()} conversions, rate={inc_treated_rate:.8f}")
+            print(f"    Inc Control: {len(inc_control)} obs, {inc_control['y'].sum()} conversions, rate={inc_control_rate:.8f}")
+            print(f"    Inc Uplift: {inc_treated_rate:.8f} - {inc_control_rate:.8f} = {inc_uplift:.8f}")
+            print(f"    Uplift Score Range: [{incremental_data['uplift'].min():.8f}, {incremental_data['uplift'].max():.8f}]")
+            
+            # Additional debugging for zero uplifts
+            if abs(inc_uplift) < 1e-8:
+                print(f"    WARNING: Near-zero uplift detected!")
+                print(f"    Treated outcomes: {inc_treated['y'].tolist()[:10]}...")  # First 10 values
+                print(f"    Control outcomes: {inc_control['y'].tolist()[:10]}...")  # First 10 values
+            
+            cumulative_results.append({
+                'percentile': i * 10,
+                'cumulative_uplift': uplift,
+                'incremental_uplift': inc_uplift,
+                'n_treated': len(treated),
+                'n_control': len(control),
+                'inc_n_treated': len(inc_treated),
+                'inc_n_control': len(inc_control),
+                'treated_rate': treated_rate,
+                'control_rate': control_rate,
+                'inc_treated_rate': inc_treated_rate,
+                'inc_control_rate': inc_control_rate,
+                'uplift_score_range': f"[{incremental_data['uplift'].min():.8f}, {incremental_data['uplift'].max():.8f}]"
+            })
+        
+        results_df = pd.DataFrame(cumulative_results)
+        
+        # Print detailed diagnostic information
+        print("DEBUG: Cumulative Analysis Results:")
+        for _, row in results_df.iterrows():
+            print(f"  Top {int(row['percentile'])}%: cum_uplift={row['cumulative_uplift']:.6f}, "
+                  f"inc_uplift={row['incremental_uplift']:.6f}, "
+                  f"T:{row['inc_n_treated']}/C:{row['inc_n_control']}, "
+                  f"scores={row['uplift_score_range']}")
+        
+        # Create subplot layout
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        
+        # Plot 1: Cumulative uplift
+        x = results_df['percentile']
+        y1 = results_df['cumulative_uplift']
+        
+        ax1.plot(x, y1, 'o-', linewidth=2, markersize=6, color='blue', label='Cumulative Uplift')
+        ax1.axhline(y=0, color='red', linestyle='--', alpha=0.8)
+        ax1.set_xlabel('Top % of Predictions')
+        ax1.set_ylabel('Cumulative Uplift')
+        ax1.set_title('Cumulative Uplift Curve (Top % Targeting)')
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+        
+        # Adjust y-axis to show small values clearly
+        y_max = max(0.001, max(abs(y1.min()), abs(y1.max())))
+        ax1.set_ylim(-y_max * 1.2, y_max * 1.2)
+        
+        # Add value labels
+        for i, (xi, yi) in enumerate(zip(x, y1)):
+            ax1.annotate(f'{yi:.6f}', (xi, yi), textcoords="offset points", 
+                        xytext=(0,10), ha='center', fontsize=8)
+        
+        # Plot 2: Incremental uplift by decile
+        y2 = results_df['incremental_uplift']
+        colors = ['darkred' if val < -0.0001 else 'darkgreen' if val > 0.0001 else 'gray' for val in y2]
+        
+        # Adjust y-axis for small values (calculate first)
+        y2_max = max(0.001, max(abs(y2.min()), abs(y2.max())))
+        
+        # DEBUG: Print exact values being plotted
+        print(f"\nDEBUG: BAR CHART VALUES BEING PLOTTED:")
+        for i, (percentile, value) in enumerate(zip(results_df['percentile'], y2)):
+            print(f"  Bar {i+1} (Top {int(percentile)}%): {value:.8f} (color: {colors[i]})")
+        print(f"  Y-axis range will be: [{-y2_max * 1.2:.8f}, {y2_max * 1.2:.8f}]")
+        print(f"  Max absolute value: {y2_max:.8f}")
+        
+        bars = ax2.bar(x, y2, alpha=0.7, color=colors, edgecolor='navy', linewidth=1)
+        ax2.axhline(y=0, color='red', linestyle='--', alpha=0.8)
+        ax2.set_xlabel('Decile (Top 10%, 20%, etc.)')
+        ax2.set_ylabel('Incremental Uplift')
+        ax2.set_title('Incremental Uplift by Decile')
+        ax2.grid(True, alpha=0.3)
+        
+        # Set y-axis limits
+        ax2.set_ylim(-y2_max * 1.2, y2_max * 1.2)
+        
+        # DEBUG: Print bar heights after plotting
+        print(f"\nDEBUG: ACTUAL BAR HEIGHTS:")
+        for i, bar in enumerate(bars):
+            height = bar.get_height()
+            print(f"  Bar {i+1}: height={height:.8f}, visible={abs(height) > 1e-10}")
+        
+        # Add value labels for incremental with higher precision
+        for i, (bar, yi) in enumerate(zip(bars, y2)):
+            height = bar.get_height()
+            
+            # Get conversion info for this decile
+            row = results_df.iloc[i]
+            treated_conversions = int(row['inc_n_treated'] * row['inc_treated_rate'])
+            control_conversions = int(row['inc_n_control'] * row['inc_control_rate'])
+            has_conversions = treated_conversions > 0 or control_conversions > 0
+            
+            if abs(yi) > 1e-8:  # Non-zero uplift
+                ax2.text(bar.get_x() + bar.get_width()/2., height + y2_max * 0.05,
+                        f'{yi:.6f}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+            else:  # Zero uplift
+                if not has_conversions:
+                    # No conversions in this decile
+                    ax2.text(bar.get_x() + bar.get_width()/2., y2_max * 0.3,
+                            'No\nConversions', ha='center', va='center', fontsize=7, 
+                            alpha=0.7, style='italic', color='darkred')
+                else:
+                    # Has conversions but zero uplift
+                    ax2.text(bar.get_x() + bar.get_width()/2., y2_max * 0.05,
+                            f'{yi:.6f}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+        
+        # Add sample size info with conversion counts
+        for i, row in results_df.iterrows():
+            treated_conversions = int(row['inc_n_treated'] * row['inc_treated_rate'])
+            control_conversions = int(row['inc_n_control'] * row['inc_control_rate'])
+            
+            ax2.text(row['percentile'], -y2_max * 1.0,
+                    f'T:{row["inc_n_treated"]}/C:{row["inc_n_control"]}',
+                    ha='center', va='top', fontsize=7, alpha=0.7)
+            
+            # Add conversion counts below
+            ax2.text(row['percentile'], -y2_max * 1.15,
+                    f'Conv: {treated_conversions}+{control_conversions}',
+                    ha='center', va='top', fontsize=6, alpha=0.6, style='italic')
+        
+        # Add data sparsity warning if applicable
+        total_conversions = sum(int(row['inc_n_treated'] * row['inc_treated_rate']) + 
+                              int(row['inc_n_control'] * row['inc_control_rate']) 
+                              for _, row in results_df.iterrows())
+        zero_deciles = sum(1 for _, row in results_df.iterrows() 
+                          if abs(row['incremental_uplift']) < 1e-8)
+        
+        if zero_deciles >= 7:  # Most deciles have zero uplift
+            warning_text = f'⚠️ Extremely Sparse Data\n{total_conversions} total conversions\n{zero_deciles}/10 deciles have no conversions'
+            ax2.text(0.02, 0.02, warning_text, transform=ax2.transAxes, fontsize=8,
+                    va='bottom', ha='left', bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
+        
+        plt.tight_layout()
+        return fig, (ax1, ax2)
+    
+    else:
+        # For balanced data, use the standard decile approach
+        return _plot_uplift_curve_native(y_true, uplift_scores, treatment, ax, **kwargs)
+
+
+@make_transformable
+def uplift_curve_plot_adaptive(spec: UpliftSpec, **kwargs) -> plt.Figure:
+    """
+    Create adaptive uplift curve plot that handles both balanced and imbalanced datasets.
+    """
+    if spec.cate_estimates is None or spec.ate_estimate is None:
+        raise ValueError("No uplift estimates found. Ensure model is fitted.")
+
+    y_true = spec.data[spec.outcome_col].values
+    uplift_scores = list(spec.cate_estimates.values())[0]
+    treatment = spec.data[spec.treatment_cols[0]].values
+
+    # Diagnostic information
+    print(f"DIAGNOSTIC: {spec.model_type} Uplift Analysis")
+    print(f"  - CATE range: [{np.min(uplift_scores):.6f}, {np.max(uplift_scores):.6f}]")
+    print(f"  - CATE std: {np.std(uplift_scores):.6f}")
+    print(f"  - ATE: {spec.ate_estimate:.6f}")
+    print(f"  - Non-zero CATE values: {np.sum(np.abs(uplift_scores) > 1e-8)}/{len(uplift_scores)}")
+    
+    # Check for severe imbalance
+    treatment_prop = np.mean(treatment)
+    
+    # Check for very low heterogeneity
+    heterogeneity_level = np.std(uplift_scores)
+    
+    if treatment_prop > 0.8 or treatment_prop < 0.2:
+        print(f"  - Using imbalanced approach (treatment prop: {treatment_prop:.3f})")
+        fig, axes = _plot_uplift_curve_imbalanced(y_true, uplift_scores, treatment, **kwargs)
+        if isinstance(axes, tuple):
+            axes[0].set_title(f"Adaptive Uplift Analysis - {spec.model_type.title()}", fontsize=14, fontweight='bold')
+            # Add diagnostic text to the plot
+            axes[1].text(0.02, 0.98, f"Heterogeneity: {heterogeneity_level:.6f}", 
+                        transform=axes[1].transAxes, fontsize=9, va='top',
+                        bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        else:
+            axes.set_title(f"Adaptive Uplift Analysis - {spec.model_type.title()}", fontsize=14, fontweight='bold')
+    else:
+        print(f"  - Using standard approach (treatment prop: {treatment_prop:.3f})")
+        fig, ax = _plot_uplift_curve_native(y_true, uplift_scores, treatment, **kwargs)
+        ax.set_title(f"Uplift Curve - {spec.model_type.title()}", fontsize=14, fontweight='bold')
+        # Add diagnostic text to the plot
+        ax.text(0.02, 0.02, f"Heterogeneity: {heterogeneity_level:.6f}", 
+               transform=ax.transAxes, fontsize=9, va='bottom',
+               bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+    
+    return fig
+
+
+@make_transformable
+def plot_balance_coefficients(spec, **kwargs) -> plt.Figure:
+    """
+    Create horizontal error bar plot showing standardized coefficients for balance tests.
+    
+    Shows point estimates with horizontal error bars and vertical dashed line at 0.
+    
+    Args:
+        spec: Specification object with balance_stats attribute containing balance results
+        **kwargs: Additional plotting arguments
+        
+    Returns:
+        matplotlib Figure object
+    """
+    if not hasattr(spec, 'balance_stats'):
+        raise ValueError("No balance statistics found. Run balance tests first.")
+    
+    balance_df = spec.balance_stats
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, max(6, len(balance_df) * 0.4)))
+    
+    # Extract data for plotting
+    variables = balance_df['covariate']
+    differences = balance_df['diff']
+    std_errors = balance_df['se_diff']
+    
+    # Create y positions
+    y_positions = range(len(variables))
+    
+    # Plot horizontal error bars with point estimates
+    ax.errorbar(differences, y_positions, xerr=1.96*std_errors, 
+                fmt='o', color='blue', capsize=5, capthick=2, 
+                ecolor='blue', alpha=0.7, markersize=6)
+    
+    # Add vertical reference line at 0
+    ax.axvline(0, color='black', linestyle='--', alpha=0.8, linewidth=2)
+    
+    # Customize plot
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels(variables)
+    ax.set_xlabel('Standardized Coefficient (95% CI)', fontsize=12)
+    ax.set_ylabel('Covariates', fontsize=12)
+    ax.set_title('Balance Test Results', fontsize=14, fontweight='bold')
+    
+    # Add grid for easier reading
+    ax.grid(True, axis='x', alpha=0.3)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig
