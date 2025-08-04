@@ -1,8 +1,9 @@
 import pandas as pd
 from pathlib import Path
 from pyautocausal.pipelines.example_graph import (
-    causal_pipeline, _print_execution_summary, _export_outputs
+    create_panel_graph, export_outputs
 )
+from pyautocausal.pipelines.example_graph.utils import print_execution_summary, setup_output_directories
 
 # Load the minimum wage data
 raw_data = pd.read_csv("pyautocausal/examples/data/mpdta.csv")
@@ -50,6 +51,7 @@ print(f"Unique counties: {data['id_unit'].nunique()}")
 print(f"Time periods: {data['t'].min()}-{data['t'].max()}")
 print(f"Treatment distribution:\n{data['treat'].value_counts()}")
 
+
 # Check if we now have staggered treatment
 from pyautocausal.pipelines.library.conditions import has_staggered_treatment
 print(f"Staggered treatment detected: {has_staggered_treatment(data)}")
@@ -61,11 +63,12 @@ print(f"Treatment start times: {sorted(treatment_starts.value_counts().sort_inde
 print(f"Sample data:\n{data.head(10)}")
 
 # Define output path
-output_path = Path("pyautocausal/examples/outputs")
+output_path = Path("pyautocausal/examples/outputs/minimum_wage")
 output_path.mkdir(parents=True, exist_ok=True)
+setup_output_directories(output_path)
 
 # Initialize graph
-graph = causal_pipeline(output_path)
+graph = create_panel_graph(output_path)
 
 # Save data for reference - same location as notebook
 notebooks_path = output_path / "notebooks"
@@ -80,8 +83,8 @@ graph.fit(df=data)
 
 # Results summary and export
 print("\n======= Execution Summary =======")
-_print_execution_summary(graph)
+print_execution_summary(graph)
 print("-" * 50)
 
-_export_outputs(graph, output_path, datafile_name="minimum_wage.csv")
+export_outputs(graph, output_path, "minimum_wage.csv")
 print("\n======= Minimum Wage Analysis Finished =======")
