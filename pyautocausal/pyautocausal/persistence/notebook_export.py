@@ -12,6 +12,7 @@ from .notebook_runner import run_notebook_and_create_html, convert_notebook_to_h
 import importlib
 from ..persistence.parameter_mapper import TransformableFunction
 
+
 class NotebookExporter:
     """
     Exports an executed graph to a Jupyter notebook format.

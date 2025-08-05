@@ -147,17 +147,17 @@ def test_submit_job_validation_failure(
     assert job_id_fixture not in job_status_store
 
 # Test actual Background Task submission failure
-@patch('app.main.ExecutableGraph.load')
+@patch('app.main.ExecutableGraph.from_yaml')
 @patch('app.main.s3.get')
 @patch('uuid.uuid4')
 @patch.object(BackgroundTasks, 'add_task')
 def test_submit_job_task_submission_failure(
-    mock_add_task, mock_uuid_func, mock_s3_get, mock_graph_load,
+    mock_add_task, mock_uuid_func, mock_s3_get, mock_graph_from_yaml,
     mock_s3_env_vars, job_id_fixture
 ):
     mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
     mock_add_task.side_effect = Exception("Queueing service error")
-    mock_graph_load.return_value = MagicMock(spec=ExecutableGraph)
+    mock_graph_from_yaml.return_value = MagicMock(spec=ExecutableGraph)
 
     job_status_store.clear()
 
@@ -328,15 +328,15 @@ def test_submit_job_missing_input_path(mock_s3_env_vars):
 @patch('uuid.uuid4')
 @patch.object(BackgroundTasks, 'add_task')
 @patch('app.main.s3.get')
-@patch('app.main.ExecutableGraph.load')
+@patch('app.main.ExecutableGraph.from_yaml')
 def test_submit_job_success_with_graph_loading(
-    mock_graph_load, mock_s3_get, mock_add_task, mock_uuid_func,
+    mock_graph_from_yaml, mock_s3_get, mock_add_task, mock_uuid_func,
     mock_s3_env_vars, job_id_fixture
 ):
     # Mocking
     mock_uuid_func.return_value = MagicMock(spec=uuid.UUID, __str__=lambda _: job_id_fixture)
     mock_graph = MagicMock(spec=ExecutableGraph)
-    mock_graph_load.return_value = mock_graph
+    mock_graph_from_yaml.return_value = mock_graph
     
     job_status_store.clear()
 
@@ -364,7 +364,7 @@ def test_submit_job_success_with_graph_loading(
     
     # Assert that S3 download and graph loading were called
     mock_s3_get.assert_called_once()
-    mock_graph_load.assert_called_once()
+    mock_graph_from_yaml.assert_called_once()
     
     # Assert that the background task was called with the correct parameters
     mock_add_task.assert_called_once()

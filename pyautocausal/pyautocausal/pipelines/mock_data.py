@@ -167,7 +167,7 @@ def generate_mock_data(
             treat = 1 if (is_treated and t >= treatment_start) else 0
             
             # Calculate relative time
-            relative_time = t - treatment_start if is_treated else np.nan
+            relative_time = t - treatment_start if is_treated else -999  # Use -999 instead of np.nan for untreated units
             
             # Post-treatment indicator
             post = 1 if t >= treatment_start else 0
@@ -194,7 +194,7 @@ def generate_mock_data(
         for t, signal in enumerate(unit_signals):
             # Recalculate treatment indicators
             treat = 1 if (is_treated and t >= treatment_start) else 0
-            relative_time = t - treatment_start if is_treated else np.nan
+            relative_time = t - treatment_start if is_treated else -999
             post = 1 if t >= treatment_start else 0
             
             # Add noise to signal with a unique seed for each time period
@@ -219,7 +219,9 @@ def generate_mock_data(
                 'x1': x1,
                 'x2': x2,
                 'confounder': confounder,
-                'collider': collider
+                'collider': collider,
+                'post': post,
+                'relative_time': relative_time
             })
     
     # Create DataFrame

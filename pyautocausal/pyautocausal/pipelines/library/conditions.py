@@ -277,4 +277,17 @@ def has_covariate_imbalance(df: pd.DataFrame, threshold: float = 0.5, imbalance_
     return False
 
 
+def has_binary_treatment_and_outcome(df: pd.DataFrame) -> bool:
+    """Enhanced check with safety validations."""
+    # Check for required columns
+    if 'y' not in df.columns or 'treat' not in df.columns:
+        return False
+    
+    # Ensure no time column (cross-sectional only)
+    if 't' in df.columns:
+        return False
+    
+    # Verify binary
+    return df['y'].nunique() == 2 and df['treat'].nunique() == 2
+
 

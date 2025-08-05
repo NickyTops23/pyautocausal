@@ -4,9 +4,11 @@ from typing import Optional, Tuple, Dict, List, Union, Any
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import NearestNeighbors
-from .base_weighter import BaseWeighter
+from scipy import stats
+from pyautocausal.pipelines.library.base_weighter import BaseWeighter
 from pyautocausal.persistence.parameter_mapper import make_transformable
-from .specifications import DiDSpec
+from pyautocausal.pipelines.library.specifications import DiDSpec, BaseSpec
+from typing import List
 
 
 @make_transformable
@@ -158,3 +160,152 @@ def compute_synthetic_control_weights(spec: DiDSpec,
             include_unit_fe=spec.include_unit_fe,
             include_time_fe=spec.include_time_fe
         )
+
+
+@make_transformable
+def compute_balance_tests(spec: Union[DiDSpec, 'StaggeredDiDSpec', 'EventStudySpec', 'CrossSectionalSpec']) -> Union[DiDSpec, 'StaggeredDiDSpec', 'EventStudySpec', 'CrossSectionalSpec']:
+    """
+    Compute balance tests on control variables for any specification type.
+    
+    For panel data specifications (DiD, Staggered, Event Study):
+    - Tests balance in the last pre-treatment period
+    
+    For cross-sectional specifications:
+    - Tests balance across all data
+    
+    Args:
+        spec: Any specification object (DiDSpec, StaggeredDiDSpec, etc.)
+        
+    Returns:
+        Same specification object with balance test results added
+    """
+    # Extract balance testing data based on specification type
+    balance_data = _extract_balance_data(spec)
+    
+    # Get control variables
+    control_cols = getattr(spec, 'control_cols', [])
+    if not control_cols:
+        # Auto-detect control columns
+        exclude_cols = [spec.outcome_col, spec.treatment_cols[0]]
+        if hasattr(spec, 'unit_col'):
+            exclude_cols.append(spec.unit_col)
+        if hasattr(spec, 'time_col'):
+            exclude_cols.append(spec.time_col)
+        
+        numeric_cols = balance_data.select_dtypes(include=[np.number]).columns
+        control_cols = [col for col in numeric_cols if col not in exclude_cols]
+    
+    # Compute balance statistics
+    balance_stats = []
+    treatment_col = spec.treatment_cols[0]
+    
+    for covariate in control_cols:
+        # Split by treatment status
+        treated_data = balance_data[balance_data[treatment_col] == 1][covariate]
+        control_data = balance_data[balance_data[treatment_col] == 0][covariate]
+        
+        # Basic statistics
+        treated_mean = treated_data.mean()
+        treated_std = treated_data.std()
+        treated_n = len(treated_data)
+        
+        control_mean = control_data.mean()
+        control_std = control_data.std()
+        control_n = len(control_data)
+        
+        # Difference and statistical test
+        diff = treated_mean - control_mean
+        t_stat, p_value = stats.ttest_ind(treated_data, control_data, equal_var=False)
+        
+        # Standard error for confidence intervals
+        se_diff = np.sqrt((treated_std**2 / treated_n) + (control_std**2 / control_n))
+        
+        balance_stats.append({
+            'covariate': covariate,
+            'treated_mean': treated_mean,
+            'treated_std': treated_std,
+            'treated_n': treated_n,
+            'control_mean': control_mean,
+            'control_std': control_std,
+            'control_n': control_n,
+            'diff': diff,
+            'se_diff': se_diff,
+            't_stat': t_stat,
+            'p_value': p_value
+        })
+    
+    # Add balance results to spec
+    spec.balance_stats = pd.DataFrame(balance_stats)
+    spec.balance_data = balance_data
+    
+    return spec
+
+
+def _extract_balance_data(spec) -> pd.DataFrame:
+    """
+    Extract appropriate data for balance testing based on specification type.
+    
+    Args:
+        spec: Any specification object
+        
+    Returns:
+        DataFrame with data appropriate for balance testing
+    """
+    data = spec.data
+    
+    # Check if we have panel data (DiD, Staggered, Event Study)
+    if hasattr(spec, 'time_col') and hasattr(spec, 'unit_col'):
+        # Panel data: extract pre-treatment data
+        return _extract_pretreatment_data(data, spec.treatment_cols[0], spec.unit_col, spec.time_col)
+    else:
+        # Cross-sectional data: use all data
+        return data.copy()
+
+
+def _extract_pretreatment_data(data: pd.DataFrame, treatment_col: str, unit_col: str, time_col: str) -> pd.DataFrame:
+    """
+    Extract pre-treatment data for balancing tests.
+    
+    For each unit, finds the last period before treatment begins.
+    For never-treated units, uses the last available period.
+    
+    Args:
+        data: Full panel DataFrame
+        treatment_col: Treatment column name
+        unit_col: Unit identifier column
+        time_col: Time column name
+        
+    Returns:
+        DataFrame with one observation per unit from pre-treatment period
+    """
+    balance_data = []
+    
+    for unit in data[unit_col].unique():
+        unit_data = data[data[unit_col] == unit].sort_values(time_col)
+        
+        # Find first treatment period for this unit
+        treated_periods = unit_data[unit_data[treatment_col] == 1]
+        
+        if len(treated_periods) > 0:
+            # Unit is treated at some point - get last pre-treatment period
+            first_treatment_period = treated_periods[time_col].min()
+            pre_treatment_data = unit_data[unit_data[time_col] < first_treatment_period]
+            
+            if len(pre_treatment_data) > 0:
+                # Use the last pre-treatment period
+                last_pre_period = pre_treatment_data.iloc[-1:].copy()
+                # Set treatment to 1 to indicate this unit will be treated
+                last_pre_period[treatment_col] = 1
+                balance_data.append(last_pre_period)
+        else:
+            # Never-treated unit - use last available period
+            last_period = unit_data.iloc[-1:].copy()
+            # Ensure treatment is 0 for never-treated units
+            last_period[treatment_col] = 0
+            balance_data.append(last_period)
+    
+    if not balance_data:
+        raise ValueError("No pre-treatment data available for balance testing")
+    
+    return pd.concat(balance_data, ignore_index=True)
+

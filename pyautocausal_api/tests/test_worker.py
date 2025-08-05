@@ -72,10 +72,10 @@ def temp_dir(tmpdir):
 # Fixture to mock the graph and NotebookExporter
 @pytest.fixture
 def mock_graph():
-    # Mock ExecutableGraph.load and the graph instance
-    with patch('pyautocausal.orchestration.graph.ExecutableGraph.load') as mock_load:
+    # Mock ExecutableGraph.from_yaml and the graph instance
+    with patch('pyautocausal.orchestration.graph.ExecutableGraph.from_yaml') as mock_from_yaml:
         mock_graph = MagicMock()
-        mock_load.return_value = mock_graph
+        mock_from_yaml.return_value = mock_graph
         yield mock_graph
 
 @pytest.fixture

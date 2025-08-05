@@ -1,5 +1,6 @@
 import pytest
 import pandas as pd
+from pathlib import Path
 from pyautocausal.orchestration.graph import ExecutableGraph
 from pyautocausal.pipelines.library.specifications import create_cross_sectional_specification
 from pyautocausal.pipelines.library.estimators import fit_double_lasso, fit_ols
@@ -9,7 +10,10 @@ from pyautocausal.pipelines.library.output import write_linear_models_to_summary
 @pytest.fixture
 def lalonde_data():
     """Returns the lalonde dataset for integration tests."""
-    return pd.read_csv("tests/fixtures/lalonde.csv")
+    # Get the directory where this conftest.py file is located
+    test_dir = Path(__file__).parent
+    fixture_path = test_dir / "fixtures" / "lalonde.csv"
+    return pd.read_csv(fixture_path)
 
 
 @pytest.fixture

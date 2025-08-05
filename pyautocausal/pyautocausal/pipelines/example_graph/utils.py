@@ -61,7 +61,7 @@ def print_execution_summary(graph: ExecutableGraph) -> None:
     print(f"Skipped nodes (due to branching): {skipped_nodes}")
 
 
-def export_outputs(graph: ExecutableGraph, output_path: Path) -> None:
+def export_outputs(graph: ExecutableGraph, output_path: Path, data_path: Path) -> None:
     """Export graph visualization, notebook, and HTML report.
     
     This function creates:
@@ -74,43 +74,34 @@ def export_outputs(graph: ExecutableGraph, output_path: Path) -> None:
         output_path: Base output directory
     """
     # Graph visualization
-    md_visualization_path = output_path / "text" / "causal_pipeline_visualization.md"
+    md_visualization_path = output_path / "text" / "pipeline_visualization.md"
     visualize_graph(graph, save_path=str(md_visualization_path))
     print(f"Graph visualization saved to {md_visualization_path}")
     
     # Notebook and HTML export
-    notebook_path = output_path / "notebooks" / "causal_pipeline_execution.ipynb"
-    html_path = output_path / "notebooks" / "causal_pipeline_execution.html"
-    data_csv_path = output_path / "notebooks" / "causal_pipeline_data.csv"
+    notebook_path = output_path / "notebooks" / "pipeline_execution.ipynb"
+    html_path = output_path / "notebooks" / "pipeline_execution.html"
     
     exporter = NotebookExporter(graph)
     
     # Export notebook
     exporter.export_notebook(
         str(notebook_path),
-        data_path="causal_pipeline_data.csv",  # Relative path for notebook execution
+        data_path=data_path,  # Relative path for notebook execution
         loading_function="pd.read_csv"
     )
     print(f"Notebook exported to {notebook_path}")
     
     # Export and run to HTML
     try:
-        if data_csv_path.exists():
-            # Use relative path for notebook execution
-            html_output_path = exporter.export_and_run_to_html(
-                notebook_filepath=notebook_path,
-                html_filepath=html_path,
-                data_path="causal_pipeline_data.csv",  # Relative path from notebooks directory
-                loading_function="pd.read_csv",
-                timeout=300  # 5 minutes timeout
-            )
-            print(f"HTML report with executed results exported to {html_output_path}")
-        else:
-            # Fallback: just convert existing notebook to HTML without execution
-            from pyautocausal.persistence.notebook_runner import convert_notebook_to_html
-            html_output_path = convert_notebook_to_html(notebook_path, html_path)
-            print(f"HTML report (static) exported to {html_output_path}")
-    
+        html_output_path = exporter.export_and_run_to_html(
+            notebook_filepath=notebook_path,
+            html_filepath=html_path,
+            data_path=data_path,  # Relative path from notebooks directory
+            loading_function="pd.read_csv",
+            timeout=300  # 5 minutes timeout
+        )
+        print(f"HTML report with executed results exported to {html_output_path}")
     except Exception as e:
         print(f"HTML export failed: {e}")
         print("Notebook is still available for manual inspection")
