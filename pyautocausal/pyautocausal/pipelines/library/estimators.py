@@ -653,7 +653,7 @@ def fit_callaway_santanna_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDSpec:
         idname=unit_col,
         gname=treatment_time_col,
         data=data_cs,
-        control_group=['nevertreated'],
+        control_group=['never_treated'],
         xformla=None,
         panel=True,
         allow_unbalanced_panel=True,
