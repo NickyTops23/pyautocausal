@@ -1,0 +1,38 @@
+                          PanelOLS Estimation Summary                           
+================================================================================
+Dep. Variable:                      y   R-squared:                        0.0103
+Estimator:                   PanelOLS   R-squared (Between):              0.5664
+No. Observations:                2500   R-squared (Within):              -0.0049
+Date:                Mon, Aug 04 2025   R-squared (Overall):              0.5624
+Time:                        18:12:51   Log-likelihood                    1674.6
+Cov. Estimator:             Clustered                                           
+                                        F-statistic:                      2.9682
+Entities:                         500   P-value                           0.0042
+Avg Obs:                       5.0000   Distribution:                  F(7,1989)
+Min Obs:                       5.0000                                           
+Max Obs:                       5.0000   F-statistic (robust):          1.017e+08
+                                        P-value                           0.0000
+Time periods:                       5   Distribution:                  F(7,1989)
+Avg Obs:                       500.00                                           
+Min Obs:                       500.00                                           
+Max Obs:                       500.00                                           
+                                                                                
+                              Parameter Estimates                              
+===============================================================================
+             Parameter  Std. Err.     T-stat    P-value    Lower CI    Upper CI
+-------------------------------------------------------------------------------
+event_pre4      0.0035     0.0255     0.1391     0.8894     -0.0465      0.0536
+event_pre3      0.0246     0.0198     1.2463     0.2128     -0.0141      0.0634
+event_pre2      0.0234     0.0150     1.5553     0.1200     -0.0061      0.0528
+event_post0    -0.0181     0.0123    -1.4784     0.1395     -0.0422      0.0059
+event_post1    -0.0435     0.0196    -2.2131     0.0270     -0.0820     -0.0049
+event_post2    -0.1318     0.0322    -4.0896     0.0000     -0.1950     -0.0686
+event_post3    -0.0922     0.0361    -2.5527     0.0108     -0.1631     -0.0214
+lpop            1.7460     0.0029     595.84     0.0000      1.7403      1.7518
+===============================================================================
+
+F-test for Poolability: 130.46
+P-value: 0.0000
+Distribution: F(503,1989)
+
+Included effects: Entity, Time

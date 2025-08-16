@@ -62,12 +62,14 @@ def create_panel_graph(output_dir: Path) -> ExecutableGraph:
         create_did_branch,
         create_event_study_branch, 
         create_synthetic_did_branch,
-        create_staggered_did_branch
+        create_staggered_did_branch,
+        create_hainmueller_synth_branch
     )
     
     create_did_branch(graph)
     create_event_study_branch(graph)
     create_synthetic_did_branch(graph)
+    create_hainmueller_synth_branch(graph)
     create_staggered_did_branch(graph)
     
     # 4. Configure Paths
