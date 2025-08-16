@@ -153,6 +153,9 @@ def test_autocleaner_time_period_standardization():
         'outcome': [10, 12, 15, 18, 8, 11, 14, 16, 9, 10, 11, 14]
     })
     
+    # Verify original data type
+    assert data['time'].dtype == 'object'  # Date strings are stored as object type
+    
     # Create autocleaner with time period standardization
     autocleaner = (
         AutoCleaner()
@@ -166,6 +169,15 @@ def test_autocleaner_time_period_standardization():
     unique_times = sorted(cleaned_df['time'].unique())
     expected_times = [-1, 0, 1, 2]  # 2020-02-01 becomes 0 (first treatment)
     assert unique_times == expected_times
+    
+    # CRITICAL: Verify the resultant data type is INTEGER, not Timedelta or any other type
+    assert cleaned_df['time'].dtype == 'int64', f"Expected int64, got {cleaned_df['time'].dtype}"
+    assert all(isinstance(val, (int, np.integer)) for val in cleaned_df['time']), "All time values should be integers"
+    
+    # Additional type safety checks  
+    for time_val in cleaned_df['time']:
+        assert not pd.api.types.is_timedelta64_dtype(type(time_val)), f"Time value {time_val} should not be Timedelta type"
+        assert not pd.api.types.is_datetime64_dtype(type(time_val)), f"Time value {time_val} should not be datetime type"
     
     # Verify that the mapping is correct for specific cases
     # Original 2020-02-01 should become 0 (first treatment period)

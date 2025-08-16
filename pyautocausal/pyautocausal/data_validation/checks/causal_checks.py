@@ -1016,20 +1016,20 @@ class TimePeriodStandardizationCheck(DataValidationCheck[TimePeriodStandardizati
             treatment_start_idx = sorted_times.index(treatment_start)
             
             value_mapping = {}
-            original_to_parsed = {str(orig): parsed for orig, parsed in zip(unique_times, self._parse_time_periods(unique_times))}
+            original_to_parsed = {orig: parsed for orig, parsed in zip(unique_times, self._parse_time_periods(unique_times))}
             
             for original_val in unique_times:
-                parsed_val = original_to_parsed[str(original_val)]
+                parsed_val = original_to_parsed[original_val]
                 time_idx = sorted_times.index(parsed_val)
                 standardized_idx = time_idx - treatment_start_idx
-                value_mapping[str(original_val)] = standardized_idx
+                value_mapping[original_val] = standardized_idx
             
             # Create cleaning hint
             from ...data_cleaning.hints import StandardizeTimePeriodHint
             cleaning_hint = StandardizeTimePeriodHint(
                 time_column=self.config.time_column,
                 value_mapping=value_mapping,
-                treatment_start_period=str(treatment_start),
+                treatment_start_period=treatment_start,
                 metadata={
                     "total_periods": len(unique_times),
                     "pre_treatment_periods": sum(1 for v in value_mapping.values() if v < 0),

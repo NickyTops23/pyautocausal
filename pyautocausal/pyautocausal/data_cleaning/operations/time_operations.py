@@ -30,16 +30,25 @@ class StandardizeTimePeriodsOperation(CleaningOperation):
         if hint.time_column not in df_cleaned.columns:
             raise ValueError(f"Time column '{hint.time_column}' not found in dataframe")
         
-        # Count how many values will be changed
-        original_values = df_cleaned[hint.time_column].astype(str)
-        values_in_mapping = original_values.isin(hint.value_mapping.keys())
+        # Apply the mapping directly using original values as keys
+        time_column = df_cleaned[hint.time_column]
+        
+        # Count how many values will be changed by checking which values are in the mapping
+        values_in_mapping = time_column.isin(hint.value_mapping.keys())
         values_to_change = values_in_mapping.sum()
         
         if values_to_change == 0:
-            raise ValueError(f"No values in time column '{hint.time_column}' match the standardization mapping")
+            raise ValueError(f"No values in time column '{hint.time_column}' match the standardization mapping. "
+                           f"Column dtype: {time_column.dtype}, "
+                           f"Sample column values: {time_column.unique()[:3].tolist()}, "
+                           f"Sample mapping keys: {list(hint.value_mapping.keys())[:3]}")
         
-        # Apply the mapping - convert to string first for consistent mapping
-        df_cleaned[hint.time_column] = original_values.map(hint.value_mapping).fillna(df_cleaned[hint.time_column])
+        # Apply the mapping directly and ensure integer result
+        mapped_values = time_column.map(hint.value_mapping)
+        df_cleaned[hint.time_column] = mapped_values.fillna(df_cleaned[hint.time_column])
+        
+        # Ensure the result is integer type
+        df_cleaned[hint.time_column] = df_cleaned[hint.time_column].astype('int64')
         
         # Create transformation record
         record = TransformationRecord(

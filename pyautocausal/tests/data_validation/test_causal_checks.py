@@ -128,8 +128,8 @@ def test_time_period_standardization_integer_periods():
     
     hint = result.cleaning_hints[0]
     # Period 2 should be index 0, period 1 should be -1, period 3 should be 1
-    # Note: integer inputs remain as integer strings in the mapping
-    expected_mapping = {'1': -1, '2': 0, '3': 1}
+    # Note: original values (integers) are used as keys in the mapping
+    expected_mapping = {1: -1, 2: 0, 3: 1}
     
     for k, v in expected_mapping.items():
         assert k in hint.value_mapping
@@ -212,6 +212,9 @@ def test_time_period_standardization_cleaning_operation():
         'outcome': [10, 15, 20, 12, 18, 25]
     })
     
+    # Verify original data type
+    assert df['time'].dtype == 'object'  # Date strings are stored as object type
+    
     # First, get the cleaning hint from validation
     check = TimePeriodStandardizationCheck()
     result = check.validate(df)
@@ -229,6 +232,15 @@ def test_time_period_standardization_cleaning_operation():
     # Check that the time column was standardized
     expected_times = [-1, 0, 1, -1, 0, 1]  # Based on the hint mapping
     assert cleaned_df['time'].tolist() == expected_times
+    
+    # CRITICAL: Verify the resultant data type is INTEGER, not Timedelta or any other type
+    assert cleaned_df['time'].dtype == 'int64', f"Expected int64, got {cleaned_df['time'].dtype}"
+    assert all(isinstance(val, (int, np.integer)) for val in cleaned_df['time']), "All time values should be integers"
+    
+    # Additional type safety checks
+    for time_val in cleaned_df['time']:
+        assert not pd.api.types.is_timedelta64_dtype(type(time_val)), f"Time value {time_val} should not be Timedelta type"
+        assert not pd.api.types.is_datetime64_dtype(type(time_val)), f"Time value {time_val} should not be datetime type"
     
     # Check that other columns were not modified
     assert cleaned_df['unit'].tolist() == [1, 1, 1, 2, 2, 2]
@@ -259,8 +271,8 @@ def test_time_period_standardization_complex_scenario():
     
     # First treatment occurs in 2019 (unit 2), so that should be index 0
     # 2018 -> -1, 2019 -> 0, 2020 -> 1, 2021 -> 2
-    # Note: integer inputs remain as integer strings in the mapping
-    expected_mapping = {'2018': -1, '2019': 0, '2020': 1, '2021': 2}
+    # Note: original values (integers) are used as keys in the mapping
+    expected_mapping = {2018: -1, 2019: 0, 2020: 1, 2021: 2}
     
     for k, v in expected_mapping.items():
         assert k in hint.value_mapping
@@ -286,8 +298,8 @@ def test_time_period_standardization_with_nas():
     
     # Should only have mappings for non-NaN values: 1, 2, 3
     # Treatment start is 2, so: 1->-1, 2->0, 3->1
-    # Note: when NaN is present, pandas converts integers to floats, so keys become '1.0', '2.0', '3.0'
-    expected_mapping = {'1.0': -1, '2.0': 0, '3.0': 1}
+    # Note: when NaN is present, pandas converts integers to floats, so keys are float values
+    expected_mapping = {1.0: -1, 2.0: 0, 3.0: 1}
     
     for k, v in expected_mapping.items():
         assert k in hint.value_mapping
