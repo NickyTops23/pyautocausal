@@ -73,13 +73,13 @@ class TestExampleGraphExecution:
             print(f"✓ Panel graph executed successfully: {len(completed_nodes)} nodes completed")
     
     
-    def test_staggered_treatment_in_panel_graph(self):
+    def test_staggered_treatment_in_panel_graph(self, minimum_wage_data):
         """Test the staggered treatment path within the panel graph."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir)
             
             # Generate staggered treatment data
-            raw_data = pd.read_csv("/Users/nick/Development/pyautocausal/pyautocausal/examples/data/mpdta.csv")
+            raw_data = minimum_wage_data
             data = raw_data.rename(columns={
                 "countyreal": "id_unit",  # county identifier
                 "year": "t",              # time variable
