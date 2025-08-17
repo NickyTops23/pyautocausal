@@ -72,64 +72,59 @@ class TestExampleGraphExecution:
             
             print(f"✓ Panel graph executed successfully: {len(completed_nodes)} nodes completed")
     
-    # TODO: add this test back in when we fix bug with the Callaway & Sant'Anna estimator
-    # def test_staggered_treatment_in_panel_graph(self):
-    #     """Test the staggered treatment path within the panel graph."""
-    #     with tempfile.TemporaryDirectory() as temp_dir:
-    #         output_path = Path(temp_dir)
+    
+    def test_staggered_treatment_in_panel_graph(self):
+        """Test the staggered treatment path within the panel graph."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir)
             
-    #         # Generate staggered treatment data
-    #         raw_data = pd.read_csv("/Users/nick/Development/pyautocausal/pyautocausal/examples/data/mpdta.csv")
-    #         data = raw_data.rename(columns={
-    #             "countyreal": "id_unit",  # county identifier
-    #             "year": "t",              # time variable
-    #             "lemp": "y"               # log employment as outcome
-    #         })
+            # Generate staggered treatment data
+            raw_data = pd.read_csv("/Users/nick/Development/pyautocausal/pyautocausal/examples/data/mpdta.csv")
+            data = raw_data.rename(columns={
+                "countyreal": "id_unit",  # county identifier
+                "year": "t",              # time variable
+                "lemp": "y"               # log employment as outcome
+            })
 
-    #         # Reconstruct the treatment variable properly using first.treat
-    #         # The original 'treat' column is absorbing (1 for all periods of units that ever get treated)
-    #         # We need to make it 0 before treatment and 1 from treatment onwards
-    #         print("Reconstructing treatment variable using first.treat column...")
+            # Create proper treatment indicator based on first.treat timing
+            def reconstruct_treatment(row):
+                """Reconstruct treatment: 0 before first.treat, 1 from first.treat onwards"""
+                if pd.isna(row['first.treat']) or row['first.treat'] == 0:
+                    # Never treated units
+                    return 0
+                elif row['t'] >= row['first.treat']:
+                    # Treated in current period (treatment started)
+                    return 1
+                else:
+                    # Not yet treated (before treatment start)
+                    return 0
 
-    #         # Create proper treatment indicator based on first.treat timing
-    #         def reconstruct_treatment(row):
-    #             """Reconstruct treatment: 0 before first.treat, 1 from first.treat onwards"""
-    #             if pd.isna(row['first.treat']) or row['first.treat'] == 0:
-    #                 # Never treated units
-    #                 return 0
-    #             elif row['t'] >= row['first.treat']:
-    #                 # Treated in current period (treatment started)
-    #                 return 1
-    #             else:
-    #                 # Not yet treated (before treatment start)
-    #                 return 0
+            data['treat'] = data.apply(reconstruct_treatment, axis=1)
 
-    #         data['treat'] = data.apply(reconstruct_treatment, axis=1)
-
-    #         # Keep additional covariates
-    #         data = data[["id_unit", "t", "treat", "y", "lpop"]]  # Include lpop as covariate
+            # Keep additional covariates
+            data = data[["id_unit", "t", "treat", "y", "lpop"]]  # Include lpop as covariate
             
-    #         # Create and execute panel graph
-    #         graph = create_panel_graph(output_path)
-    #         graph.fit(df=data)
+            # Create and execute panel graph
+            graph = create_panel_graph(output_path)
+            graph.fit(df=data)
             
-    #         completed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'COMPLETED'}
-    #         failed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'FAILED'}
+            completed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'COMPLETED'}
+            failed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'FAILED'}
             
-    #         assert not failed_nodes, f"Failed nodes: {failed_nodes}"
+            assert not failed_nodes, f"Failed nodes: {failed_nodes}"
             
-    #         # Expected nodes for the staggered treatment path (updated based on actual execution)
-    #         expected_nodes = {'stag_spec', 'panel_cleaned_data', 'stag_spec_balance_plot', 'basic_cleaning', 'single_treated_unit', 'stag_spec_balance', 'ols_stag', 'has_never_treated', 'cs_never_treated', 'cs_never_treated_plot', 'cs_never_treated_group_plot', 'stag_event_plot', 'save_stag_output', 'df', 'stag_spec_balance_table', 'stag_treat', 'multi_post_periods'}
-    #         assert expected_nodes.issubset(completed_nodes)
+            # Expected nodes for the staggered treatment path (updated based on actual execution)
+            expected_nodes = {'stag_spec', 'panel_cleaned_data', 'stag_spec_balance_plot', 'basic_cleaning', 'single_treated_unit', 'stag_spec_balance', 'ols_stag', 'has_never_treated', 'cs_never_treated', 'cs_never_treated_plot', 'cs_never_treated_group_plot', 'stag_event_plot', 'save_stag_output', 'df', 'stag_spec_balance_table', 'stag_treat', 'multi_post_periods'}
+            assert expected_nodes.issubset(completed_nodes)
             
-    #         # export graph to notebook
-    #         from pyautocausal.persistence.notebook_export import NotebookExporter
-    #         exporter = NotebookExporter(graph)
-    #         exporter.export_notebook(str(output_path  / "panel_execution.ipynb"))
+            # export graph to notebook
+            from pyautocausal.persistence.notebook_export import NotebookExporter
+            exporter = NotebookExporter(graph)
+            exporter.export_notebook(str(output_path  / "panel_execution.ipynb"))
             
-    #         assert (output_path / "panel_execution.ipynb").exists()
+            assert (output_path / "panel_execution.ipynb").exists()
             
-    #         print(f"✓ Staggered treatment path in panel graph executed successfully: {len(completed_nodes)} nodes completed")
+            print(f"✓ Staggered treatment path in panel graph executed successfully: {len(completed_nodes)} nodes completed")
 
 
     def test_synthetic_did_branch(self):
