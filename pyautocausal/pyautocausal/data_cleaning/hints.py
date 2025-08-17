@@ -94,7 +94,6 @@ class StandardizeTimePeriodHint(CleaningHint):
     """Hint to standardize time periods relative to first treatment period."""
     time_column: str
     value_mapping: Dict[str, int]  # original_value -> standardized_index (str keys for JSON serialization)
-    treatment_start_period: str   # original value that becomes index 0 (str for consistency)
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     @property

@@ -59,7 +59,6 @@ class StandardizeTimePeriodsOperation(CleaningOperation):
                 "time_column": hint.time_column,
                 "values_standardized": int(values_to_change),
                 "total_unique_periods": len(hint.value_mapping),
-                "treatment_start_period": hint.treatment_start_period,
                 "standardized_range": [min(hint.value_mapping.values()), max(hint.value_mapping.values())],
                 "pre_treatment_periods": hint.metadata.get("pre_treatment_periods", 0),
                 "post_treatment_periods": hint.metadata.get("post_treatment_periods", 0),

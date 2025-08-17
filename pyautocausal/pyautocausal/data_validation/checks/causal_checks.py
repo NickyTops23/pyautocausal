@@ -1009,32 +1009,28 @@ class TimePeriodStandardizationCheck(DataValidationCheck[TimePeriodStandardizati
             parsed_treatment_times = self._parse_time_periods(treatment_times)
             
             # Find the minimum treatment time period (this becomes index 0)
-            treatment_start = min(parsed_treatment_times)
+            treatment_start_parsed = min(parsed_treatment_times)
             
             # Create mapping from original values to standardized indices
             sorted_times = sorted(parsed_times)
-            treatment_start_idx = sorted_times.index(treatment_start)
             
             value_mapping = {}
-            original_to_parsed = {orig: parsed for orig, parsed in zip(unique_times, self._parse_time_periods(unique_times))}
+            for original_val, parsed_val in zip(unique_times, parsed_times):
+                value_mapping[original_val] = sorted_times.index(parsed_val) + 1
+                if parsed_val == treatment_start_parsed:
+                    treatment_start_original = original_val
             
-            for original_val in unique_times:
-                parsed_val = original_to_parsed[original_val]
-                time_idx = sorted_times.index(parsed_val)
-                standardized_idx = time_idx - treatment_start_idx
-                value_mapping[original_val] = standardized_idx
-            
+
             # Create cleaning hint
             from ...data_cleaning.hints import StandardizeTimePeriodHint
             cleaning_hint = StandardizeTimePeriodHint(
                 time_column=self.config.time_column,
                 value_mapping=value_mapping,
-                treatment_start_period=treatment_start,
                 metadata={
                     "total_periods": len(unique_times),
-                    "pre_treatment_periods": sum(1 for v in value_mapping.values() if v < 0),
-                    "post_treatment_periods": sum(1 for v in value_mapping.values() if v > 0),
-                    "original_treatment_start": str(treatment_start)
+                    "pre_treatment_periods": sum(1 for v in value_mapping.values() if v < value_mapping[treatment_start_original]),
+                    "post_treatment_periods": sum(1 for v in value_mapping.values() if v >= value_mapping[treatment_start_original]),
+                    "original_treatment_start": str(treatment_start_original)
                 }
             )
             
@@ -1042,7 +1038,6 @@ class TimePeriodStandardizationCheck(DataValidationCheck[TimePeriodStandardizati
                 "time_column": self.config.time_column,
                 "treatment_column": self.config.treatment_column,
                 "total_periods": len(unique_times),
-                "treatment_start_period": str(treatment_start),
                 "standardized_range": [min(value_mapping.values()), max(value_mapping.values())],
                 "value_mapping_sample": dict(list(value_mapping.items())[:5])  # First 5 for display
             }

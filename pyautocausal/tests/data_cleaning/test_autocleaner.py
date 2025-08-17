@@ -167,7 +167,7 @@ def test_autocleaner_time_period_standardization():
     
     # Verify that time column was standardized
     unique_times = sorted(cleaned_df['time'].unique())
-    expected_times = [-1, 0, 1, 2]  # 2020-02-01 becomes 0 (first treatment)
+    expected_times = [1,2,3,4]  # 2020-02-01 becomes 0 (first treatment)
     assert unique_times == expected_times
     
     # CRITICAL: Verify the resultant data type is INTEGER, not Timedelta or any other type
@@ -187,7 +187,7 @@ def test_autocleaner_time_period_standardization():
     
     # Check specific rows to verify the mapping
     unit_2_data = cleaned_df[cleaned_df['unit'] == 2].sort_values('time')
-    assert unit_2_data['time'].tolist() == [-1, 0, 1, 2]
+    assert unit_2_data['time'].tolist() == [1,2,3,4]
     
     # Verify treatment data is preserved
     assert cleaned_df['treatment'].tolist() == data['treatment'].tolist()
@@ -231,7 +231,7 @@ def test_autocleaner_time_period_standardization_with_integer_periods():
     """Test time period standardization with integer time periods."""
     data = pd.DataFrame({
         'unit': [1, 1, 1, 2, 2, 2],
-        'time': [1, 2, 3, 1, 2, 3],
+        'time': [2, 3, 4, 2, 3, 4],
         'treatment': [0, 1, 1, 0, 0, 1],  # Treatment starts in period 2
         'outcome': [10, 15, 20, 12, 18, 25]
     })
@@ -239,6 +239,6 @@ def test_autocleaner_time_period_standardization_with_integer_periods():
     autocleaner = AutoCleaner().standardize_time_periods()
     cleaned_df = autocleaner.clean(data)
     
-    # Expected mapping: 1->-1, 2->0, 3->1
-    expected_times = [-1, 0, 1, -1, 0, 1]
+    # Expected mapping: 2->1, 3->2, 4->3
+    expected_times = [1, 2, 3, 1, 2, 3]
     assert cleaned_df['time'].tolist() == expected_times 
