@@ -1,10 +1,28 @@
 [tool.poetry]
 name = "pyautocausal"
 version = "0.1.0"
-description = "An automatic causal inference package for python"
-authors = ["Nicholas Topousis", "Yogam Tchokni"]
+description = "Automated causal inference pipelines for data scientists"
+authors = ["Nicholas Topousis <nicktopousis@gmail.com>", "Yogam Tchokni <yogamtchokni@gmail.com >"]
 license = "MIT"
 readme = "README.md"
+homepage = "https://github.com/NickyTops23/pyautocausal"
+repository = "https://github.com/NickyTops23/pyautocausal"
+documentation = "https://github.com/NickyTops23/pyautocausal/blob/main/README.md"
+keywords = ["causal-inference", "econometrics", "statistics", "difference-in-differences", "synthetic-control"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+packages = [{include = "pyautocausal"}]
 
 [tool.poetry.dependencies]
 python = ">=3.10, <3.13"
