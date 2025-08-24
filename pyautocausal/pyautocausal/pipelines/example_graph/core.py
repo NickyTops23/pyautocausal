@@ -39,7 +39,7 @@ def create_panel_cleaner(df: pd.DataFrame) -> pd.DataFrame:
     autocleaner = (
         AutoCleaner()
         .check_required_columns(required_columns=["t", "id_unit"])
-        .check_column_types(expected_types={"t": int, "id_unit": int})
+        .standardize_time_periods(treatment_column="treat", time_column="t")
         .check_for_missing_data(strategy="drop_rows")
         .infer_and_convert_categoricals(ignore_columns=["treat", "y", "t", "id_unit"])
         .drop_duplicates()

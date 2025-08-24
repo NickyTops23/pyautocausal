@@ -71,18 +71,42 @@ class TestExampleGraphExecution:
             assert (output_path / "plots" / "event_study_plot.png").exists()
             
             print(f"✓ Panel graph executed successfully: {len(completed_nodes)} nodes completed")
-
-    def test_staggered_treatment_in_panel_graph(self):
+    
+    
+    def test_staggered_treatment_in_panel_graph(self, minimum_wage_data):
         """Test the staggered treatment path within the panel graph."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir)
             
             # Generate staggered treatment data
-            data = generate_mock_data(n_units=100, n_periods=5, n_treated=60, staggered_treatment=True)
+            raw_data = minimum_wage_data
+            data = raw_data.rename(columns={
+                "countyreal": "id_unit",  # county identifier
+                "year": "t",              # time variable
+                "lemp": "y"               # log employment as outcome
+            })
+
+            # Create proper treatment indicator based on first.treat timing
+            def reconstruct_treatment(row):
+                """Reconstruct treatment: 0 before first.treat, 1 from first.treat onwards"""
+                if pd.isna(row['first.treat']) or row['first.treat'] == 0:
+                    # Never treated units
+                    return 0
+                elif row['t'] >= row['first.treat']:
+                    # Treated in current period (treatment started)
+                    return 1
+                else:
+                    # Not yet treated (before treatment start)
+                    return 0
+
+            data['treat'] = data.apply(reconstruct_treatment, axis=1)
+
+            # Keep additional covariates
+            data = data[["id_unit", "t", "treat", "y", "lpop"]]  # Include lpop as covariate
             
             # Create and execute panel graph
             graph = create_panel_graph(output_path)
-            result = graph.fit(df=data)
+            graph.fit(df=data)
             
             completed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'COMPLETED'}
             failed_nodes = {node.name for node in graph.nodes() if hasattr(node, 'state') and node.state.name == 'FAILED'}

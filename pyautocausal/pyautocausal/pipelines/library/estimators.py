@@ -638,6 +638,19 @@ def fit_callaway_santanna_estimator(spec: StaggeredDiDSpec) -> StaggeredDiDSpec:
 
     # Prepare data for csdid format
     data_cs = data.copy()
+
+
+    for val in data_cs[treatment_time_col].values:
+        if val == 0:
+            raise ValueError(f"Treatment time column {treatment_time_col} cannot have 0's")
+        else:
+            pass
+    for val in data_cs[time_col].values:
+        if val == 0:
+            raise ValueError(f"Time column {time_col} cannot have 0's")
+        else:
+            pass
+
     
     # Ensure never-treated units have 0 in treatment_time_col, not NaN
     # This is required for the Callaway & Sant'Anna estimator

@@ -1,7 +1,7 @@
 """Causal inference specific validation checks for pandas DataFrames."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Set, Union
+from typing import List, Optional, Set, Union, Dict, Any
 import pandas as pd
 import numpy as np
 
@@ -925,4 +925,234 @@ class TreatmentTimingPatternsCheck(DataValidationCheck[TreatmentTimingPatternsCo
             "adoption_pattern": "staggered" if len(set(treatment_adoptions.values())) > 1 else "simultaneous"
         }
         
-        return self._create_result(passed, issues, metadata) 
+        return self._create_result(passed, issues, metadata)
+
+
+@dataclass
+class TimePeriodStandardizationConfig(DataValidationConfig):
+    """Configuration for TimePeriodStandardizationCheck."""
+    treatment_column: str = "treatment"
+    time_column: str = "time"
+
+
+class TimePeriodStandardizationCheck(DataValidationCheck[TimePeriodStandardizationConfig]):
+    """Check and prepare standardization of time periods relative to treatment start.
+    
+    This check:
+    1. Finds the minimum time period where treatment==1 occurs
+    2. Creates a standardized mapping where that period becomes index 0
+    3. Earlier periods get negative indices (-1, -2, etc.)
+    4. Later periods get positive indices (1, 2, etc.)
+    5. Returns a cleaning hint with the value mapping
+    
+    Always requires treatment data to exist - fails with ERROR if no treatment==1 found.
+    """
+    
+    @property
+    def name(self) -> str:
+        return "time_period_standardization"
+    
+    @classmethod
+    def get_default_config(cls) -> TimePeriodStandardizationConfig:
+        return TimePeriodStandardizationConfig()
+    
+    def validate(self, df: pd.DataFrame) -> DataValidationResult:
+        issues = []
+        
+        # Check if required columns exist
+        missing_cols = []
+        for col in [self.config.treatment_column, self.config.time_column]:
+            if col not in df.columns:
+                missing_cols.append(col)
+        
+        if missing_cols:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"Required columns not found: {missing_cols}",
+                details={"missing_columns": missing_cols, "available_columns": list(df.columns)}
+            ))
+            return self._create_result(False, issues)
+        
+        # Check if treatment data exists (treatment==1)
+        treatment_data = df[df[self.config.treatment_column] == 1]
+        if len(treatment_data) == 0:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"No treatment data found (no rows where {self.config.treatment_column}==1). "
+                       "Time period standardization requires treatment data to define the reference point.",
+                affected_columns=[self.config.treatment_column],
+                details={"unique_treatment_values": df[self.config.treatment_column].unique().tolist()}
+            ))
+            return self._create_result(False, issues)
+        
+        # Get all unique time periods and find the treatment start period
+        unique_times = df[self.config.time_column].dropna().unique()
+        treatment_times = treatment_data[self.config.time_column].dropna().unique()
+        
+        if len(treatment_times) == 0:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"No valid time periods found for treatment data (all time values are NaN where {self.config.treatment_column}==1)",
+                affected_columns=[self.config.time_column, self.config.treatment_column]
+            ))
+            return self._create_result(False, issues)
+        
+        # Check for mixed data types in time column
+        mixed_types_issue = self._check_for_mixed_types(unique_times)
+        if mixed_types_issue:
+            issues.append(mixed_types_issue)
+            return self._create_result(False, issues)
+        
+        try:
+            # Try to parse and sort time periods
+            parsed_times = self._parse_time_periods(unique_times)
+            parsed_treatment_times = self._parse_time_periods(treatment_times)
+            
+            # Find the minimum treatment time period (this becomes index 0)
+            treatment_start_parsed = min(parsed_treatment_times)
+            
+            # Create mapping from original values to standardized indices
+            sorted_times = sorted(parsed_times)
+            
+            value_mapping = {}
+            for original_val, parsed_val in zip(unique_times, parsed_times):
+                value_mapping[original_val] = sorted_times.index(parsed_val) + 1
+                if parsed_val == treatment_start_parsed:
+                    treatment_start_original = original_val
+            
+
+            # Create cleaning hint
+            from ...data_cleaning.hints import StandardizeTimePeriodHint
+            cleaning_hint = StandardizeTimePeriodHint(
+                time_column=self.config.time_column,
+                value_mapping=value_mapping,
+                metadata={
+                    "total_periods": len(unique_times),
+                    "pre_treatment_periods": sum(1 for v in value_mapping.values() if v < value_mapping[treatment_start_original]),
+                    "post_treatment_periods": sum(1 for v in value_mapping.values() if v >= value_mapping[treatment_start_original]),
+                    "original_treatment_start": str(treatment_start_original)
+                }
+            )
+            
+            metadata = {
+                "time_column": self.config.time_column,
+                "treatment_column": self.config.treatment_column,
+                "total_periods": len(unique_times),
+                "standardized_range": [min(value_mapping.values()), max(value_mapping.values())],
+                "value_mapping_sample": dict(list(value_mapping.items())[:5])  # First 5 for display
+            }
+            
+            return self._create_result(True, issues, metadata, [cleaning_hint])
+            
+        except Exception as e:
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"Failed to parse time periods in column '{self.config.time_column}': {str(e)}",
+                affected_columns=[self.config.time_column],
+                details={"error_type": type(e).__name__, "sample_values": unique_times[:10].tolist()}
+            ))
+            return self._create_result(False, issues)
+    
+    def _parse_time_periods(self, time_values):
+        """Parse time periods into comparable values.
+        
+        Handles multiple formats:
+        - Datetime strings (parsed with pd.to_datetime)
+        - Datetime objects
+        - Numeric values (treated as periods)
+        """
+        parsed = []
+        
+        for val in time_values:
+            if pd.isna(val):
+                continue
+                
+            # Try numeric first (integers, floats)
+            try:
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    parsed.append(float(val))
+                    continue
+            except (ValueError, TypeError):
+                pass
+            
+            # Try datetime parsing
+            try:
+                if isinstance(val, str) or hasattr(val, 'strftime'):
+                    dt = pd.to_datetime(val)
+                    # Convert to ordinal for comparison (days since year 1)
+                    parsed.append(dt.toordinal())
+                    continue
+            except (ValueError, TypeError):
+                pass
+            
+            # If nothing else works, try to convert to string and then float
+            try:
+                parsed.append(float(str(val)))
+            except (ValueError, TypeError):
+                raise ValueError(f"Unable to parse time period value: {val} (type: {type(val)})")
+        
+        return parsed
+    
+    def _check_for_mixed_types(self, time_values):
+        """Check if time column contains mixed data types.
+        
+        Returns ValidationIssue if mixed types are detected, None otherwise.
+        """
+        if len(time_values) == 0:
+            return None
+        
+        # Categorize types
+        numeric_types = set()
+        string_types = set()
+        datetime_types = set()
+        other_types = set()
+        
+        for val in time_values:
+            if pd.isna(val):
+                continue
+                
+            val_type = type(val)
+            
+            # Categorize by type family
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                numeric_types.add(val_type.__name__)
+            elif isinstance(val, str):
+                # Check if string could be a date
+                try:
+                    pd.to_datetime(val)
+                    string_types.add("date_string")
+                except (ValueError, TypeError):
+                    string_types.add("string")
+            elif hasattr(val, 'strftime'):  # datetime-like objects
+                datetime_types.add(val_type.__name__)
+            else:
+                other_types.add(val_type.__name__)
+        
+        # Count how many different type categories we have
+        type_families = []
+        if numeric_types:
+            type_families.append(f"numeric ({', '.join(sorted(numeric_types))})")
+        if string_types:
+            type_families.append(f"string ({', '.join(sorted(string_types))})")
+        if datetime_types:
+            type_families.append(f"datetime ({', '.join(sorted(datetime_types))})")
+        if other_types:
+            type_families.append(f"other ({', '.join(sorted(other_types))})")
+        
+        # Error if we have mixed type families
+        if len(type_families) > 1:
+            sample_values = [f"{val} ({type(val).__name__})" for val in time_values[:5]]
+            
+            return ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                message=f"Time column '{self.config.time_column}' contains mixed data types: {', '.join(type_families)}. "
+                       "All time values should be of the same type family (all numeric, all date strings, or all datetime objects).",
+                affected_columns=[self.config.time_column],
+                details={
+                    "mixed_type_families": type_families,
+                    "sample_values": sample_values,
+                    "total_unique_values": len(time_values)
+                }
+            )
+        
+        return None 

@@ -15,6 +15,14 @@ def lalonde_data():
     fixture_path = test_dir / "fixtures" / "lalonde.csv"
     return pd.read_csv(fixture_path)
 
+@pytest.fixture
+def minimum_wage_data():
+    """Returns the minimum wage dataset for integration tests."""
+    # Get the directory where this conftest.py file is located
+    test_dir = Path(__file__).parent
+    fixture_path = test_dir / "fixtures" / "mpdta.csv"
+    return pd.read_csv(fixture_path)
+
 
 @pytest.fixture
 def output_dir(tmp_path):
